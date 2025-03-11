@@ -18,7 +18,7 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'public/index.html'));
   
   // 開発時にはDevToolsを開く
-  // mainWindow.webContents.openDevTools();
+  mainWindow.webContents.openDevTools();
 
   mainWindow.on('closed', () => {
     mainWindow = null;
