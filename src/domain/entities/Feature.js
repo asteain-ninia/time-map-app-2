@@ -1,5 +1,3 @@
-import { Property } from '../value-objects/Property.js';
-
 /**
  * 地理オブジェクトの基底クラス
  */
