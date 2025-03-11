@@ -1,3 +1,5 @@
+import { Feature } from './Feature';
+
 /**
  * 線情報を表すエンティティ
  */

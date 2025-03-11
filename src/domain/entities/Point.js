@@ -1,3 +1,5 @@
+import { Feature } from './Feature';
+
 /**
  * 点情報を表すエンティティ
  */

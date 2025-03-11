@@ -1,4 +1,5 @@
-- アプリケーションのエントリーポイント
+// src/main/index.js 
+// アプリケーションのエントリーポイント
 import { DependencyInjection } from './DependencyInjection';
 import { Config } from './Config';
 

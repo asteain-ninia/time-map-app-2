@@ -1,3 +1,5 @@
+import { Feature } from './Feature';
+
 /**
  * 面情報を表すエンティティ
  */
