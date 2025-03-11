@@ -1,4 +1,4 @@
-import { Feature } from './Feature';
+import { Feature } from './Feature.js';
 
 /**
  * 線情報を表すエンティティ

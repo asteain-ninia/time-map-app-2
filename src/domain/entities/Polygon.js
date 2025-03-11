@@ -1,4 +1,4 @@
-import { Feature } from './Feature';
+import { Feature } from './Feature.js';
 
 /**
  * 面情報を表すエンティティ
