@@ -161,7 +161,7 @@ export class MapView {
     if (!world) return;
     
     const viewport = this._viewportManager.getViewport();
-    const currentTime = this._navigateTimeUseCase.getCurrentTime();
+    const currentTime = this._viewModel._navigateTimeUseCase.getCurrentTime();
     
     // レンダラーでマップを描画
     this._renderer.render(world, viewport, currentTime);
