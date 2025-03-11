@@ -805,4 +805,37 @@ export class SVGRenderer {
       element.parentNode.removeChild(element);
     }
   }
+  /**
+ * 背景地図を読み込む
+ * @param {string} svgContent - SVG形式の地図内容
+ */
+  loadBackgroundMap(svgContent) {
+    // 既存の背景要素をクリア
+    const existingBackground = this._svg.querySelector('.background-map');
+    if (existingBackground) {
+      existingBackground.remove();
+    }
+    
+    // 新しい背景グループ要素を作成
+    const backgroundGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    backgroundGroup.setAttribute("class", "background-map");
+    
+    // SVG文字列からDOMを解析して挿入
+    const parser = new DOMParser();
+    const svgDoc = parser.parseFromString(svgContent, "image/svg+xml");
+    const svgElement = svgDoc.documentElement;
+    
+    // SVGの内容をグループに追加
+    // 注意: importNodeを使用して他のドキュメントからノードをインポート
+    for (const child of svgElement.childNodes) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        backgroundGroup.appendChild(document.importNode(child, true));
+      }
+    }
+    
+    // メイングループの最初の子として挿入
+    this._mainGroup.insertBefore(backgroundGroup, this._mainGroup.firstChild);
+    
+    console.log('背景地図を設定しました');
+  }
 }

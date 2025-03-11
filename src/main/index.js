@@ -41,6 +41,7 @@ class TimeMapApp {
     window.addEventListener('resize', this._handleResize.bind(this));
     
     this._isInitialized = true;
+    this._loadBackgroundMap();
   }
 
   /**
@@ -169,6 +170,29 @@ class TimeMapApp {
     }
     
     this._config.updateSection('ui', { darkMode: enabled });
+  }
+  async _loadBackgroundMap() {
+    try {
+      // アプリルートからの相対パスではなく、Electron実行環境でのパスを指定
+      const path = require('path');
+      const mapPath = path.join(__dirname, '../assets/maps/base-map.svg');
+      
+      console.log('地図ファイルのパス:', mapPath);
+      
+      // 背景地図のSVGファイルを読み込む
+      const svgContent = await this._di.get('fileSystem').readFile(mapPath, 'utf8');
+      
+      // レンダラーに背景地図を設定
+      const renderer = this._di.get('renderer');
+      renderer.loadBackgroundMap(svgContent);
+      
+      console.log('背景地図を読み込みました');
+    } catch (error) {
+      console.error('背景地図の読み込みに失敗しました', error);
+      console.error('エラーの詳細:', error.message);
+      // スタックトレースも出力
+      console.error(error.stack);
+    }
   }
 }
 
