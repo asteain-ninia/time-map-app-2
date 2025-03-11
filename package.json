@@ -1,0 +1,25 @@
+{
+  "name": "time-map-app",
+  "version": "1.0.0",
+  "description": "時間軸に沿って地図を管理するアプリケーション",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "webpack --config webpack.config.js",
+    "dev": "webpack --config webpack.config.js --watch & electron .",
+    "package": "electron-builder --win --mac --linux"
+  },
+  "build": {
+    "appId": "com.yourcompany.timemapapp",
+    "productName": "時空地図アプリケーション",
+    "files": [
+      "dist/**/*",
+      "public/**/*",
+      "electron-main.js",
+      "preload.js"
+    ],
+    "directories": {
+      "output": "release"
+    }
+  }
+}
