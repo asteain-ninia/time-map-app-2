@@ -75,7 +75,7 @@ export class SidebarView {
     
     const tabs = [
       { id: 'layers', label: 'レイヤー' },
-      { id: 'features', label: '特徴一覧' },
+      { id: 'features', label: '地物一覧' },
       { id: 'properties', label: 'プロパティ' }
     ];
     
@@ -123,7 +123,7 @@ export class SidebarView {
   }
 
   /**
-   * 特徴一覧タブの作成
+   * 地物一覧タブの作成
    * @private
    */
   _createFeaturesTab() {
@@ -134,7 +134,7 @@ export class SidebarView {
     this._featuresTabElement.style.padding = '10px';
     this._featuresTabElement.style.display = 'none';
     
-    // 特徴一覧のコンテナ
+    // 地物一覧のコンテナ
     const featuresContainer = document.createElement('div');
     featuresContainer.className = 'features-container';
     
@@ -356,7 +356,7 @@ export class SidebarView {
   }
 
   /**
-   * 特徴一覧タブの更新
+   * 地物一覧タブの更新
    * @private
    */
   _updateFeaturesTab() {
@@ -406,7 +406,7 @@ export class SidebarView {
           categoryContent.style.display === 'none' ? 'block' : 'none';
       });
       
-      // 特徴一覧
+      // 地物一覧
       categorizedFeatures[category].forEach(feature => {
         const prop = feature.getPropertyAt(currentTime);
         if (!prop) return;
