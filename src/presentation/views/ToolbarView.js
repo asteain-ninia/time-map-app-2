@@ -141,6 +141,27 @@ export class ToolbarView {
     const utilSection = document.createElement('div');
     utilSection.className = 'toolbar-section';
     utilSection.style.display = 'inline-block';
+    // セーブボタン
+    const saveButton = document.createElement('button');
+    saveButton.textContent = '💾 保存';
+    saveButton.style.marginRight = '5px';
+    saveButton.addEventListener('click', () => {
+      // 保存処理の追加
+      console.log('保存ボタンがクリックされました');
+      this._saveWorld();
+    });
+    utilSection.appendChild(saveButton);
+
+    // ロードボタン
+    const loadButton = document.createElement('button');
+    loadButton.textContent = '📂 読込';
+    loadButton.style.marginRight = '5px';
+    loadButton.addEventListener('click', () => {
+      // 読込処理の追加
+      console.log('読込ボタンがクリックされました');
+      this._loadWorld();
+    });
+    utilSection.appendChild(loadButton);
     
     // 測定ボタン
     const measureButton = document.createElement('button');
@@ -262,5 +283,15 @@ export class ToolbarView {
     // アンドゥ・リドゥボタンの有効/無効を更新
     this._toolButtons['undo'].disabled = !data.canUndo;
     this._toolButtons['redo'].disabled = !data.canRedo;
+  }
+
+  _saveWorld() {
+    // 仮実装：アラートを表示
+    alert('現在、自動保存のみ実装されています。明示的な保存機能は次期バージョンで実装予定です。');
+  }
+  
+  _loadWorld() {
+    // 仮実装：アラートを表示
+    alert('読込機能は次期バージョンで実装予定です。');
   }
 }
