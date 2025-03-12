@@ -836,6 +836,25 @@ export class SVGRenderer {
     // メイングループの最初の子として挿入
     this._mainGroup.insertBefore(backgroundGroup, this._mainGroup.firstChild);
     
+    // 背景地図の寸法を取得してビューポートに反映
+    try {
+      const svgElement = backgroundGroup.querySelector('svg');
+      if (svgElement) {
+        const viewBox = svgElement.getAttribute('viewBox');
+        if (viewBox) {
+          const [, , width, height] = viewBox.split(' ').map(Number);
+          console.log('SVG寸法:', width, height);
+          
+          // ビューポートマネージャーに通知
+          if (this._viewportManager) {
+            this._viewportManager.updateMapDimensions(width, height);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('背景地図のviewBox取得に失敗:', error);
+    }
+    
     console.log('背景地図を設定しました');
   }
 }

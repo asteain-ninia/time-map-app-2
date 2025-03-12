@@ -84,11 +84,11 @@ export class DependencyInjection {
     this._container.viewportManager = new ViewportManager({
       width: 800,
       height: 600,
+      zoom: 0.4,     // より小さい初期ズーム
+      x: 180,        // 中央に配置
+      y: 90,         // 中央に配置
       minZoom: 0.1,
-      maxZoom: 10,
-      zoom: 0.5, // 初期ズームを小さめに設定
-      x: 180, // 初期中心位置を調整
-      y: 90 // 初期中心位置を調整
+      maxZoom: 10
     });
   }
 
@@ -146,7 +146,7 @@ export class DependencyInjection {
       this._container.editFeatureUseCase,
       this._container.navigateTimeUseCase,
       this._container.manageLayersUseCase,
-      this._container.geometryService,
+            this._container.geometryService,
       this._container.eventBus
     );
     
