@@ -72,6 +72,8 @@ export class MapView {
    * @private
    */
   _setupEventListeners() {
+    console.log('イベントリスナーを設定します');
+
     // マウスイベント
     this._mapElement.addEventListener('mousedown', this._onMouseDown.bind(this));
     this._mapElement.addEventListener('mousemove', this._onMouseMove.bind(this));
@@ -348,34 +350,23 @@ export class MapView {
     // 右クリックは無視（コンテキストメニュー用）
     if (event.button === 2) return;
     
-    const screenX = event.clientX;
-    const screenY = event.clientY;
-    
+    // マウス位置を取得
+    const rect = this._mapElement.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
+
+    console.log('マウスダウン:', screenX, screenY);
+
     this._isMouseDown = true;
     this._lastMousePosition = { x: screenX, y: screenY };
-    
+
     // 編集モードに応じた処理
     const mode = this._editingViewModel.getMode();
-    switch (mode) {
-      case 'view':
-        // ビューモードでは、ドラッグでパン
-        this._viewportManager.startDrag(screenX, screenY);
-        break;
-        
-      case 'add':
-        // 追加モードでは、クリックで点を追加
-        this._handleAddPoint(event);
-        break;
-        
-      case 'edit':
-        // 編集モードでは、クリックで選択
-        this._handleSelectObject(event);
-        break;
-        
-      default:
-        break;
+    if (mode === 'view') {
+      // ビューモードでは、ドラッグでパン
+      this._viewportManager.startDrag(screenX, screenY);
     }
-    
+
     // 距離測定モード
     if (this._isMeasuringDistance) {
       this._handleAddMeasurePoint(event);
@@ -388,8 +379,9 @@ export class MapView {
    * @private
    */
   _onMouseMove(event) {
-    const screenX = event.clientX;
-    const screenY = event.clientY;
+    const rect = this._mapElement.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
     
     if (this._isMouseDown) {
       // マウスドラッグ

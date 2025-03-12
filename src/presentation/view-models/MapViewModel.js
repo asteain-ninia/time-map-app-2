@@ -537,4 +537,12 @@ export class MapViewModel {
   getHoveredVertex() {
     return this._hoveredVertex;
   }
+
+  /**
+   * 現在の時間点を取得
+   * @returns {TimePoint} 現在の時間点
+   */
+  getCurrentTime() {
+    return this._navigateTimeUseCase.getCurrentTime();
+  }
 }

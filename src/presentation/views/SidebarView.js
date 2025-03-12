@@ -659,28 +659,140 @@ export class SidebarView {
   }
 
   /**
-   * レイヤー追加ダイアログの表示
+   * レイヤー追加用のダイアログの代わりに入力フィールドを表示
    * @private
    */
   _showAddLayerDialog() {
-    // 簡易的なダイアログ
-    const name = prompt('レイヤー名を入力してください:');
-    if (name) {
-      this._addLayer(name);
+    // プロンプトをダイアログの代わりに実装
+    const container = this._sidebarElement.querySelector('.layers-container');
+
+    // 既存の入力フォームがあれば削除
+    const existingForm = container.querySelector('.layer-input-form');
+    if (existingForm) {
+      existingForm.remove();
     }
+
+    // 入力フォームを作成
+    const formElement = document.createElement('div');
+    formElement.className = 'layer-input-form';
+    formElement.style.marginBottom = '10px';
+    formElement.style.padding = '5px';
+    formElement.style.border = '1px solid #ddd';
+    formElement.style.backgroundColor = '#f9f9f9';
+
+    const label = document.createElement('label');
+    label.textContent = 'レイヤー名: ';
+    label.style.display = 'block';
+    label.style.marginBottom = '5px';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.style.width = '100%';
+    input.style.marginBottom = '5px';
+
+    const buttonsDiv = document.createElement('div');
+    buttonsDiv.style.display = 'flex';
+    buttonsDiv.style.justifyContent = 'flex-end';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.textContent = 'キャンセル';
+    cancelButton.style.marginRight = '5px';
+    cancelButton.addEventListener('click', () => formElement.remove());
+
+    const okButton = document.createElement('button');
+    okButton.textContent = '追加';
+    okButton.addEventListener('click', () => {
+      const name = input.value.trim();
+      if (name) {
+        this._addLayer(name);
+      }
+      formElement.remove();
+    });
+
+    buttonsDiv.appendChild(cancelButton);
+    buttonsDiv.appendChild(okButton);
+
+    formElement.appendChild(label);
+    formElement.appendChild(input);
+    formElement.appendChild(buttonsDiv);
+
+    // フォームを追加
+    container.insertBefore(formElement, container.firstChild);
+
+    // 入力フィールドにフォーカス
+    input.focus();
   }
 
   /**
-   * レイヤー編集ダイアログの表示
-   * @param {Object} layer - レイヤー
+   * レイヤー編集用のダイアログの代わりに入力フィールドを表示
+   * @param {Layer} layer - 編集するレイヤー
    * @private
    */
   _showEditLayerDialog(layer) {
-    // 簡易的なダイアログ
-    const name = prompt('レイヤー名を編集してください:', layer.name);
-    if (name) {
-      this._updateLayerName(layer.id, name);
+    const container = this._sidebarElement.querySelector('.layers-container');
+
+    // 既存の入力フォームがあれば削除
+    const existingForm = container.querySelector('.layer-input-form');
+    if (existingForm) {
+      existingForm.remove();
     }
+
+    // 入力フォームを作成
+    const formElement = document.createElement('div');
+    formElement.className = 'layer-input-form';
+    formElement.style.marginBottom = '10px';
+    formElement.style.padding = '5px';
+    formElement.style.border = '1px solid #ddd';
+    formElement.style.backgroundColor = '#f9f9f9';
+
+    const label = document.createElement('label');
+    label.textContent = 'レイヤー名: ';
+    label.style.display = 'block';
+    label.style.marginBottom = '5px';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = layer.name;
+    input.style.width = '100%';
+    input.style.marginBottom = '5px';
+
+    const buttonsDiv = document.createElement('div');
+    buttonsDiv.style.display = 'flex';
+    buttonsDiv.style.justifyContent = 'flex-end';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.textContent = 'キャンセル';
+    cancelButton.style.marginRight = '5px';
+    cancelButton.addEventListener('click', () => formElement.remove());
+
+    const okButton = document.createElement('button');
+    okButton.textContent = '保存';
+    okButton.addEventListener('click', () => {
+      const name = input.value.trim();
+      if (name) {
+        this._editLayer(layer.id, name);
+      }
+      formElement.remove();
+    });
+
+    buttonsDiv.appendChild(cancelButton);
+    buttonsDiv.appendChild(okButton);
+
+    formElement.appendChild(label);
+    formElement.appendChild(input);
+    formElement.appendChild(buttonsDiv);
+
+    // フォームを追加
+    const layerElement = this._sidebarElement.querySelector(`[data-layer-id="${layer.id}"]`);
+    if (layerElement) {
+      layerElement.insertAdjacentElement('afterend', formElement);
+    } else {
+      container.appendChild(formElement);
+    }
+
+    // 入力フィールドにフォーカス
+    input.focus();
+    input.select();
   }
 
   /**
