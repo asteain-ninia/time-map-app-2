@@ -100,14 +100,41 @@ export class FileSystem {
    * @returns {Promise<string>} バックアップファイルパス
    */
   async createBackup(filePath) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = `${filePath}.${timestamp}.bak`;
-    
     try {
+      // バックアップディレクトリの作成
+      const path = require('path');
+      const fs = require('fs');
+      const backupDir = path.join(path.dirname(filePath), 'backups');
+      
+      // ディレクトリがなければ作成
+      if (!fs.existsSync(backupDir)) {
+        await this.makeDirectory(backupDir);
+      }
+      
+      // タイムスタンプ付きのバックアップファイル名を生成
+      const fileName = path.basename(filePath);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(backupDir, `${fileName}.${timestamp}.bak`);
+      
+      // バックアップの作成
       const content = await this.readFile(filePath);
       await this.writeFile(backupPath, content);
+      
+      // 古いバックアップの削除（5世代以上前）
+      const backupFiles = fs.readdirSync(backupDir)
+        .filter(file => file.startsWith(fileName) && file.endsWith('.bak'))
+        .sort()
+        .reverse();
+      
+      if (backupFiles.length > 5) {
+        for (let i = 5; i < backupFiles.length; i++) {
+          fs.unlinkSync(path.join(backupDir, backupFiles[i]));
+        }
+      }
+      
       return backupPath;
     } catch (error) {
+      console.error('バックアップ作成エラー:', error);
       throw new Error(`Failed to create backup: ${error.message}`);
     }
   }
