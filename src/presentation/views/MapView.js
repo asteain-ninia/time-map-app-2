@@ -356,17 +356,32 @@ export class MapView {
     const screenY = event.clientY - rect.top;
 
     console.log('マウスダウン:', screenX, screenY);
-
+    
     this._isMouseDown = true;
     this._lastMousePosition = { x: screenX, y: screenY };
-
+    
     // 編集モードに応じた処理
     const mode = this._editingViewModel.getMode();
-    if (mode === 'view') {
-      // ビューモードでは、ドラッグでパン
-      this._viewportManager.startDrag(screenX, screenY);
+    switch (mode) {
+      case 'view':
+        // ビューモードでは、ドラッグでパン
+        this._viewportManager.startDrag(screenX, screenY);
+        break;
+        
+      case 'add':
+        // 追加モードでは、クリックで点を追加
+        this._handleAddPoint(event);
+        break;
+        
+      case 'edit':
+        // 編集モードでは、クリックで選択
+        this._handleSelectObject(event);
+        break;
+        
+      default:
+        break;
     }
-
+    
     // 距離測定モード
     if (this._isMeasuringDistance) {
       this._handleAddMeasurePoint(event);
