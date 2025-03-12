@@ -282,10 +282,10 @@ export class SidebarView {
     
     const layersContainer = this._layersTabElement.querySelector('.layers-container');
     layersContainer.innerHTML = '';
-    
+
     // レイヤーを順序でソート
     const sortedLayers = [...world.layers].sort((a, b) => a.order - b.order);
-    
+
     // レイヤー一覧の表示
     sortedLayers.forEach(layer => {
       const layerItem = document.createElement('div');
@@ -296,7 +296,7 @@ export class SidebarView {
       layerItem.style.backgroundColor = '#fff';
       layerItem.style.display = 'flex';
       layerItem.style.alignItems = 'center';
-      
+
       // 表示/非表示チェックボックス
       const visibilityCheckbox = document.createElement('input');
       visibilityCheckbox.type = 'checkbox';
@@ -305,28 +305,30 @@ export class SidebarView {
       visibilityCheckbox.addEventListener('change', e => {
         this._updateLayerVisibility(layer.id, e.target.checked);
       });
-      
+
       // レイヤー名
       const nameLabel = document.createElement('span');
       nameLabel.textContent = layer.name;
       nameLabel.style.flex = '1';
       
-      // 不透明度スライダー
+      // 不透明度入力
       const opacityLabel = document.createElement('span');
       opacityLabel.textContent = '不透明度:';
       opacityLabel.style.marginRight = '5px';
-      
-      const opacitySlider = document.createElement('input');
-      opacitySlider.type = 'range';
-      opacitySlider.min = '0';
-      opacitySlider.max = '1';
-      opacitySlider.step = '0.1';
-      opacitySlider.value = layer.opacity;
-      opacitySlider.style.width = '60px';
-      opacitySlider.addEventListener('input', e => {
-        this._updateLayerOpacity(layer.id, Number(e.target.value));
+
+      const opacityInput = document.createElement('input');
+      opacityInput.type = 'number';
+      opacityInput.min = '0';
+      opacityInput.max = '1';
+      opacityInput.step = '0.1';
+      opacityInput.value = layer.opacity;
+      opacityInput.style.width = '40px';
+      opacityInput.addEventListener('change', e => {
+        const value = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+        opacityInput.value = value; // 値を正規化
+        this._updateLayerOpacity(layer.id, value);
       });
-      
+
       // 編集ボタン
       const editButton = document.createElement('button');
       editButton.textContent = '編集';
@@ -334,7 +336,7 @@ export class SidebarView {
       editButton.addEventListener('click', () => {
         this._showEditLayerDialog(layer);
       });
-      
+
       // 削除ボタン
       const deleteButton = document.createElement('button');
       deleteButton.textContent = '削除';
@@ -342,12 +344,12 @@ export class SidebarView {
       deleteButton.addEventListener('click', () => {
         this._showDeleteLayerConfirm(layer);
       });
-      
+
       // アイテムに要素を追加
       layerItem.appendChild(visibilityCheckbox);
       layerItem.appendChild(nameLabel);
       layerItem.appendChild(opacityLabel);
-      layerItem.appendChild(opacitySlider);
+      layerItem.appendChild(opacityInput);
       layerItem.appendChild(editButton);
       layerItem.appendChild(deleteButton);
       
@@ -770,7 +772,8 @@ export class SidebarView {
     okButton.addEventListener('click', () => {
       const name = input.value.trim();
       if (name) {
-        this._editLayer(layer.id, name);
+        // _editLayer ではなく _updateLayerName を呼び出す
+        this._updateLayerName(layer.id, name);
       }
       formElement.remove();
     });
