@@ -39,12 +39,16 @@ export class SVGRenderer {
     this._svg.setAttribute("viewBox", `0 0 ${this._options.width} ${this._options.height}`);
     this._svg.style.display = "block";
     
+    // 重要：ポインターイベントを設定
+    this._svg.style.pointerEvents = "auto";
+    
     // グループ要素を作成
     this._defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
     this._svg.appendChild(this._defs);
     
     this._mainGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._mainGroup.setAttribute("class", "main-group");
+    this._mainGroup.style.pointerEvents = "auto";
     this._svg.appendChild(this._mainGroup);
     
     this._gridGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -809,7 +813,7 @@ export class SVGRenderer {
  * 背景地図を読み込む
  * @param {string} svgContent - SVG形式の地図内容
  */
-  loadBackgroundMap(svgContent) {
+  loadBackgroundMap(svgContent, viewportManager = null) {
     // 既存の背景要素をクリア
     const existingBackground = this._svg.querySelector('.background-map');
     if (existingBackground) {
@@ -819,15 +823,27 @@ export class SVGRenderer {
     // 新しい背景グループ要素を作成
     const backgroundGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     backgroundGroup.setAttribute("class", "background-map");
+    backgroundGroup.style.pointerEvents = "none"; // 背景はイベントを透過
     
     // SVG文字列からDOMを解析して挿入
     const parser = new DOMParser();
     const svgDoc = parser.parseFromString(svgContent, "image/svg+xml");
     const svgElement = svgDoc.documentElement;
     
+    // 背景地図のviewBox属性を取得
+    let originalViewBox = svgElement.getAttribute('viewBox');
+    let mapWidth = 360;
+    let mapHeight = 180;
+    
+    if (originalViewBox) {
+      const [minX, minY, width, height] = originalViewBox.split(/\s+/).map(Number);
+      mapWidth = width;
+      mapHeight = height;
+      console.log(`背景地図のviewBox: ${minX} ${minY} ${width} ${height}`);
+    }
+    
     // SVGの内容をグループに追加
-    // 注意: importNodeを使用して他のドキュメントからノードをインポート
-    for (const child of svgElement.childNodes) {
+    for (const child of Array.from(svgElement.childNodes)) {
       if (child.nodeType === Node.ELEMENT_NODE) {
         backgroundGroup.appendChild(document.importNode(child, true));
       }
@@ -836,23 +852,26 @@ export class SVGRenderer {
     // メイングループの最初の子として挿入
     this._mainGroup.insertBefore(backgroundGroup, this._mainGroup.firstChild);
     
-    // 背景地図の寸法を取得してビューポートに反映
-    try {
-      const svgElement = backgroundGroup.querySelector('svg');
-      if (svgElement) {
-        const viewBox = svgElement.getAttribute('viewBox');
-        if (viewBox) {
-          const [, , width, height] = viewBox.split(' ').map(Number);
-          console.log('SVG寸法:', width, height);
-          
-          // ビューポートマネージャーに通知
-          if (this._viewportManager) {
-            this._viewportManager.updateMapDimensions(width, height);
-          }
-        }
-      }
-    } catch (error) {
-      console.warn('背景地図のviewBox取得に失敗:', error);
+    // ビューポートが提供されていれば調整
+    if (viewportManager) {
+      // コンテナのサイズを取得
+      const containerWidth = this._container.clientWidth;
+      const containerHeight = this._container.clientHeight;
+      
+      // 地図をフィットさせるためのズーム計算
+      const widthRatio = containerWidth / mapWidth;
+      const heightRatio = containerHeight / mapHeight;
+      const zoom = Math.min(widthRatio, heightRatio) * 0.95; // 少し余裕を持たせる
+      
+      console.log(`地図サイズ: ${mapWidth}x${mapHeight}, コンテナ: ${containerWidth}x${containerHeight}`);
+      console.log(`計算されたズーム: ${zoom}, 中心: ${mapWidth/2}, ${mapHeight/2}`);
+      
+      // ビューポートを更新
+      viewportManager.updateViewport({
+        zoom: zoom,
+        x: mapWidth / 2,
+        y: mapHeight / 2
+      });
     }
     
     console.log('背景地図を設定しました');

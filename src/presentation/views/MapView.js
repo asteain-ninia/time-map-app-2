@@ -50,8 +50,17 @@ export class MapView {
     this._mapElement.style.overflow = 'hidden';
     this._mapElement.style.backgroundColor = '#f0f0f0';
     
+    // 重要: ポインターイベントの設定
+    this._mapElement.style.pointerEvents = 'auto';
+    
     // マップコンテナに追加
     this._container.appendChild(this._mapElement);
+    
+    // SVGレンダラーの取得
+    this._renderer = this._renderer || new SVGRenderer(this._mapElement);
+    
+    // SVG要素にイベントが伝播するようにする
+    this._setSVGPointerEvents();
     
     // ビューモデルとの連携
     this._viewModel.addObserver(this._onViewModelChanged.bind(this));
@@ -65,6 +74,27 @@ export class MapView {
     
     // 初回描画
     this._render();
+    
+    console.log('MapView が初期化されました');
+  }
+
+  _setSVGPointerEvents() {
+    // SVG要素にポインターイベントを設定
+    setTimeout(() => {
+      const svg = this._mapElement.querySelector('svg');
+      if (svg) {
+        console.log('SVG要素を見つけました、ポインターイベントを設定します');
+        svg.style.pointerEvents = 'auto';
+        
+        // 背景地図のグループにはイベントを透過させる
+        const bgMap = svg.querySelector('.background-map');
+        if (bgMap) {
+          bgMap.style.pointerEvents = 'auto';
+        }
+      } else {
+        console.warn('SVG要素が見つかりません');
+      }
+    }, 500); // レンダリング後に実行
   }
 
   /**
@@ -483,15 +513,23 @@ export class MapView {
   _onWheel(event) {
     event.preventDefault();
     
-    const delta = -event.deltaY;
-    const zoomFactor = delta > 0 ? 0.1 : -0.1;
-    
+    // マウス位置を取得
     const rect = this._mapElement.getBoundingClientRect();
     const screenX = event.clientX - rect.left;
     const screenY = event.clientY - rect.top;
     
+    // ホイールの回転方向を取得
+    const delta = -event.deltaY;
+    
+    // ズーム倍率の変化量（大きすぎると使いづらい）
+    const zoomFactor = delta > 0 ? 0.1 : -0.1;
+    
+    console.log(`ホイールイベント: delta=${delta}, zoomFactor=${zoomFactor}`);
+    
+    // スクリーン座標から世界座標へ変換
     const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
     
+    // 指定した点を中心にズーム
     this._viewportManager.zoomAt(worldPoint.x, worldPoint.y, zoomFactor);
   }
 

@@ -173,7 +173,7 @@ class TimeMapApp {
   }
   async _loadBackgroundMap() {
     try {
-      // アプリルートからの相対パスではなく、Electron実行環境でのパスを指定
+      // Electron環境のパスの設定
       const path = require('path');
       const mapPath = path.join(__dirname, '../assets/maps/base-map.svg');
       
@@ -182,15 +182,17 @@ class TimeMapApp {
       // 背景地図のSVGファイルを読み込む
       const svgContent = await this._di.get('fileSystem').readFile(mapPath, 'utf8');
       
-      // レンダラーに背景地図を設定
+      // レンダラーとビューポートマネージャーを取得
       const renderer = this._di.get('renderer');
-      renderer.loadBackgroundMap(svgContent);
+      const viewportManager = this._di.get('viewportManager');
+      
+      // ビューポートマネージャーを指定して背景地図を読み込む
+      renderer.loadBackgroundMap(svgContent, viewportManager);
       
       console.log('背景地図を読み込みました');
     } catch (error) {
       console.error('背景地図の読み込みに失敗しました', error);
       console.error('エラーの詳細:', error.message);
-      // スタックトレースも出力
       console.error(error.stack);
     }
   }
