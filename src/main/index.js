@@ -173,7 +173,7 @@ class TimeMapApp {
   }
   async _loadBackgroundMap() {
     try {
-      // Electron環境のパスの設定
+      // 地図のパスを設定
       const path = require('path');
       const mapPath = path.join(__dirname, '../assets/maps/base-map.svg');
       
@@ -186,8 +186,44 @@ class TimeMapApp {
       const renderer = this._di.get('renderer');
       const viewportManager = this._di.get('viewportManager');
       
-      // ビューポートマネージャーを指定して背景地図を読み込む
-      renderer.loadBackgroundMap(svgContent, viewportManager);
+      // SVG地図を解析して寸法を取得
+      const parser = new DOMParser();
+      const svgDoc = parser.parseFromString(svgContent, "image/svg+xml");
+      const svgElement = svgDoc.documentElement;
+      
+      // viewBoxを取得
+      let mapWidth = 360;
+      let mapHeight = 180;
+      let originalViewBox = svgElement.getAttribute('viewBox');
+      
+      if (originalViewBox) {
+        const [minX, minY, width, height] = originalViewBox.split(/\s+/).map(Number);
+        mapWidth = width || 360;
+        mapHeight = height || 180;
+        console.log(`地図のviewBox: ${minX} ${minY} ${width} ${height}`);
+      }
+      
+      // コンテナのサイズを取得
+      const mapContainer = document.getElementById('map-container');
+      const containerWidth = mapContainer.clientWidth;
+      const containerHeight = mapContainer.clientHeight;
+      
+      // 適切なズーム値を計算（画面に収まるように）
+      const widthRatio = containerWidth / mapWidth;
+      const heightRatio = containerHeight / mapHeight;
+      const zoom = Math.min(widthRatio, heightRatio) * 0.9; // 少し余裕を持たせる
+      
+      console.log(`計算されたズーム: ${zoom}`);
+      
+      // 先にビューポートを設定
+      viewportManager.updateViewport({
+        x: mapWidth / 2,
+        y: mapHeight / 2,
+        zoom: zoom
+      });
+      
+      // 背景地図を読み込む
+      renderer.loadBackgroundMap(svgContent);
       
       console.log('背景地図を読み込みました');
     } catch (error) {

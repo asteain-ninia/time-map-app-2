@@ -36,6 +36,7 @@ export class ViewportManager {
    * @param {Object} updates - 更新内容
    */
   updateViewport(updates) {
+    console.log('ViewportManager: ビューポート更新', updates);
     const oldViewport = { ...this._viewport };
     
     // ビューポートを更新
@@ -49,6 +50,7 @@ export class ViewportManager {
     
     // ビューポートに変更があった場合のみリスナーを呼び出す
     if (this._hasViewportChanged(oldViewport, this._viewport)) {
+      console.log('ViewportManager: ビューポート変更を通知', this._viewport);
       this._notifyListeners();
     }
   }
@@ -199,10 +201,10 @@ export class ViewportManager {
    */
   _hasViewportChanged(oldViewport, newViewport) {
     return oldViewport.x !== newViewport.x ||
-           oldViewport.y !== newViewport.y ||
-           oldViewport.zoom !== newViewport.zoom ||
-           oldViewport.width !== newViewport.width ||
-           oldViewport.height !== newViewport.height;
+      oldViewport.y !== newViewport.y ||
+      oldViewport.zoom !== newViewport.zoom ||
+      oldViewport.width !== newViewport.width ||
+      oldViewport.height !== newViewport.height;
   }
 
   /**

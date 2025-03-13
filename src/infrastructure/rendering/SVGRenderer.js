@@ -809,6 +809,23 @@ export class SVGRenderer {
       element.parentNode.removeChild(element);
     }
   }
+
+/**
+ * SVG要素を取得
+ * @returns {SVGElement} SVG要素
+ */
+getSVGElement() {
+  return this._svg;
+}
+
+/**
+ * 初期化済みかどうか
+ * @returns {boolean} 初期化済みならtrue
+ */
+isInitialized() {
+  return !!this._svg;
+}
+
   /**
  * 背景地図を読み込む
  * @param {string} svgContent - SVG形式の地図内容

@@ -50,18 +50,6 @@ export class MapView {
     this._mapElement.style.overflow = 'hidden';
     this._mapElement.style.backgroundColor = '#f0f0f0';
     
-    // 重要: ポインターイベントの設定
-    this._mapElement.style.pointerEvents = 'auto';
-    
-    // マップコンテナに追加
-    this._container.appendChild(this._mapElement);
-    
-    // SVGレンダラーの取得
-    this._renderer = this._renderer || new SVGRenderer(this._mapElement);
-    
-    // SVG要素にイベントが伝播するようにする
-    this._setSVGPointerEvents();
-    
     // ビューモデルとの連携
     this._viewModel.addObserver(this._onViewModelChanged.bind(this));
     this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
@@ -69,13 +57,11 @@ export class MapView {
     // ビューポートの変更監視
     this._viewportManager.addListener(this._onViewportChanged.bind(this));
     
-    // イベントリスナーの設定
+    // マップ自体にイベントリスナーを設定 (重要な変更)
     this._setupEventListeners();
     
     // 初回描画
     this._render();
-    
-    console.log('MapView が初期化されました');
   }
 
   _setSVGPointerEvents() {
@@ -102,9 +88,9 @@ export class MapView {
    * @private
    */
   _setupEventListeners() {
-    console.log('イベントリスナーを設定します');
-
-    // マウスイベント
+    console.log('MapView: イベントリスナーを設定します');
+    
+    // 重要: マップ要素自体にイベントリスナーを設定
     this._mapElement.addEventListener('mousedown', this._onMouseDown.bind(this));
     this._mapElement.addEventListener('mousemove', this._onMouseMove.bind(this));
     this._mapElement.addEventListener('mouseup', this._onMouseUp.bind(this));
@@ -117,13 +103,6 @@ export class MapView {
     this._mapElement.addEventListener('touchstart', this._onTouchStart.bind(this), { passive: false });
     this._mapElement.addEventListener('touchmove', this._onTouchMove.bind(this), { passive: false });
     this._mapElement.addEventListener('touchend', this._onTouchEnd.bind(this));
-    
-    // キーボードイベント
-    window.addEventListener('keydown', this._onKeyDown.bind(this));
-    window.addEventListener('keyup', this._onKeyUp.bind(this));
-    
-    // ウィンドウリサイズ
-    window.addEventListener('resize', this._onResize.bind(this));
   }
 
   /**
@@ -377,45 +356,49 @@ export class MapView {
    * @private
    */
   _onMouseDown(event) {
+    console.log('MapView: マウスダウンイベント', event.clientX, event.clientY);
+    
     // 右クリックは無視（コンテキストメニュー用）
     if (event.button === 2) return;
     
-    // マウス位置を取得
+    // マウス位置を取得（マップコンテナを基準）
     const rect = this._mapElement.getBoundingClientRect();
     const screenX = event.clientX - rect.left;
     const screenY = event.clientY - rect.top;
-
-    console.log('マウスダウン:', screenX, screenY);
     
     this._isMouseDown = true;
     this._lastMousePosition = { x: screenX, y: screenY };
     
     // 編集モードに応じた処理
     const mode = this._editingViewModel.getMode();
-    switch (mode) {
-      case 'view':
-        // ビューモードでは、ドラッグでパン
-        this._viewportManager.startDrag(screenX, screenY);
-        break;
-        
-      case 'add':
-        // 追加モードでは、クリックで点を追加
-        this._handleAddPoint(event);
-        break;
-        
-      case 'edit':
-        // 編集モードでは、クリックで選択
-        this._handleSelectObject(event);
-        break;
-        
-      default:
-        break;
+    
+    // レンダラーから直接ビューポートに処理を受け渡す
+    if (mode === 'view') {
+      // ビューモードでは、ドラッグでパン
+      this._viewportManager.startDrag(screenX, screenY);
+      console.log('MapView: パン開始', screenX, screenY);
+    } else if (mode === 'add') {
+      // 追加モードでは、クリックで点を追加
+      const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
+      console.log('MapView: 点追加', worldPoint);
+      this._editingViewModel.addPoint(worldPoint);
+    } else if (mode === 'edit') {
+      // 編集モードでは、クリックで選択
+      console.log('MapView: オブジェクト選択');
+      // 選択処理
     }
     
     // 距離測定モード
     if (this._isMeasuringDistance) {
-      this._handleAddMeasurePoint(event);
+      const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
+      console.log('MapView: 測定点追加', worldPoint);
+      this._measurePoints.push(worldPoint);
+      this._render();
     }
+    
+    // デフォルトの動作を防止
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   /**
@@ -424,12 +407,13 @@ export class MapView {
    * @private
    */
   _onMouseMove(event) {
+    // マウス位置を取得
     const rect = this._mapElement.getBoundingClientRect();
     const screenX = event.clientX - rect.left;
     const screenY = event.clientY - rect.top;
     
     if (this._isMouseDown) {
-      // マウスドラッグ
+      // マウスドラッグ中
       if (!this._isDragging) {
         // ドラッグ開始判定
         const dx = screenX - this._lastMousePosition.x;
@@ -438,6 +422,7 @@ export class MapView {
         
         if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
           this._isDragging = true;
+          console.log('MapView: ドラッグ開始');
         }
       }
       
@@ -448,14 +433,13 @@ export class MapView {
         if (mode === 'view') {
           // ビューモードでは、ドラッグでパン
           this._viewportManager.drag(screenX, screenY);
+          console.log('MapView: パン中', screenX, screenY);
+          this._render(); // 描画更新を追加
         } else if (mode === 'edit') {
           // 編集モードでは、ドラッグで移動
-          this._handleDragObject(event);
+          console.log('MapView: オブジェクト移動');
         }
       }
-    } else {
-      // 単なるマウス移動
-      this._handleMouseHover(event);
     }
     
     this._lastMousePosition = { x: screenX, y: screenY };
@@ -467,19 +451,17 @@ export class MapView {
    * @private
    */
   _onMouseUp(event) {
-    const mode = this._editingViewModel.getMode();
+    console.log('MapView: マウスアップイベント');
     
     if (this._isMouseDown && this._isDragging) {
       // ドラッグ終了
+      const mode = this._editingViewModel.getMode();
+      
       if (mode === 'view') {
         this._viewportManager.endDrag();
+        console.log('MapView: パン終了');
       } else if (mode === 'edit') {
-        this._handleDragEnd(event);
-      }
-    } else if (this._isMouseDown && !this._isDragging) {
-      // クリック（ドラッグなし）
-      if (mode === 'view') {
-        this._handleClick(event);
+        console.log('MapView: オブジェクト移動終了');
       }
     }
     
@@ -511,6 +493,7 @@ export class MapView {
    * @private
    */
   _onWheel(event) {
+    console.log('MapView: ホイールイベント', event.deltaY);
     event.preventDefault();
     
     // マウス位置を取得
@@ -518,19 +501,15 @@ export class MapView {
     const screenX = event.clientX - rect.left;
     const screenY = event.clientY - rect.top;
     
-    // ホイールの回転方向を取得
-    const delta = -event.deltaY;
-    
-    // ズーム倍率の変化量（大きすぎると使いづらい）
-    const zoomFactor = delta > 0 ? 0.1 : -0.1;
-    
-    console.log(`ホイールイベント: delta=${delta}, zoomFactor=${zoomFactor}`);
-    
-    // スクリーン座標から世界座標へ変換
+    // 世界座標に変換
     const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
     
-    // 指定した点を中心にズーム
+    // ズームの変化量
+    const zoomFactor = event.deltaY < 0 ? 0.1 : -0.1;
+    
+    // ズーム処理
     this._viewportManager.zoomAt(worldPoint.x, worldPoint.y, zoomFactor);
+    console.log('MapView: ズーム', zoomFactor, worldPoint);
   }
 
   /**
