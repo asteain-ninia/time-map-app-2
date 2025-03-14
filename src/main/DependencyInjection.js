@@ -45,6 +45,29 @@ export class DependencyInjection {
    * @param {HTMLElement} sidebarContainer - サイドバーコンテナ要素
    */
   initialize(mapContainer, timelineContainer, toolbarContainer, sidebarContainer) {
+    this._container = {
+      map: mapContainer,
+      timeline: timelineContainer,
+      toolbar: toolbarContainer,
+      sidebar: sidebarContainer
+    };
+    
+    // SVGRendererを先に初期化
+    const renderer = new SVGRenderer(mapContainer, {
+      width: mapContainer.clientWidth,
+      height: mapContainer.clientHeight
+    });
+    this._container['renderer'] = renderer; // this.register の代わり
+    
+    // 次にViewportManagerを初期化
+    const viewportManager = new ViewportManager({
+      width: mapContainer.clientWidth,
+      height: mapContainer.clientHeight
+    });
+    this._container['viewportManager'] = viewportManager; // this.register の代わり
+    
+    // MapViewModel と EditingViewModel が未登録の場合、ここでは追加しない
+    
     // インフラストラクチャ層の依存性を登録
     this._registerInfrastructureServices();
     
@@ -61,6 +84,11 @@ export class DependencyInjection {
       toolbarContainer,
       sidebarContainer
     );
+    
+    // MapViewの初期化は、必要な依存関係がすべて登録された後に行う
+    const mapView = new MapView(mapContainer, this.get('mapViewModel'), this.get('editingViewModel'), 
+                              this.get('viewportManager'), this.get('renderer'), this.get('configManager'));
+    this._container['mapView'] = mapView; // this.register の代わり
   }
 
   /**

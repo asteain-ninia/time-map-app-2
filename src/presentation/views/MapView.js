@@ -43,7 +43,7 @@ export class MapView {
    */
   _initialize() {
     console.log('MapView: 初期化開始');
-
+    
     // マップコンテナ作成
     this._mapElement = document.createElement('div');
     this._mapElement.className = 'map-container';
@@ -53,29 +53,43 @@ export class MapView {
     this._mapElement.style.overflow = 'hidden';
     this._mapElement.style.backgroundColor = '#f0f0f0';
     
-    // コンテナに追加 - これを先に実行
+    // コンテナに追加
     this._container.appendChild(this._mapElement);
     console.log('MapView: コンテナにマップ要素を追加しました');
-  
-  // ビューモデルとの連携
+    
+    // 透明オーバーレイレイヤーを作成
+    this._overlayElement = document.createElement('div');
+    this._overlayElement.className = 'map-overlay';
+    this._overlayElement.style.position = 'absolute';
+    this._overlayElement.style.top = '0';
+    this._overlayElement.style.left = '0';
+    this._overlayElement.style.width = '100%';
+    this._overlayElement.style.height = '100%';
+    this._overlayElement.style.zIndex = '10'; // SVGよりも上のレイヤー
+    this._overlayElement.style.pointerEvents = 'auto';
+    this._overlayElement.style.cursor = 'default';
+    
+    // ビューモデルとの連携
     this._viewModel.addObserver(this._onViewModelChanged.bind(this));
     this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
     
     // ビューポートの変更監視
     this._viewportManager.addListener(this._onViewportChanged.bind(this));
     
-    // マップ自体にイベントリスナーを設定 (重要な変更)
+    // オーバーレイレイヤーをマップ要素に追加
+    this._mapElement.appendChild(this._overlayElement);
+    console.log('MapView: オーバーレイレイヤーを追加しました');
+    
+    // オーバーレイにイベントリスナーを設定
     this._setupEventListeners();
     console.log('MapView: イベントリスナーを設定しました');
-
+    
     // 初回描画
     this._render();
     console.log('MapView: 初期描画完了');
     
-    // SVG要素のポインターイベントを設定（レンダリング後）
-    setTimeout(() => {
-      this._setSVGPointerEvents();
-    }, 100);
+    // デバッグ用: イベントの発火をチェック
+    this._addDebugEventChecker();
   }
 
   _setSVGPointerEvents() {
@@ -122,41 +136,48 @@ export class MapView {
   _setupEventListeners() {
     console.log('MapView: イベントリスナーを設定します');
     
-    // マップ要素自体にイベントリスナーを設定（キャプチャフェーズとバブリングフェーズの両方）
-    const options = { capture: true };
+    // オーバーレイ要素にイベントリスナーを設定
+    const overlay = this._overlayElement;
     
-    this._mapElement.addEventListener('mousedown', (e) => {
-      console.log('MapView: mousedown イベントが発火しました (キャプチャ)', e.clientX, e.clientY);
+    overlay.addEventListener('mousedown', (e) => {
+      console.log('MapView: mousedown イベントが発火しました', e.clientX, e.clientY);
       this._onMouseDown(e);
-    }, options);
+    });
     
-    this._mapElement.addEventListener('mousemove', (e) => {
+    overlay.addEventListener('mousemove', (e) => {
       // マウス移動は頻繁に発火するのでログは出さない
       this._onMouseMove(e);
-    }, options);
+    });
     
-    this._mapElement.addEventListener('mouseup', (e) => {
-      console.log('MapView: mouseup イベントが発火しました (キャプチャ)', e.clientX, e.clientY);
+    overlay.addEventListener('mouseup', (e) => {
+      console.log('MapView: mouseup イベントが発火しました', e.clientX, e.clientY);
       this._onMouseUp(e);
-    }, options);
+    });
     
-    this._mapElement.addEventListener('mouseleave', this._onMouseLeave.bind(this), options);
-    this._mapElement.addEventListener('wheel', (e) => {
+    overlay.addEventListener('mouseleave', this._onMouseLeave.bind(this));
+    
+    overlay.addEventListener('wheel', (e) => {
       console.log('MapView: wheel イベントが発火しました', e.deltaY);
       this._onWheel(e);
-    }, { passive: false, capture: true });
+      e.preventDefault(); // スクロールの伝播を防止
+    }, { passive: false });
     
-    this._mapElement.addEventListener('dblclick', this._onDoubleClick.bind(this), options);
-    this._mapElement.addEventListener('contextmenu', this._onContextMenu.bind(this), options);
+    overlay.addEventListener('dblclick', this._onDoubleClick.bind(this));
+    overlay.addEventListener('contextmenu', this._onContextMenu.bind(this));
     
     // タッチイベント
-    this._mapElement.addEventListener('touchstart', (e) => {
+    overlay.addEventListener('touchstart', (e) => {
       console.log('MapView: touchstart イベントが発火しました', e.touches.length);
       this._onTouchStart(e);
-    }, { passive: false, capture: true });
+      e.preventDefault(); // デフォルトのタッチ動作を防止
+    }, { passive: false });
     
-    this._mapElement.addEventListener('touchmove', this._onTouchMove.bind(this), { passive: false, capture: true });
-    this._mapElement.addEventListener('touchend', this._onTouchEnd.bind(this), options);
+    overlay.addEventListener('touchmove', (e) => {
+      this._onTouchMove(e);
+      e.preventDefault(); // デフォルトのタッチ動作を防止
+    }, { passive: false });
+    
+    overlay.addEventListener('touchend', this._onTouchEnd.bind(this));
     
     // 文書レベルのキーボードイベント
     document.addEventListener('keydown', this._onKeyDown.bind(this));
@@ -167,6 +188,7 @@ export class MapView {
     
     console.log('MapView: すべてのイベントリスナーを設定しました');
   }
+
   /**
    * ビューモデル変更のハンドラ
    * @param {string} type - 変更タイプ
@@ -419,7 +441,6 @@ export class MapView {
    */
   _onMouseDown(event) {
     console.log('MapView: マウスダウンイベントが処理されました', event.clientX, event.clientY);
-    console.log('イベントのターゲット:', event.target);
     
     // 右クリックは無視（コンテキストメニュー用）
     if (event.button === 2) return;
@@ -432,17 +453,20 @@ export class MapView {
     console.log('マップ座標:', screenX, screenY);
     
     this._isMouseDown = true;
+    this._isDragging = false; // ドラッグフラグをリセット
     this._lastMousePosition = { x: screenX, y: screenY };
     
     // 編集モードに応じた処理
     const mode = this._editingViewModel.getMode();
     console.log('現在の編集モード:', mode);
     
-    // レンダラーから直接ビューポートに処理を受け渡す
     if (mode === 'view') {
       // ビューモードでは、ドラッグでパン
       this._viewportManager.startDrag(screenX, screenY);
       console.log('MapView: パン開始', screenX, screenY);
+      
+      // ドラッグカーソルに変更
+      this._overlayElement.style.cursor = 'grabbing';
     } else if (mode === 'add') {
       // 追加モードでは、クリックで点を追加
       const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
@@ -466,6 +490,7 @@ export class MapView {
     event.preventDefault();
     event.stopPropagation();
   }
+  
 
   /**
    * マウス移動のハンドラ
@@ -488,7 +513,7 @@ export class MapView {
         
         if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
           this._isDragging = true;
-          console.log('MapView: ドラッグ開始');
+          console.log('MapView: ドラッグ開始', screenX, screenY);
         }
       }
       
@@ -506,6 +531,16 @@ export class MapView {
           console.log('MapView: オブジェクト移動');
         }
       }
+    } else {
+      // ホバー処理（将来の実装用）
+      const mode = this._editingViewModel.getMode();
+      if (mode === 'add') {
+        this._overlayElement.style.cursor = 'crosshair';
+      } else if (mode === 'edit') {
+        this._overlayElement.style.cursor = 'pointer';
+      } else {
+        this._overlayElement.style.cursor = 'grab';
+      }
     }
     
     this._lastMousePosition = { x: screenX, y: screenY };
@@ -517,17 +552,28 @@ export class MapView {
    * @private
    */
   _onMouseUp(event) {
-    console.log('MapView: マウスアップイベント');
+    console.log('MapView: マウスアップイベントが処理されました', event.clientX, event.clientY);
     
-    if (this._isMouseDown && this._isDragging) {
-      // ドラッグ終了
+    if (this._isMouseDown) {
       const mode = this._editingViewModel.getMode();
       
-      if (mode === 'view') {
-        this._viewportManager.endDrag();
-        console.log('MapView: パン終了');
-      } else if (mode === 'edit') {
-        console.log('MapView: オブジェクト移動終了');
+      if (this._isDragging) {
+        // ドラッグ終了
+        if (mode === 'view') {
+          this._viewportManager.endDrag();
+          console.log('MapView: パン終了');
+          
+          // カーソルを元に戻す
+          this._overlayElement.style.cursor = 'grab';
+        } else if (mode === 'edit') {
+          console.log('MapView: オブジェクト移動終了');
+        }
+      } else {
+        // クリック（ドラッグなし）
+        console.log('MapView: クリックイベント（ドラッグなし）');
+        
+        // この場合はクリックハンドラを呼び出す
+        this._handleClick(event);
       }
     }
     
@@ -788,9 +834,40 @@ export class MapView {
    * @private
    */
   _handleClick(event) {
-    // TODO: クリック処理
+    // クリック位置を取得
+    const rect = this._mapElement.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
+    
+    // 世界座標に変換
+    const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
+    
+    console.log('MapView: クリック処理', worldPoint);
+    
+    // モードに応じた処理
+    const mode = this._editingViewModel.getMode();
+    
+    if (mode === 'add') {
+      // 追加モードでの処理
+      console.log('MapView: 追加モードでのクリック');
+      this._editingViewModel.addPoint(worldPoint);
+    } else if (mode === 'edit') {
+      // 編集モードでの処理
+      console.log('MapView: 編集モードでのクリック');
+      // 選択処理
+    } else if (mode === 'view') {
+      // 表示モードでの処理
+      console.log('MapView: 表示モードでのクリック');
+      // オブジェクト情報表示など
+    }
+    
+    // 距離測定モード
+    if (this._isMeasuringDistance) {
+      console.log('MapView: 測定点追加（クリック）', worldPoint);
+      this._measurePoints.push(worldPoint);
+      this._render();
+    }
   }
-
   /**
    * オブジェクトドラッグ処理
    * @param {MouseEvent} event - マウスイベント
@@ -877,20 +954,22 @@ export class MapView {
     this._measurePoints = [];
     this._render();
   }
-  _addDebugEventChecker() {
-    console.log('デバッグ: イベントチェッカーを追加');
+
+_addDebugEventChecker() {
+  console.log('MapView: デバッグ用イベントチェッカーを追加');
+  
+  // オーバーレイ要素にデバッグ用のクリックイベントリスナーを追加
+  this._overlayElement.addEventListener('click', (e) => {
+    const rect = this._mapElement.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    console.log('MapView: オーバーレイがクリックされました', x, y);
     
-    const svg = this._renderer.getSVGElement();
-    if (svg) {
-      svg.addEventListener('click', (e) => {
-        console.log('SVG要素がクリックされました', e.clientX, e.clientY);
-      });
-      
-      this._mapElement.addEventListener('click', (e) => {
-        console.log('マップ要素がクリックされました', e.clientX, e.clientY);
-      });
-      
-      console.log('デバッグ: イベントリスナーを設定しました');
-    }
-  }
+    // クリック時に世界座標も表示
+    const worldPoint = this._viewportManager.screenToWorld(x, y);
+    console.log('MapView: クリック世界座標', worldPoint.x, worldPoint.y);
+  });
+  
+  console.log('MapView: デバッグリスナーを追加しました');
+}
 }

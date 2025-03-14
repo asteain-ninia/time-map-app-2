@@ -40,9 +40,12 @@ export class SVGRenderer {
     this._svg.setAttribute("height", this._options.height);
     this._svg.setAttribute("viewBox", `0 0 ${this._options.width} ${this._options.height}`);
     this._svg.style.display = "block";
+    this._svg.style.position = "absolute";
+    this._svg.style.top = "0";
+    this._svg.style.left = "0";
     
-    // 重要：ポインターイベントを設定
-    this._svg.style.pointerEvents = "all"; // autoからallに変更
+    // SVGはオーバーレイからのイベントを受け取らないように
+    this._svg.style.pointerEvents = "none";
     
     // グループ要素も同様に設定
     this._defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
@@ -50,17 +53,17 @@ export class SVGRenderer {
     
     this._mainGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._mainGroup.setAttribute("class", "main-group");
-    this._mainGroup.style.pointerEvents = "all"; // autoからallに変更
+    this._mainGroup.style.pointerEvents = "none";
     this._svg.appendChild(this._mainGroup);
     
     this._gridGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._gridGroup.setAttribute("class", "grid-group");
-    this._gridGroup.style.pointerEvents = "all"; // 明示的に設定
+    this._gridGroup.style.pointerEvents = "none";
     this._mainGroup.appendChild(this._gridGroup);
     
     this._featuresGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._featuresGroup.setAttribute("class", "features-group");
-    this._featuresGroup.style.pointerEvents = "all"; // 明示的に設定
+    this._featuresGroup.style.pointerEvents = "none";
     this._mainGroup.appendChild(this._featuresGroup);
     
     // SVG要素の座標系を調整するため、transform-originを設定
@@ -70,11 +73,6 @@ export class SVGRenderer {
     this._container.appendChild(this._svg);
     
     console.log('SVGRenderer: SVG要素の初期化が完了しました');
-    
-    // デバッグ用: SVG要素にクリックリスナーを追加
-    this._svg.addEventListener('click', (e) => {
-      console.log('SVGRenderer: SVG要素がクリックされました', e.clientX, e.clientY);
-    });
   }
 
   /**
@@ -98,6 +96,10 @@ export class SVGRenderer {
    * @param {TimePoint} currentTime - 現在の時間点
    */
   render(world, viewport, currentTime) {
+    // SVG要素のサイズを更新
+    this._svg.setAttribute("width", viewport.width);
+    this._svg.setAttribute("height", viewport.height);
+
     // グリッドを描画
     this._renderGrid(viewport);
     
@@ -149,6 +151,23 @@ export class SVGRenderer {
       
       this._featuresGroup.appendChild(layerGroup);
     }
+
+    // ビューポートに基づいて SVG 要素のスタイルを更新
+    this._updateSVGTransform(viewport);
+  }
+
+  /**
+   * SVG要素の変換を更新
+   * @param {Object} viewport - ビューポート情報 { x, y, zoom, width, height }
+   * */   
+  _updateSVGTransform(viewport) {
+    // ビューポートの中心から画面の中心へのオフセットを計算
+    const offsetX = viewport.width / 2 - viewport.x * viewport.zoom;
+    const offsetY = viewport.height / 2 - viewport.y * viewport.zoom;
+    
+    // SVG要素に変換を適用
+    const transform = `translate(${offsetX}px, ${offsetY}px) scale(${viewport.zoom})`;
+    this._svg.style.transform = transform;
   }
 
   /**
@@ -883,6 +902,13 @@ export class SVGRenderer {
     // メイングループの最初の子として挿入
     this._mainGroup.insertBefore(backgroundGroup, this._mainGroup.firstChild);
     
+    // SVG全体のpointerEventsをnoneに設定
+    this._svg.style.pointerEvents = "none";
+    this._mainGroup.style.pointerEvents = "none";
+    this._featuresGroup.style.pointerEvents = "none";
+    this._gridGroup.style.pointerEvents = "none";
+    backgroundGroup.style.pointerEvents = "none";
+    
     // ビューポートが提供されていれば調整
     if (viewportManager) {
       // コンテナのサイズを取得
@@ -904,9 +930,6 @@ export class SVGRenderer {
         y: mapHeight / 2
       });
     }
-    
-    // SVG要素とその子要素のポインターイベントを設定
-    this._setPointerEvents();
     
     console.log('背景地図を設定しました');
   }

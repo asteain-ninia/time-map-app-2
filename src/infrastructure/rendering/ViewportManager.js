@@ -146,18 +146,25 @@ export class ViewportManager {
   drag(screenX, screenY) {
     if (!this._isDragging) return;
     
-    console.log('ViewportManager: ドラッグ中', screenX, screenY);
-    
+    // ドラッグ距離を計算
     const dx = screenX - this._dragStart.x;
     const dy = screenY - this._dragStart.y;
     
-    // ズームレベルに合わせて移動量を調整
+    // スクリーン座標をワールド座標へ変換
     const adjustedDx = dx / this._viewport.zoom;
     const adjustedDy = dy / this._viewport.zoom;
     
+    // 新しい中心座標を計算
+    const newX = this._viewportStart.x - adjustedDx;
+    const newY = this._viewportStart.y - adjustedDy;
+    
+    console.log('ViewportManager: ドラッグ中', dx, dy, '→', adjustedDx, adjustedDy);
+    console.log('ViewportManager: 新中心', newX, newY);
+    
+    // ビューポートを更新
     this.updateViewport({
-      x: this._viewportStart.x - adjustedDx,
-      y: this._viewportStart.y - adjustedDy
+      x: newX,
+      y: newY
     });
   }
 
@@ -217,9 +224,29 @@ export class ViewportManager {
    */
   _notifyListeners() {
     const viewport = this.getViewport();
+    
+    // SVG要素を取得して変換を適用
+    const svgElement = document.querySelector('svg');
+    if (svgElement) {
+      this._applySVGTransform(svgElement, viewport);
+    }
+    
+    // リスナーに通知
     for (const listener of this._listeners) {
       listener(viewport);
     }
+  }
+
+  _applySVGTransform(svgElement, viewport) {
+    // ビューポートの中心から画面の中心へのオフセットを計算
+    const offsetX = viewport.width / 2 - viewport.x * viewport.zoom;
+    const offsetY = viewport.height / 2 - viewport.y * viewport.zoom;
+    
+    // SVG要素に変換を適用
+    const transform = `translate(${offsetX}px, ${offsetY}px) scale(${viewport.zoom})`;
+    svgElement.style.transform = transform;
+    
+    console.log('ViewportManager: SVG変換を適用', transform);
   }
 
   /**
