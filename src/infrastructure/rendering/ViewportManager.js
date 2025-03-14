@@ -132,6 +132,7 @@ export class ViewportManager {
    * @param {number} screenY - スクリーンY座標
    */
   startDrag(screenX, screenY) {
+    console.log('ViewportManager: ドラッグ開始', screenX, screenY);
     this._isDragging = true;
     this._dragStart = { x: screenX, y: screenY };
     this._viewportStart = { x: this._viewport.x, y: this._viewport.y };
@@ -144,6 +145,8 @@ export class ViewportManager {
    */
   drag(screenX, screenY) {
     if (!this._isDragging) return;
+    
+    console.log('ViewportManager: ドラッグ中', screenX, screenY);
     
     const dx = screenX - this._dragStart.x;
     const dy = screenY - this._dragStart.y;
@@ -162,6 +165,7 @@ export class ViewportManager {
    * ドラッグ終了
    */
   endDrag() {
+    console.log('ViewportManager: ドラッグ終了');
     this._isDragging = false;
   }
 

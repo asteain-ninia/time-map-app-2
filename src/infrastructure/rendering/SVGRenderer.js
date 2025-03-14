@@ -32,6 +32,8 @@ export class SVGRenderer {
    * @private
    */
   _initSVG() {
+    console.log('SVGRenderer: SVG要素を初期化します');
+    
     // SVG要素を作成
     this._svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     this._svg.setAttribute("width", this._options.width);
@@ -40,27 +42,39 @@ export class SVGRenderer {
     this._svg.style.display = "block";
     
     // 重要：ポインターイベントを設定
-    this._svg.style.pointerEvents = "auto";
+    this._svg.style.pointerEvents = "all"; // autoからallに変更
     
-    // グループ要素を作成
+    // グループ要素も同様に設定
     this._defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
     this._svg.appendChild(this._defs);
     
     this._mainGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._mainGroup.setAttribute("class", "main-group");
-    this._mainGroup.style.pointerEvents = "auto";
+    this._mainGroup.style.pointerEvents = "all"; // autoからallに変更
     this._svg.appendChild(this._mainGroup);
     
     this._gridGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._gridGroup.setAttribute("class", "grid-group");
+    this._gridGroup.style.pointerEvents = "all"; // 明示的に設定
     this._mainGroup.appendChild(this._gridGroup);
     
     this._featuresGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._featuresGroup.setAttribute("class", "features-group");
+    this._featuresGroup.style.pointerEvents = "all"; // 明示的に設定
     this._mainGroup.appendChild(this._featuresGroup);
+    
+    // SVG要素の座標系を調整するため、transform-originを設定
+    this._svg.style.transformOrigin = "0 0";
     
     // コンテナに追加
     this._container.appendChild(this._svg);
+    
+    console.log('SVGRenderer: SVG要素の初期化が完了しました');
+    
+    // デバッグ用: SVG要素にクリックリスナーを追加
+    this._svg.addEventListener('click', (e) => {
+      console.log('SVGRenderer: SVG要素がクリックされました', e.clientX, e.clientY);
+    });
   }
 
   /**
@@ -810,26 +824,26 @@ export class SVGRenderer {
     }
   }
 
-/**
- * SVG要素を取得
- * @returns {SVGElement} SVG要素
- */
-getSVGElement() {
-  return this._svg;
-}
-
-/**
- * 初期化済みかどうか
- * @returns {boolean} 初期化済みならtrue
- */
-isInitialized() {
-  return !!this._svg;
-}
+  /**
+   * SVG要素を取得
+   * @returns {SVGElement} SVG要素
+   */
+  getSVGElement() {
+    return this._svg;
+  }
 
   /**
- * 背景地図を読み込む
- * @param {string} svgContent - SVG形式の地図内容
- */
+   * 初期化済みかどうか
+   * @returns {boolean} 初期化済みならtrue
+   */
+  isInitialized() {
+    return !!this._svg;
+  }
+
+  /**
+   * 背景地図を読み込む
+   * @param {string} svgContent - SVG形式の地図内容
+   */
   loadBackgroundMap(svgContent, viewportManager = null) {
     // 既存の背景要素をクリア
     const existingBackground = this._svg.querySelector('.background-map');
@@ -891,6 +905,33 @@ isInitialized() {
       });
     }
     
+    // SVG要素とその子要素のポインターイベントを設定
+    this._setPointerEvents();
+    
     console.log('背景地図を設定しました');
+  }
+  
+  /**
+   * SVG要素とその子要素にポインターイベントを設定
+   * @private
+   */
+  _setPointerEvents() {
+    if (!this._svg) return;
+    
+    console.log('SVGRenderer: ポインターイベントを設定します');
+    
+    // SVG要素自体にポインターイベントを設定
+    this._svg.style.pointerEvents = 'all';
+    this._mainGroup.style.pointerEvents = 'all';
+    this._featuresGroup.style.pointerEvents = 'all';
+    this._gridGroup.style.pointerEvents = 'all';
+    
+    // 背景地図のグループはイベントを透過させる
+    const bgMap = this._svg.querySelector('.background-map');
+    if (bgMap) {
+      bgMap.style.pointerEvents = 'none';
+    }
+    
+    console.log('SVGRenderer: ポインターイベント設定完了');
   }
 }

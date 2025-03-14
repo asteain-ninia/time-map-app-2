@@ -34,6 +34,7 @@ export class MapView {
     
     // 初期化
     this._initialize();
+    this._addDebugEventChecker();
   }
 
   /**
@@ -41,6 +42,8 @@ export class MapView {
    * @private
    */
   _initialize() {
+    console.log('MapView: 初期化開始');
+
     // マップコンテナ作成
     this._mapElement = document.createElement('div');
     this._mapElement.className = 'map-container';
@@ -50,7 +53,11 @@ export class MapView {
     this._mapElement.style.overflow = 'hidden';
     this._mapElement.style.backgroundColor = '#f0f0f0';
     
-    // ビューモデルとの連携
+    // コンテナに追加 - これを先に実行
+    this._container.appendChild(this._mapElement);
+    console.log('MapView: コンテナにマップ要素を追加しました');
+  
+  // ビューモデルとの連携
     this._viewModel.addObserver(this._onViewModelChanged.bind(this));
     this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
     
@@ -59,28 +66,53 @@ export class MapView {
     
     // マップ自体にイベントリスナーを設定 (重要な変更)
     this._setupEventListeners();
-    
+    console.log('MapView: イベントリスナーを設定しました');
+
     // 初回描画
     this._render();
+    console.log('MapView: 初期描画完了');
+    
+    // SVG要素のポインターイベントを設定（レンダリング後）
+    setTimeout(() => {
+      this._setSVGPointerEvents();
+    }, 100);
   }
 
   _setSVGPointerEvents() {
     // SVG要素にポインターイベントを設定
-    setTimeout(() => {
-      const svg = this._mapElement.querySelector('svg');
-      if (svg) {
-        console.log('SVG要素を見つけました、ポインターイベントを設定します');
-        svg.style.pointerEvents = 'auto';
-        
-        // 背景地図のグループにはイベントを透過させる
-        const bgMap = svg.querySelector('.background-map');
-        if (bgMap) {
-          bgMap.style.pointerEvents = 'auto';
+    const svg = this._renderer.getSVGElement();
+    if (svg) {
+      console.log('SVG要素を見つけました、ポインターイベントを設定します');
+      svg.style.pointerEvents = 'all';
+      
+      // SVG内のすべての要素に対してポインターイベントを再帰的に設定
+      const setPointerEventsRecursively = (element) => {
+        if (element.nodeType === Node.ELEMENT_NODE) {
+          // 背景地図の要素はイベントを透過
+          if (element.classList.contains('background-map')) {
+            element.style.pointerEvents = 'none';
+          } else {
+            element.style.pointerEvents = 'all';
+          }
+          
+          // 子要素にも適用
+          for (const child of element.children) {
+            setPointerEventsRecursively(child);
+          }
         }
-      } else {
-        console.warn('SVG要素が見つかりません');
-      }
-    }, 500); // レンダリング後に実行
+      };
+      
+      setPointerEventsRecursively(svg);
+      
+      console.log('SVG要素のポインターイベント設定完了');
+    } else {
+      console.warn('SVG要素が見つかりません');
+      
+      // SVGが見つからない場合は再試行
+      setTimeout(() => {
+        this._setSVGPointerEvents();
+      }, 100);
+    }
   }
 
   /**
@@ -90,21 +122,51 @@ export class MapView {
   _setupEventListeners() {
     console.log('MapView: イベントリスナーを設定します');
     
-    // 重要: マップ要素自体にイベントリスナーを設定
-    this._mapElement.addEventListener('mousedown', this._onMouseDown.bind(this));
-    this._mapElement.addEventListener('mousemove', this._onMouseMove.bind(this));
-    this._mapElement.addEventListener('mouseup', this._onMouseUp.bind(this));
-    this._mapElement.addEventListener('mouseleave', this._onMouseLeave.bind(this));
-    this._mapElement.addEventListener('wheel', this._onWheel.bind(this), { passive: false });
-    this._mapElement.addEventListener('dblclick', this._onDoubleClick.bind(this));
-    this._mapElement.addEventListener('contextmenu', this._onContextMenu.bind(this));
+    // マップ要素自体にイベントリスナーを設定（キャプチャフェーズとバブリングフェーズの両方）
+    const options = { capture: true };
+    
+    this._mapElement.addEventListener('mousedown', (e) => {
+      console.log('MapView: mousedown イベントが発火しました (キャプチャ)', e.clientX, e.clientY);
+      this._onMouseDown(e);
+    }, options);
+    
+    this._mapElement.addEventListener('mousemove', (e) => {
+      // マウス移動は頻繁に発火するのでログは出さない
+      this._onMouseMove(e);
+    }, options);
+    
+    this._mapElement.addEventListener('mouseup', (e) => {
+      console.log('MapView: mouseup イベントが発火しました (キャプチャ)', e.clientX, e.clientY);
+      this._onMouseUp(e);
+    }, options);
+    
+    this._mapElement.addEventListener('mouseleave', this._onMouseLeave.bind(this), options);
+    this._mapElement.addEventListener('wheel', (e) => {
+      console.log('MapView: wheel イベントが発火しました', e.deltaY);
+      this._onWheel(e);
+    }, { passive: false, capture: true });
+    
+    this._mapElement.addEventListener('dblclick', this._onDoubleClick.bind(this), options);
+    this._mapElement.addEventListener('contextmenu', this._onContextMenu.bind(this), options);
     
     // タッチイベント
-    this._mapElement.addEventListener('touchstart', this._onTouchStart.bind(this), { passive: false });
-    this._mapElement.addEventListener('touchmove', this._onTouchMove.bind(this), { passive: false });
-    this._mapElement.addEventListener('touchend', this._onTouchEnd.bind(this));
+    this._mapElement.addEventListener('touchstart', (e) => {
+      console.log('MapView: touchstart イベントが発火しました', e.touches.length);
+      this._onTouchStart(e);
+    }, { passive: false, capture: true });
+    
+    this._mapElement.addEventListener('touchmove', this._onTouchMove.bind(this), { passive: false, capture: true });
+    this._mapElement.addEventListener('touchend', this._onTouchEnd.bind(this), options);
+    
+    // 文書レベルのキーボードイベント
+    document.addEventListener('keydown', this._onKeyDown.bind(this));
+    document.addEventListener('keyup', this._onKeyUp.bind(this));
+    
+    // ウィンドウリサイズ
+    window.addEventListener('resize', this._onResize.bind(this));
+    
+    console.log('MapView: すべてのイベントリスナーを設定しました');
   }
-
   /**
    * ビューモデル変更のハンドラ
    * @param {string} type - 変更タイプ
@@ -356,7 +418,8 @@ export class MapView {
    * @private
    */
   _onMouseDown(event) {
-    console.log('MapView: マウスダウンイベント', event.clientX, event.clientY);
+    console.log('MapView: マウスダウンイベントが処理されました', event.clientX, event.clientY);
+    console.log('イベントのターゲット:', event.target);
     
     // 右クリックは無視（コンテキストメニュー用）
     if (event.button === 2) return;
@@ -366,11 +429,14 @@ export class MapView {
     const screenX = event.clientX - rect.left;
     const screenY = event.clientY - rect.top;
     
+    console.log('マップ座標:', screenX, screenY);
+    
     this._isMouseDown = true;
     this._lastMousePosition = { x: screenX, y: screenY };
     
     // 編集モードに応じた処理
     const mode = this._editingViewModel.getMode();
+    console.log('現在の編集モード:', mode);
     
     // レンダラーから直接ビューポートに処理を受け渡す
     if (mode === 'view') {
@@ -810,5 +876,21 @@ export class MapView {
   clearMeasurements() {
     this._measurePoints = [];
     this._render();
+  }
+  _addDebugEventChecker() {
+    console.log('デバッグ: イベントチェッカーを追加');
+    
+    const svg = this._renderer.getSVGElement();
+    if (svg) {
+      svg.addEventListener('click', (e) => {
+        console.log('SVG要素がクリックされました', e.clientX, e.clientY);
+      });
+      
+      this._mapElement.addEventListener('click', (e) => {
+        console.log('マップ要素がクリックされました', e.clientX, e.clientY);
+      });
+      
+      console.log('デバッグ: イベントリスナーを設定しました');
+    }
   }
 }

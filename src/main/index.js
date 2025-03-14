@@ -222,10 +222,23 @@ class TimeMapApp {
         zoom: zoom
       });
       
-      // 背景地図を読み込む
-      renderer.loadBackgroundMap(svgContent);
+      // 背景地図を読み込む - ビューポートマネージャーを引数として渡す
+      renderer.loadBackgroundMap(svgContent, viewportManager);
       
       console.log('背景地図を読み込みました');
+      
+      // イベントハンドラが正しく設定されていることを確認
+      setTimeout(() => {
+        // MapViewインスタンスへの参照を取得
+        const mapView = this._di.get('mapView');
+        if (mapView) {
+          // デバッグ用のイベントチェッカーを追加
+          if (typeof mapView._addDebugEventChecker === 'function') {
+            mapView._addDebugEventChecker();
+          }
+        }
+      }, 1000);
+      
     } catch (error) {
       console.error('背景地図の読み込みに失敗しました', error);
       console.error('エラーの詳細:', error.message);
