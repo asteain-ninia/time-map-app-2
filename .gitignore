@@ -129,4 +129,8 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-/backups
+# Generated data files
+world.json
+
+# Backup files
+backups/

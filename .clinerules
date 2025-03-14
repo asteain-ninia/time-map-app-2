@@ -1,0 +1,503 @@
+# 時空地図アプリケーション プロジェクトルール
+
+このファイルは、時空地図アプリケーション（time-map-app）の開発に関する重要なパターン、プロジェクト固有の規則、および暗黙知を記録するものです。これらの情報は、コードベースを理解し、一貫性のある開発を行うために重要です。
+
+## コーディングパターン
+
+### 1. 不変オブジェクトパターン
+
+すべてのドメインオブジェクト（エンティティと値オブジェクト）は不変（イミュータブル）に設計されています。状態変更には新しいインスタンスを返す方法を採用しています。
+
+```javascript
+// 正しいパターン
+class Layer {
+  constructor(id, name, order, visible = true) {
+    this._id = id;
+    this._name = name;
+    this._order = order;
+    this._visible = visible;
+    Object.freeze(this);  // オブジェクトを不変に
+  }
+
+  // 状態変更には新しいインスタンスを返す
+  withVisibility(visible) {
+    return new Layer(this._id, this._name, this._order, visible);
+  }
+}
+
+// 誤ったパターン - 直接プロパティを変更しない
+layer._visible = false;  // ❌ 不変オブジェクトの直接変更
+```
+
+### 2. プライベートプロパティの命名規則
+
+クラスのプライベートプロパティは先頭にアンダースコア（_）を付けて命名します。
+
+```javascript
+// 正しいパターン
+class Feature {
+  constructor(id, properties) {
+    this._id = id;
+    this._properties = properties;
+  }
+  
+  get id() { return this._id; }
+  get properties() { return this._properties; }
+}
+```
+
+### 3. オブザーバーパターンの実装
+
+状態変更の通知にはオブザーバーパターンを使用します。特に、ビューモデルからビューへの通知に使用されます。
+
+```javascript
+// 正しいパターン
+class ViewModel {
+  constructor() {
+    this._observers = [];
+    this._data = null;
+  }
+  
+  addObserver(observer) {
+    if (!this._observers.includes(observer)) {
+      this._observers.push(observer);
+    }
+  }
+  
+  removeObserver(observer) {
+    const index = this._observers.indexOf(observer);
+    if (index !== -1) {
+      this._observers.splice(index, 1);
+    }
+  }
+  
+  _notifyObservers(type, data) {
+    for (const observer of this._observers) {
+      observer(type, data);
+    }
+  }
+  
+  updateData(newData) {
+    this._data = newData;
+    this._notifyObservers('data', this._data);
+  }
+}
+```
+
+### 4. イベントバスの使用
+
+コンポーネント間の疎結合な通信にはイベントバスを使用します。
+
+```javascript
+// 正しいパターン
+// イベントの発行
+eventBus.publish('FeatureAdded', { feature });
+
+// イベントの購読
+eventBus.subscribe('FeatureAdded', this._onFeatureAdded.bind(this));
+```
+
+### 5. 非同期操作の処理
+
+非同期操作には常にPromiseとasync/awaitを使用します。
+
+```javascript
+// 正しいパターン
+async function loadWorld() {
+  try {
+    const data = await fileSystem.readFile('world.json');
+    return serializer.deserialize(data);
+  } catch (error) {
+    console.error('世界データのロードに失敗しました', error);
+    throw error;
+  }
+}
+
+// 誤ったパターン - コールバックの使用は避ける
+function loadWorld(callback) {  // ❌ コールバックパターン
+  fileSystem.readFile('world.json', (err, data) => {
+    if (err) {
+      console.error('世界データのロードに失敗しました', err);
+      callback(err, null);
+      return;
+    }
+    callback(null, serializer.deserialize(data));
+  });
+}
+```
+
+## プロジェクト固有のルール
+
+### 1. レイヤー間の依存関係
+
+アーキテクチャの層間の依存関係は以下の方向のみ許可されます：
+
+```
+プレゼンテーション層 → アプリケーション層 → ドメイン層
+↓
+インフラストラクチャ層
+```
+
+- ドメイン層は他のどの層にも依存してはいけません。
+- アプリケーション層はドメイン層にのみ依存できます。
+- プレゼンテーション層はアプリケーション層とドメイン層に依存できます。
+- インフラストラクチャ層はすべての層に依存できますが、主にドメインインターフェースの実装を提供します。
+
+### 2. ファイル命名規則
+
+- **エンティティ**: PascalCase、単数形（例: `Feature.js`, `Layer.js`）
+- **値オブジェクト**: PascalCase、単数形（例: `Coordinate.js`, `TimePoint.js`）
+- **サービス**: PascalCase、「Service」サフィックス（例: `GeometryService.js`）
+- **リポジトリ**: PascalCase、「Repository」サフィックス（例: `WorldRepository.js`）
+- **ユースケース**: PascalCase、「UseCase」サフィックス（例: `EditFeatureUseCase.js`）
+- **ビュー**: PascalCase、「View」サフィックス（例: `MapView.js`）
+- **ビューモデル**: PascalCase、「ViewModel」サフィックス（例: `MapViewModel.js`）
+- **コントローラ**: PascalCase、「Controller」サフィックス（例: `MapController.js`）
+
+### 3. エラー処理ポリシー
+
+- ドメイン層では、ドメインルール違反に対して例外をスローします。
+- アプリケーション層では、ユースケース実行中のエラーを適切に処理し、上位層に伝播します。
+- インフラストラクチャ層では、外部システムのエラーをアプリケーション固有の例外に変換します。
+- プレゼンテーション層では、エラーをユーザーフレンドリーなメッセージに変換して表示します。
+
+```javascript
+// 正しいパターン
+try {
+  await worldRepository.saveWorld(world);
+} catch (error) {
+  if (error instanceof FileSystemError) {
+    // ファイルシステムエラーの処理
+    ui.showErrorMessage('ファイルの保存に失敗しました。ディスク容量を確認してください。');
+  } else if (error instanceof ValidationError) {
+    // バリデーションエラーの処理
+    ui.showErrorMessage(`データが無効です: ${error.message}`);
+  } else {
+    // 予期せぬエラーの処理
+    ui.showErrorMessage('予期せぬエラーが発生しました。');
+    logger.error('予期せぬエラー', error);
+  }
+}
+```
+
+### 4. イベント命名規則
+
+イベント名はパスカルケースで、動詞の過去形を使用します。
+
+```javascript
+// 正しいパターン
+'FeatureAdded'
+'FeatureUpdated'
+'FeatureDeleted'
+'TimeChanged'
+'LayerVisibilityChanged'
+
+// 誤ったパターン
+'add_feature'  // ❌ スネークケース
+'updateFeature'  // ❌ 現在形
+```
+
+### 5. コメント規則
+
+- すべてのクラス、メソッド、関数には JSDoc 形式のコメントを付けます。
+- 複雑なロジックには説明コメントを追加します。
+- コメントは日本語で記述します。
+
+```javascript
+/**
+ * 特徴オブジェクトを作成するファクトリーメソッド
+ * @param {string} id - 特徴ID
+ * @param {string} type - 特徴タイプ ('point', 'line', 'polygon')
+ * @param {Object[]} properties - プロパティの配列
+ * @param {Object} geometry - 形状情報
+ * @param {string} layerId - レイヤーID
+ * @returns {Feature} 作成された特徴オブジェクト
+ * @throws {Error} 不明な特徴タイプの場合
+ */
+static create(id, type, properties, geometry, layerId) {
+  // 実装...
+}
+```
+
+## 重要な実装パターン
+
+### 1. 時間依存データの管理
+
+時間依存データは、各オブジェクトが時間依存プロパティの配列を持ち、特定時点のプロパティは時間でフィルタリングして取得します。
+
+```javascript
+// 特定時点のプロパティを取得
+getPropertyAt(timePoint) {
+  if (!this._properties || this._properties.length === 0) {
+    return null;
+  }
+  
+  // 時間でソート（最新のものが後ろ）
+  const sortedProps = [...this._properties].sort((a, b) => 
+    compareTimePoints(a.timePoint, b.timePoint)
+  );
+  
+  // 指定時点以前で最も新しいプロパティを見つける
+  let result = null;
+  for (const prop of sortedProps) {
+    if (isTimePointBeforeOrEqual(prop.timePoint, timePoint)) {
+      result = prop;
+    } else {
+      break;
+    }
+  }
+  
+  // 存在期間のチェック
+  if (result && result.timeRange) {
+    if (result.timeRange.end && isTimePointBefore(result.timeRange.end, timePoint)) {
+      return null; // 終了時点を過ぎている
+    }
+  }
+  
+  return result;
+}
+```
+
+### 2. 共有頂点の管理
+
+共有頂点は、頂点IDの参照によって管理されます。同じ頂点IDを参照する複数のオブジェクトは、その頂点を共有します。
+
+```javascript
+// 頂点の移動
+async moveVertex(vertexId, newPosition) {
+  // 頂点を更新
+  const vertex = this._world.vertices.find(v => v.id === vertexId);
+  if (!vertex) {
+    throw new Error(`Vertex not found: ${vertexId}`);
+  }
+  
+  const updatedVertex = vertex.withCoordinates(newPosition.x, newPosition.y);
+  
+  // 影響を受ける特徴を見つける
+  const affectedFeatures = this._world.features.filter(feature => 
+    feature.vertexIds && feature.vertexIds.includes(vertexId)
+  );
+  
+  // 世界データを更新
+  const updatedWorld = {
+    ...this._world,
+    vertices: this._world.vertices.map(v => 
+      v.id === vertexId ? updatedVertex : v
+    ),
+    // 必要に応じて特徴も更新
+  };
+  
+  await this._worldRepository.saveWorld(updatedWorld);
+  
+  return {
+    vertex: updatedVertex,
+    affectedFeatures
+  };
+}
+```
+
+### 3. レイヤー階層の管理
+
+レイヤーは固定の階層順序を持ち、下位レイヤーの面情報は上位レイヤーの面情報に属します。
+
+```javascript
+// レイヤー階層の検証
+validateLayerHierarchy(layers, polygons) {
+  // レイヤーを順序でソート
+  const sortedLayers = [...layers].sort((a, b) => a.order - b.order);
+  
+  // 各ポリゴンについて
+  for (const polygon of polygons) {
+    // 最上位レイヤーのポリゴンは親を持たない
+    const layer = layers.find(l => l.id === polygon.layerId);
+    const layerIndex = sortedLayers.findIndex(l => l.id === layer.id);
+    
+    if (layerIndex > 0) {
+      // 上位レイヤーが存在する場合
+      if (polygon.parentId === '0') {
+        throw new Error(`Polygon ${polygon.id} in layer ${layer.name} must have a parent`);
+      }
+      
+      // 親ポリゴンが上位レイヤーに属することを確認
+      const parent = polygons.find(p => p.id === polygon.parentId);
+      if (!parent) {
+        throw new Error(`Parent polygon ${polygon.parentId} not found for polygon ${polygon.id}`);
+      }
+      
+      const parentLayer = layers.find(l => l.id === parent.layerId);
+      const parentLayerIndex = sortedLayers.findIndex(l => l.id === parentLayer.id);
+      
+      if (parentLayerIndex >= layerIndex) {
+        throw new Error(`Parent polygon must be in a higher layer than child polygon`);
+      }
+    }
+  }
+}
+```
+
+### 4. ビューポート管理
+
+ビューポートは、世界座標とスクリーン座標の変換を担当します。
+
+```javascript
+// 世界座標からスクリーン座標への変換
+worldToScreen(worldX, worldY) {
+  const { x, y, zoom, width, height } = this._viewport;
+  
+  // 中心座標からの相対位置
+  const relativeX = (worldX - x) * zoom;
+  const relativeY = (worldY - y) * zoom;
+  
+  // スクリーン中心からの位置
+  const screenX = width / 2 + relativeX;
+  const screenY = height / 2 - relativeY; // Y軸は反転
+  
+  return { x: screenX, y: screenY };
+}
+
+// スクリーン座標から世界座標への変換
+screenToWorld(screenX, screenY) {
+  const { x, y, zoom, width, height } = this._viewport;
+  
+  // スクリーン中心からの相対位置
+  const relativeX = screenX - width / 2;
+  const relativeY = height / 2 - screenY; // Y軸は反転
+  
+  // 世界座標
+  const worldX = x + relativeX / zoom;
+  const worldY = y + relativeY / zoom;
+  
+  return { x: worldX, y: worldY };
+}
+```
+
+## 開発ワークフロー
+
+### 1. 機能開発フロー
+
+1. 機能要件の理解と設計
+2. 必要なドメインオブジェクトの実装
+3. ユースケースの実装
+4. ビューモデルの実装
+5. ビューの実装
+6. 単体テストの作成
+7. 統合テストの作成
+8. コードレビュー
+9. マージ
+
+### 2. バグ修正フロー
+
+1. バグの再現と原因特定
+2. 単体テストの作成（バグを再現するテスト）
+3. 修正の実装
+4. テストの実行と確認
+5. コードレビュー
+6. マージ
+
+### 3. リファクタリングフロー
+
+1. リファクタリングの目的と範囲の明確化
+2. 既存のテストの確認
+3. 必要に応じて追加テストの作成
+4. リファクタリングの実施
+5. テストの実行と確認
+6. コードレビュー
+7. マージ
+
+## 既知の問題と回避策
+
+### 1. SVGレンダリングのパフォーマンス
+
+**問題**: 大量のオブジェクト（1000以上）を含む場合、SVGレンダリングが遅延する。
+
+**回避策**:
+- ビューポートクリッピングを使用して、表示領域外のオブジェクトは描画しない。
+- ズームレベルに応じたレベルオブディテール（LOD）を実装する。
+- 大規模データセットでは、一部の詳細表示を無効化するオプションを提供する。
+
+### 2. 時間変更時のパフォーマンス
+
+**問題**: 大量のデータがある場合、時間スライダー操作後の表示更新に遅延が発生する。
+
+**回避策**:
+- 時間変更イベントをスロットリングする（例: 100ms間隔）。
+- 時間依存データのキャッシュを実装する。
+- スライダードラッグ中は簡易表示モードを使用し、ドラッグ終了時に完全表示に切り替える。
+
+### 3. 共有頂点の編集複雑性
+
+**問題**: 共有頂点の編集が複雑で、予期しない動作を引き起こす可能性がある。
+
+**回避策**:
+- 共有頂点の視覚的フィードバックを強化する（特別な色やサイズで表示）。
+- 共有頂点の編集前に警告や確認ダイアログを表示する。
+- 共有頂点の編集操作を一時的に無効化するオプションを提供する。
+
+## ユーザー体験のガイドライン
+
+### 1. 応答性
+
+- すべてのユーザー操作は100ms以内に視覚的フィードバックを提供する。
+- 長時間の操作（保存、読み込みなど）にはプログレスインジケータを表示する。
+- バックグラウンド処理はメインスレッドをブロックしないようにする。
+
+### 2. エラーフィードバック
+
+- エラーメッセージは具体的で、問題の原因と可能な解決策を示す。
+- 致命的でないエラーは通知として表示し、ユーザーの作業を中断しない。
+- データ損失の可能性があるエラーは、明確な警告と回復オプションを提供する。
+
+### 3. 編集操作
+
+- 編集操作は常に元に戻せるようにする（アンドゥ機能）。
+- 複雑な編集操作の前に確認ダイアログを表示する。
+- 編集中のオブジェクトは視覚的に強調表示する。
+
+## 開発環境のセットアップ
+
+### 1. 必要なツール
+
+- Node.js v16.x 以上
+- npm v8.x 以上
+- Git
+- Visual Studio Code（推奨）
+
+### 2. 推奨VSCode拡張機能
+
+- ESLint
+- Prettier
+- SVG Viewer
+- Mermaid Preview
+- Jest
+
+### 3. 開発環境セットアップ手順
+
+```bash
+# リポジトリのクローン
+git clone https://github.com/username/time-map-app.git
+cd time-map-app
+
+# 依存関係のインストール
+npm install
+
+# 開発サーバーの起動
+npm run dev
+```
+
+## 用語集
+
+| 用語 | 定義 |
+|------|------|
+| 特徴 (Feature) | 地図上の地理的オブジェクト（点、線、面）の総称 |
+| 頂点 (Vertex) | 地理オブジェクトの形状を定義する点 |
+| 共有頂点 | 複数のオブジェクトで共有される頂点 |
+| レイヤー | 地理情報を階層的に管理するための層 |
+| 上位レイヤー | 対象レイヤーより階層が上のレイヤー |
+| 下位レイヤー | 対象レイヤーより階層が下のレイヤー |
+| 上位領域 | 対象の面情報が属する上位レイヤーの面情報 |
+| 下位領域 | 対象の面情報に属する下位レイヤーの面情報 |
+| 時間点 | 特定の時点（年/月/日） |
+| 時間範囲 | 開始時点と終了時点で定義される期間 |
+| 飛び地 | 地理的に分離した同一の面情報の一部 |
+| 穴 | 面情報内部にある除外される領域 |
+| ビューポート | 現在表示されている地図の範囲と拡大率 |
