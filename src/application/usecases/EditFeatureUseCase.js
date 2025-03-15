@@ -36,7 +36,7 @@ export class EditFeatureUseCase {
     // 形状情報の検証とID割り当て
     const processedGeometry = this._processGeometry(geometry, world);
     
-    // 適切なファクトリーメソッドを使用して特徴オブジェクトを作成
+    // 適切なファクトリーメソッドを使用して地物オブジェクトを作成
     let feature;
     switch (featureType) {
       case 'point':
@@ -309,7 +309,7 @@ export class EditFeatureUseCase {
   /**
    * 共有頂点を解除
    * @param {string} vertexId - 共有を解除する頂点のID
-   * @param {string} featureId - この特徴に対して新しい頂点を作成
+   * @param {string} featureId - このに対して新しい頂点を作成
    * @returns {Promise<Object>} 更新情報 { newVertex, updatedFeature }
    */
   async unlinkSharedVertex(vertexId, featureId) {
@@ -321,7 +321,7 @@ export class EditFeatureUseCase {
       throw new Error(`Vertex not found with ID: ${vertexId}`);
     }
     
-    // 特徴を検索
+    // を検索
     const featureIndex = world.features.findIndex(f => f.id === featureId);
     if (featureIndex === -1) {
       throw new Error(`Feature not found with ID: ${featureId}`);
@@ -329,7 +329,7 @@ export class EditFeatureUseCase {
     
     const feature = world.features[featureIndex];
     
-    // 特徴が指定された頂点を使用しているか確認
+    // が指定された頂点を使用しているか確認
     if (!feature.vertexIds.includes(vertexId)) {
       throw new Error(`Feature does not use vertex with ID: ${vertexId}`);
     }
@@ -341,7 +341,7 @@ export class EditFeatureUseCase {
     
     world.vertices.push(newVertex);
     
-    // 特徴の頂点IDsを更新
+    // の頂点IDsを更新
     const newVertexIds = feature.vertexIds.map(id => 
       id === vertexId ? newVertexId : id
     );

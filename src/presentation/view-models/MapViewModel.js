@@ -48,7 +48,7 @@ export class MapViewModel {
       const worldRepository = this._editFeatureUseCase._worldRepository;
       this._world = await worldRepository.getWorld();
       
-      // 現在の時間点に対応する特徴をフィルタリング
+      // 現在の時間点に対応する地物をフィルタリング
       await this._loadFeaturesForCurrentTime();
       
       this._notifyObservers('world');
@@ -59,7 +59,7 @@ export class MapViewModel {
   }
 
   /**
-   * 現在の時間点に対応する特徴をロード
+   * 現在の時間点に対応する地物をロード
    * @returns {Promise<void>}
    * @private
    */
@@ -68,7 +68,7 @@ export class MapViewModel {
     
     const currentTime = this._navigateTimeUseCase.getCurrentTime();
     
-    // 現在の時間点で存在する特徴をフィルタリング
+    // 現在の時間点で存在する地物をフィルタリング
     this._features = this._world.features.filter(feature => 
       feature.existsAt(currentTime)
     );
@@ -84,13 +84,13 @@ export class MapViewModel {
     // 時間変更イベントの購読
     this._eventBus.subscribe('TimeChanged', this._onTimeChanged.bind(this));
     
-    // 特徴追加イベントの購読
+    // 地物追加イベントの購読
     this._eventBus.subscribe('FeatureAdded', this._onFeatureAdded.bind(this));
     
-    // 特徴更新イベントの購読
+    // 地物更新イベントの購読
     this._eventBus.subscribe('FeatureUpdated', this._onFeatureUpdated.bind(this));
     
-    // 特徴削除イベントの購読
+    // 地物削除イベントの購読
     this._eventBus.subscribe('FeatureDeleted', this._onFeatureDeleted.bind(this));
     
     // レイヤー表示変更イベントの購読
@@ -107,7 +107,7 @@ export class MapViewModel {
   }
 
   /**
-   * 特徴追加イベントのハンドラ
+   * 地物追加イベントのハンドラ
    * @param {Object} event - イベントデータ
    * @private
    */
@@ -119,12 +119,12 @@ export class MapViewModel {
       this._world.features.push(event.feature);
     }
     
-    // 現在の時間点に対応する特徴をリロード
+    // 現在の時間点に対応する地物をリロード
     this._loadFeaturesForCurrentTime();
   }
 
   /**
-   * 特徴更新イベントのハンドラ
+   * 地物更新イベントのハンドラ
    * @param {Object} event - イベントデータ
    * @private
    */
@@ -137,12 +137,12 @@ export class MapViewModel {
       this._world.features[index] = event.feature;
     }
     
-    // 現在の時間点に対応する特徴をリロード
+    // 現在の時間点に対応する地物をリロード
     this._loadFeaturesForCurrentTime();
   }
 
   /**
-   * 特徴削除イベントのハンドラ
+   * 地物削除イベントのハンドラ
    * @param {Object} event - イベントデータ
    * @private
    */
@@ -155,14 +155,14 @@ export class MapViewModel {
       this._world.features.splice(index, 1);
     }
     
-    // 選択中の特徴が削除された場合、選択を解除
+    // 選択中の地物が削除された場合、選択を解除
     if (this._selectedFeature && this._selectedFeature.id === event.featureId) {
       this._selectedFeature = null;
       this._selectedVertices = [];
       this._notifyObservers('selectedFeature');
     }
     
-    // 現在の時間点に対応する特徴をリロード
+    // 現在の時間点に対応する地物をリロード
     this._loadFeaturesForCurrentTime();
   }
 
@@ -184,8 +184,8 @@ export class MapViewModel {
   }
 
   /**
-   * 特徴を選択
-   * @param {string} featureId - 選択する特徴のID
+   * 地物を選択
+   * @param {string} featureId - 選択する地物のID
    */
   selectFeature(featureId) {
     if (!this._world) return;
@@ -240,8 +240,8 @@ export class MapViewModel {
   }
 
   /**
-   * 特徴をホバー
-   * @param {string} featureId - ホバーする特徴のID
+   * 地物をホバー
+   * @param {string} featureId - ホバーする地物のID
    */
   hoverFeature(featureId) {
     if (!this._world) return;
@@ -284,7 +284,7 @@ export class MapViewModel {
           this._world.vertices[vertexIndex] = result.vertex;
         }
         
-        // 影響を受けた特徴を更新
+        // 影響を受けた地物を更新
         for (const feature of result.affectedFeatures) {
           const featureIndex = this._world.features.findIndex(f => f.id === feature.id);
           if (featureIndex !== -1) {
@@ -307,7 +307,7 @@ export class MapViewModel {
         this._notifyObservers('hoveredVertex');
       }
       
-      // 特徴をリロード
+      // 地物をリロード
       await this._loadFeaturesForCurrentTime();
       
       return result;
@@ -318,10 +318,10 @@ export class MapViewModel {
   }
 
   /**
-   * 特徴プロパティを更新
-   * @param {string} featureId - 更新する特徴のID
+   * 地物プロパティを更新
+   * @param {string} featureId - 更新する地物のID
    * @param {Object} properties - 新しいプロパティ
-   * @returns {Promise<Object>} 更新された特徴
+   * @returns {Promise<Object>} 更新された地物
    */
   async updateFeatureProperties(featureId, properties) {
     try {
@@ -335,29 +335,29 @@ export class MapViewModel {
         }
       }
       
-      // 選択中の特徴が更新された場合、選択も更新
+      // 選択中の地物が更新された場合、選択も更新
       if (this._selectedFeature && this._selectedFeature.id === featureId) {
         this._selectedFeature = feature;
         this._notifyObservers('selectedFeature');
       }
       
-      // 特徴をリロード
+      // 地物をリロード
       await this._loadFeaturesForCurrentTime();
       
       return feature;
     } catch (error) {
-      console.error('特徴プロパティの更新に失敗しました', error);
+      console.error('地物プロパティの更新に失敗しました', error);
       throw error;
     }
   }
 
   /**
-   * 特徴を追加
-   * @param {string} featureType - 特徴タイプ ('point', 'line', 'polygon')
+   * 地物を追加
+   * @param {string} featureType - 地物タイプ ('point', 'line', 'polygon')
    * @param {Object} properties - プロパティ
    * @param {Object} geometry - 形状情報
    * @param {string} layerId - レイヤーID
-   * @returns {Promise<Object>} 追加された特徴
+   * @returns {Promise<Object>} 追加された地物
    */
   async addFeature(featureType, properties, geometry, layerId) {
     try {
@@ -370,14 +370,14 @@ export class MapViewModel {
       
       return feature;
     } catch (error) {
-      console.error('特徴の追加に失敗しました', error);
+      console.error('地物の追加に失敗しました', error);
       throw error;
     }
   }
 
   /**
-   * 特徴を削除
-   * @param {string} featureId - 削除する特徴のID
+   * 地物を削除
+   * @param {string} featureId - 削除する地物のID
    * @returns {Promise<void>}
    */
   async deleteFeature(featureId) {
@@ -387,7 +387,7 @@ export class MapViewModel {
       // イベントを発行
       this._eventBus.publish('FeatureDeleted', { featureId });
     } catch (error) {
-      console.error('特徴の削除に失敗しました', error);
+      console.error('地物の削除に失敗しました', error);
       throw error;
     }
   }
@@ -499,16 +499,16 @@ export class MapViewModel {
   }
 
   /**
-   * 現在表示中の特徴を取得
-   * @returns {Array} 特徴の配列
+   * 現在表示中の地物を取得
+   * @returns {Array} 地物の配列
    */
   getFeatures() {
     return this._features;
   }
 
   /**
-   * 選択中の特徴を取得
-   * @returns {Object} 選択中の特徴
+   * 選択中の地物を取得
+   * @returns {Object} 選択中の地物
    */
   getSelectedFeature() {
     return this._selectedFeature;
@@ -523,8 +523,8 @@ export class MapViewModel {
   }
 
   /**
-   * ホバー中の特徴を取得
-   * @returns {Object} ホバー中の特徴
+   * ホバー中の地物を取得
+   * @returns {Object} ホバー中の地物
    */
   getHoveredFeature() {
     return this._hoveredFeature;

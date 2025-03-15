@@ -205,14 +205,14 @@ try {
 
 ```javascript
 /**
- * 特徴オブジェクトを作成するファクトリーメソッド
- * @param {string} id - 特徴ID
- * @param {string} type - 特徴タイプ ('point', 'line', 'polygon')
+ * 地物オブジェクトを作成するファクトリーメソッド
+ * @param {string} id - 地物ID
+ * @param {string} type - 地物タイプ ('point', 'line', 'polygon')
  * @param {Object[]} properties - プロパティの配列
  * @param {Object} geometry - 形状情報
  * @param {string} layerId - レイヤーID
- * @returns {Feature} 作成された特徴オブジェクト
- * @throws {Error} 不明な特徴タイプの場合
+ * @returns {Feature} 作成された地物オブジェクト
+ * @throws {Error} 不明な地物タイプの場合
  */
 static create(id, type, properties, geometry, layerId) {
   // 実装...
@@ -273,7 +273,7 @@ async moveVertex(vertexId, newPosition) {
   
   const updatedVertex = vertex.withCoordinates(newPosition.x, newPosition.y);
   
-  // 影響を受ける特徴を見つける
+  // 影響を受ける地物を見つける
   const affectedFeatures = this._world.features.filter(feature => 
     feature.vertexIds && feature.vertexIds.includes(vertexId)
   );
@@ -284,7 +284,7 @@ async moveVertex(vertexId, newPosition) {
     vertices: this._world.vertices.map(v => 
       v.id === vertexId ? updatedVertex : v
     ),
-    // 必要に応じて特徴も更新
+    // 必要に応じて地物も更新
   };
   
   await this._worldRepository.saveWorld(updatedWorld);
@@ -488,7 +488,7 @@ npm run dev
 
 | 用語 | 定義 |
 |------|------|
-| 特徴 (Feature) | 地図上の地理的オブジェクト（点、線、面）の総称 |
+| 地物 (Feature) | 地図上の地理的オブジェクト（点、線、面）の総称 |
 | 頂点 (Vertex) | 地理オブジェクトの形状を定義する点 |
 | 共有頂点 | 複数のオブジェクトで共有される頂点 |
 | レイヤー | 地理情報を階層的に管理するための層 |

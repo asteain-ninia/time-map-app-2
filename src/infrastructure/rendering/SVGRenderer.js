@@ -83,13 +83,13 @@ export class SVGRenderer {
     // グリッドを描画
     this._renderGrid(viewport);
     
-    // 特徴を描画
+    // 地物を描画
     this._clearFeatures();
     
     // レイヤーを順序でソート
     const sortedLayers = [...world.layers].sort((a, b) => a.order - b.order);
     
-    // レイヤーごとに特徴を描画
+    // レイヤーごとに地物を描画
     for (const layer of sortedLayers) {
       if (!layer.visible) continue;
       
@@ -97,12 +97,12 @@ export class SVGRenderer {
       layerGroup.setAttribute("class", `layer-${layer.id}`);
       layerGroup.style.opacity = layer.opacity;
       
-      // このレイヤーに属する特徴をフィルタリング
+      // このレイヤーに属する地物をフィルタリング
       const layerFeatures = world.features.filter(f => 
         f.layerId === layer.id && f.existsAt(currentTime)
       );
       
-      // 特徴を種類別に分けて描画順序を制御
+      // 地物を種類別に分けて描画順序を制御
       const polygons = layerFeatures.filter(f => f instanceof Polygon);
       const lines = layerFeatures.filter(f => f instanceof Line);
       const points = layerFeatures.filter(f => f instanceof Point);
@@ -134,7 +134,7 @@ export class SVGRenderer {
   }
 
   /**
-   * 特徴要素をクリア
+   * 地物要素をクリア
    * @private
    */
   _clearFeatures() {

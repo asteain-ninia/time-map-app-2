@@ -142,14 +142,14 @@ export class EditingViewModel {
   }
 
   /**
-   * 特徴の追加を確定
+   * 地物の追加を確定
    * @param {Object} properties - プロパティ
    * @param {string} layerId - レイヤーID
-   * @returns {Promise<Object>} 追加された特徴
+   * @returns {Promise<Object>} 追加された地物
    */
   async confirmAddFeature(properties, layerId) {
     if (this._mode !== 'add' || !this._tool || this._addingPoints.length === 0) {
-      throw new Error('特徴の追加状態ではありません');
+      throw new Error('地物の追加状態ではありません');
     }
     
     try {
@@ -219,7 +219,7 @@ export class EditingViewModel {
       
       return feature;
     } catch (error) {
-      console.error('特徴の追加に失敗しました', error);
+      console.error('地物の追加に失敗しました', error);
       throw error;
     }
   }
@@ -251,9 +251,9 @@ export class EditingViewModel {
   }
 
   /**
-   * 特徴を削除
-   * @param {string} featureId - 削除する特徴のID
-   * @param {Object} feature - 削除前の特徴データ（アンドゥ用）
+   * 地物を削除
+   * @param {string} featureId - 削除する地物のID
+   * @param {Object} feature - 削除前の地物データ（アンドゥ用）
    * @returns {Promise<void>}
    */
   async deleteFeature(featureId, feature) {
@@ -270,17 +270,17 @@ export class EditingViewModel {
       // イベントを発行
       this._eventBus.publish('FeatureDeleted', { featureId });
     } catch (error) {
-      console.error('特徴の削除に失敗しました', error);
+      console.error('地物の削除に失敗しました', error);
       throw error;
     }
   }
 
   /**
-   * 特徴プロパティを更新
-   * @param {string} featureId - 更新する特徴のID
+   * 地物プロパティを更新
+   * @param {string} featureId - 更新する地物のID
    * @param {Object} oldProperties - 古いプロパティ
    * @param {Object} newProperties - 新しいプロパティ
-   * @returns {Promise<Object>} 更新された特徴
+   * @returns {Promise<Object>} 更新された地物
    */
   async updateFeatureProperties(featureId, oldProperties, newProperties) {
     try {
@@ -301,7 +301,7 @@ export class EditingViewModel {
       
       return feature;
     } catch (error) {
-      console.error('特徴プロパティの更新に失敗しました', error);
+      console.error('地物プロパティの更新に失敗しました', error);
       throw error;
     }
   }
@@ -468,11 +468,11 @@ export class EditingViewModel {
     // 操作タイプに応じた処理
     switch (operation.type) {
       case 'add':
-        // 特徴の再追加は未実装
+        // 地物の再追加は未実装
         break;
         
       case 'delete':
-        // 削除した特徴の復元は未実装
+        // 削除した地物の復元は未実装
         break;
         
       case 'moveVertex':
@@ -516,7 +516,7 @@ export class EditingViewModel {
         break;
         
       case 'delete':
-        // 削除した特徴の復元は未実装
+        // 削除した地物の復元は未実装
         break;
         
       case 'moveVertex':

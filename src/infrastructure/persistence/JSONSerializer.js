@@ -60,7 +60,7 @@ export class JSONSerializer {
       // 頂点の復元
       vertices: (data.vertices || []).map(vertex => this._deserializeVertex(vertex)),
       
-      // 特徴の復元（空の配列で初期化）
+      // の復元（空の配列で初期化）
       features: [],
       
       // メタデータの復元

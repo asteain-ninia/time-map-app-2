@@ -7,7 +7,7 @@ export class SidebarView {
    * @param {HTMLElement} container - 表示コンテナ
    * @param {MapViewModel} mapViewModel - マップビューモデル
    * @param {ManageLayersUseCase} manageLayersUseCase - レイヤー管理ユースケース
-   * @param {EditFeatureUseCase} editFeatureUseCase - 特徴編集ユースケース
+   * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
    * @param {EventBus} eventBus - イベントバス
    */
   constructor(container, mapViewModel, manageLayersUseCase, editFeatureUseCase, eventBus) {
@@ -179,7 +179,7 @@ export class SidebarView {
     
     // プロパティが何も選択されていない時のメッセージ
     const noSelectionMsg = document.createElement('p');
-    noSelectionMsg.textContent = '特徴が選択されていません';
+    noSelectionMsg.textContent = '地物が選択されていません';
     propertiesContainer.appendChild(noSelectionMsg);
     
     this._propertiesTabElement.appendChild(propertiesContainer);
@@ -372,12 +372,12 @@ export class SidebarView {
     const filterInput = this._featuresTabElement.querySelector('input');
     const filterText = filterInput ? filterInput.value.toLowerCase() : '';
     
-    // 特徴をフィルタリングして表示
+    // 地物をフィルタリングして表示
     const filteredFeatures = this._filterFeaturesByText(features, filterText, currentTime);
     
     if (filteredFeatures.length === 0) {
       const noFeaturesMsg = document.createElement('p');
-      noFeaturesMsg.textContent = '表示する特徴がありません';
+      noFeaturesMsg.textContent = '表示する地物がありません';
       featuresContainer.appendChild(noFeaturesMsg);
       return;
     }
@@ -428,7 +428,7 @@ export class SidebarView {
           featureItem.style.backgroundColor = '#fff';
         }
         
-        // 特徴名
+        // 地物名
         const nameLabel = document.createElement('span');
         nameLabel.textContent = prop.name || '名称なし';
         
@@ -462,12 +462,12 @@ export class SidebarView {
     
     if (!selectedFeature) {
       const noSelectionMsg = document.createElement('p');
-      noSelectionMsg.textContent = '特徴が選択されていません';
+      noSelectionMsg.textContent = '地物が選択されていません';
       propertiesContainer.appendChild(noSelectionMsg);
       return;
     }
     
-    // 特徴の種類を特定
+    // 地物の種類を特定
     let featureType = 'unknown';
     if (selectedFeature.constructor.name === 'Point') {
       featureType = 'point';
@@ -477,7 +477,7 @@ export class SidebarView {
       featureType = 'polygon';
     }
     
-    // 特徴IDと種類
+    // 地物IDと種類
     const idRow = document.createElement('div');
     idRow.style.marginBottom = '10px';
     
@@ -593,7 +593,7 @@ export class SidebarView {
     timeRow.appendChild(endInput);
     form.appendChild(timeRow);
     
-    // 特徴タイプに応じた追加プロパティ
+    // 地物タイプに応じた追加プロパティ
     if (featureType === 'point') {
       // 点特有のプロパティ
     } else if (featureType === 'line') {
@@ -812,8 +812,8 @@ export class SidebarView {
   }
 
   /**
-   * 特徴削除確認の表示
-   * @param {Object} feature - 特徴
+   * 地物削除確認の表示
+   * @param {Object} feature - 地物
    * @private
    */
   _showDeleteFeatureConfirm(feature) {
@@ -822,7 +822,7 @@ export class SidebarView {
     const name = property ? property.name : '名称なし';
     
     // 簡易的な確認ダイアログ
-    const confirm = window.confirm(`特徴「${name}」を削除してもよろしいですか？`);
+    const confirm = window.confirm(`地物「${name}」を削除してもよろしいですか？`);
     if (confirm) {
       this._mapViewModel.deleteFeature(feature.id);
     }
@@ -875,8 +875,8 @@ export class SidebarView {
   }
 
   /**
-   * 特徴プロパティの保存
-   * @param {string} featureId - 特徴ID
+   * 地物プロパティの保存
+   * @param {string} featureId - 地物ID
    * @param {HTMLFormElement} form - プロパティフォーム
    * @private
    */
@@ -893,7 +893,7 @@ export class SidebarView {
     const startYear = formData.get('startYear') ? Number(formData.get('startYear')) : null;
     const endYear = formData.get('endYear') ? Number(formData.get('endYear')) : null;
     
-    // 現在の特徴を取得
+    // 現在の地物を取得
     const selectedFeature = this._mapViewModel.getSelectedFeature();
     const currentTime = this._mapViewModel.getCurrentTime();
     const currentProperty = selectedFeature.getPropertyAt(currentTime);
@@ -926,7 +926,7 @@ export class SidebarView {
     }
     
     try {
-      // 特徴を更新
+      // 地物を更新
       await this._mapViewModel.updateFeatureProperties(featureId, newProperties);
       
       alert('プロパティを保存しました');
@@ -937,11 +937,11 @@ export class SidebarView {
   }
 
   /**
-   * 特徴をテキストでフィルタリング
-   * @param {Array} features - 特徴の配列
+   * 地物をテキストでフィルタリング
+   * @param {Array} features - 地物の配列
    * @param {string} text - フィルターテキスト
    * @param {Object} currentTime - 現在の時間
-   * @returns {Array} フィルタリングされた特徴の配列
+   * @returns {Array} フィルタリングされた地物の配列
    * @private
    */
   _filterFeaturesByText(features, text, currentTime) {
@@ -960,7 +960,7 @@ export class SidebarView {
   }
 
   /**
-   * 特徴のフィルタリング
+   * 地物のフィルタリング
    * @param {Event} event - 入力イベント
    * @private
    */
@@ -969,10 +969,10 @@ export class SidebarView {
   }
 
   /**
-   * 特徴をカテゴリでグループ化
-   * @param {Array} features - 特徴の配列
+   * 地物をカテゴリでグループ化
+   * @param {Array} features - 地物の配列
    * @param {Object} currentTime - 現在の時間
-   * @returns {Object} カテゴリごとの特徴オブジェクト
+   * @returns {Object} カテゴリごとの地物オブジェクト
    * @private
    */
   _categorizeFeaturesBy(features, currentTime) {
@@ -986,7 +986,7 @@ export class SidebarView {
       let category = property.getAttribute('category');
       
       if (!category) {
-        // 特徴タイプに基づくデフォルトカテゴリ
+        // 地物タイプに基づくデフォルトカテゴリ
         if (feature.constructor.name === 'Point') {
           category = 'point';
         } else if (feature.constructor.name === 'Line') {
@@ -1044,8 +1044,8 @@ export class SidebarView {
   }
 
   /**
-   * 特徴種類の表示名取得
-   * @param {string} type - 特徴種類
+   * 地物種類の表示名取得
+   * @param {string} type - 地物種類
    * @returns {string} 表示名
    * @private
    */
@@ -1061,8 +1061,8 @@ export class SidebarView {
   }
 
   /**
-   * 特徴種類に応じたカテゴリの取得
-   * @param {string} type - 特徴種類
+   * 地物種類に応じたカテゴリの取得
+   * @param {string} type - 地物種類
    * @returns {Array} カテゴリの配列
    * @private
    */
@@ -1072,7 +1072,7 @@ export class SidebarView {
       { id: '', name: '-- カテゴリなし --' }
     ];
     
-    // 特徴種類に応じたカテゴリ
+    // 地物種類に応じたカテゴリ
     switch (type) {
       case 'point':
         return [

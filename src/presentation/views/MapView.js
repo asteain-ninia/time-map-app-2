@@ -171,7 +171,7 @@ export class MapView {
     // 選択要素のハイライト
     this._renderSelection();
     
-    // 追加中の特徴の描画
+    // 追加中の地物の描画
     this._renderAddingFeature();
     
     // 一時的な表示要素の描画
@@ -195,7 +195,7 @@ export class MapView {
   }
 
   /**
-   * 追加中の特徴の描画
+   * 追加中の地物の描画
    * @private
    */
   _renderAddingFeature() {

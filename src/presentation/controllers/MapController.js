@@ -77,7 +77,7 @@ export class MapController {
   }
 
   /**
-   * 特徴の追加をキャンセル
+   * 地物の追加をキャンセル
    */
   cancelAddFeature() {
     if (this._editingViewModel.getMode() === 'add') {

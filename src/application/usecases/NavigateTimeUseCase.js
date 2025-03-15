@@ -61,7 +61,7 @@ export class NavigateTimeUseCase {
     const current = this._currentTime;
     let nextTime = null;
     
-    // すべての特徴のプロパティを検索して現在より未来の最も近い時間点を見つける
+    // すべてののプロパティを検索して現在より未来の最も近い時間点を見つける
     for (const feature of features) {
       for (const prop of feature.properties) {
         if (prop.timePoint.isBefore(current)) {
@@ -94,7 +94,7 @@ export class NavigateTimeUseCase {
     const current = this._currentTime;
     let prevTime = null;
     
-    // すべての特徴のプロパティを検索して現在より過去の最も近い時間点を見つける
+    // すべてののプロパティを検索して現在より過去の最も近い時間点を見つける
     for (const feature of features) {
       for (const prop of feature.properties) {
         if (current.isBefore(prop.timePoint)) {
