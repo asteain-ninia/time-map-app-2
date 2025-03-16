@@ -38,6 +38,10 @@ export class SVGRenderer {
     this._svg.setAttribute("height", this._options.height);
     this._svg.setAttribute("viewBox", `0 0 ${this._options.width} ${this._options.height}`);
     this._svg.style.display = "block";
+    this._svg.style.position = "absolute";  // 追加: 絶対配置に
+    this._svg.style.top = "0";              // 追加: 上端に配置
+    this._svg.style.left = "0";             // 追加: 左端に配置
+    this._svg.style.zIndex = "5";           // 追加: オーバーレイより下に配置
     
     // グループ要素を作成
     this._defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");

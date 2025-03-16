@@ -21,6 +21,7 @@ export class MapView {
     
     // DOM要素
     this._mapElement = null;
+    this._mapOverlay = null; // 追加: 透明なオーバーレイ要素
     
     // 計測モードの状態
     this._isMeasuringDistance = false;
@@ -53,6 +54,21 @@ export class MapView {
     // マップコンテナに追加
     this._container.appendChild(this._mapElement);
     
+    // 透明なオーバーレイを作成
+    this._mapOverlay = document.createElement('div');
+    this._mapOverlay.className = 'map-overlay';
+    this._mapOverlay.style.position = 'absolute';
+    this._mapOverlay.style.top = '0';
+    this._mapOverlay.style.left = '0';
+    this._mapOverlay.style.width = '100%';
+    this._mapOverlay.style.height = '100%';
+    this._mapOverlay.style.zIndex = '10'; // SVGの上に配置
+    this._mapOverlay.style.pointerEvents = 'auto'; // マウスイベントを受け取る
+    this._mapOverlay.style.cursor = 'default';
+    
+    // オーバーレイをマップコンテナに追加
+    this._mapElement.appendChild(this._mapOverlay);
+    
     // ビューモデルとの連携
     this._viewModel.addObserver(this._onViewModelChanged.bind(this));
     this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
@@ -74,19 +90,19 @@ export class MapView {
   _setupEventListeners() {
     console.log('イベントリスナーを設定します');
 
-    // マウスイベント
-    this._mapElement.addEventListener('mousedown', this._onMouseDown.bind(this));
-    this._mapElement.addEventListener('mousemove', this._onMouseMove.bind(this));
-    this._mapElement.addEventListener('mouseup', this._onMouseUp.bind(this));
-    this._mapElement.addEventListener('mouseleave', this._onMouseLeave.bind(this));
-    this._mapElement.addEventListener('wheel', this._onWheel.bind(this), { passive: false });
-    this._mapElement.addEventListener('dblclick', this._onDoubleClick.bind(this));
-    this._mapElement.addEventListener('contextmenu', this._onContextMenu.bind(this));
+    // オーバーレイにマウスイベントを設定（_mapElementの代わりに）
+    this._mapOverlay.addEventListener('mousedown', this._onMouseDown.bind(this));
+    this._mapOverlay.addEventListener('mousemove', this._onMouseMove.bind(this));
+    this._mapOverlay.addEventListener('mouseup', this._onMouseUp.bind(this));
+    this._mapOverlay.addEventListener('mouseleave', this._onMouseLeave.bind(this));
+    this._mapOverlay.addEventListener('wheel', this._onWheel.bind(this), { passive: false });
+    this._mapOverlay.addEventListener('dblclick', this._onDoubleClick.bind(this));
+    this._mapOverlay.addEventListener('contextmenu', this._onContextMenu.bind(this));
     
     // タッチイベント
-    this._mapElement.addEventListener('touchstart', this._onTouchStart.bind(this), { passive: false });
-    this._mapElement.addEventListener('touchmove', this._onTouchMove.bind(this), { passive: false });
-    this._mapElement.addEventListener('touchend', this._onTouchEnd.bind(this));
+    this._mapOverlay.addEventListener('touchstart', this._onTouchStart.bind(this), { passive: false });
+    this._mapOverlay.addEventListener('touchmove', this._onTouchMove.bind(this), { passive: false });
+    this._mapOverlay.addEventListener('touchend', this._onTouchEnd.bind(this));
     
     // キーボードイベント
     window.addEventListener('keydown', this._onKeyDown.bind(this));
