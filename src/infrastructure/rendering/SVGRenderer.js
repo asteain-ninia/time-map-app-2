@@ -87,6 +87,18 @@ render(world, viewport, currentTime) {
   console.log('SVGRenderer.render 開始');
   console.log('ビューポート情報:', viewport);
   
+  // SVG要素の viewBox を更新
+  // SVG要素の viewBox を更新して、パン・ズーム機能を実現
+  // viewBoxを使うことで、SVG内の要素の座標変換が自動的に行われる
+  const viewBoxWidth = viewport.width / viewport.zoom;
+  const viewBoxHeight = viewport.height / viewport.zoom;
+  const viewBoxX = viewport.x - viewBoxWidth / 2;
+  const viewBoxY = viewport.y - viewBoxHeight / 2;
+  
+  // viewBox属性を更新
+  this._svg.setAttribute("viewBox", `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
+  console.log('SVG viewBox 更新:', `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
+  
   // グリッドを描画
   this._renderGrid(viewport);
   
@@ -143,7 +155,7 @@ render(world, viewport, currentTime) {
     
     this._featuresGroup.appendChild(layerGroup);
   }
-    
+
   console.log('SVGRenderer.render 完了');
   }
 
@@ -170,14 +182,16 @@ render(world, viewport, currentTime) {
     
     const { x, y, zoom, width, height } = viewport;
     
-    // グリッド間隔（度単位）
-    const gridInterval = this._options.gridInterval;
+    // viewBoxの範囲を計算
+    const viewBoxWidth = width / zoom;
+    const viewBoxHeight = height / zoom;
+    const left = x - viewBoxWidth / 2;
+    const right = x + viewBoxWidth / 2;
+    const top = y - viewBoxHeight / 2;
+    const bottom = y + viewBoxHeight / 2;
     
-    // 描画領域の範囲（経度・緯度）
-    const left = x - width / 2 / zoom;
-    const right = x + width / 2 / zoom;
-    const top = y - height / 2 / zoom;
-    const bottom = y + height / 2 / zoom;
+    // グリッド間隔（度単位）
+    const gridInterval = this._options.gridInterval || 10;
     
     // 緯線（横線）を描画
     const latStep = gridInterval;
@@ -186,10 +200,10 @@ render(world, viewport, currentTime) {
       const isEquator = Math.abs(lat) < 0.001;
       
       const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", this._toScreenX(left, viewport));
-      line.setAttribute("y1", this._toScreenY(lat, viewport));
-      line.setAttribute("x2", this._toScreenX(right, viewport));
-      line.setAttribute("y2", this._toScreenY(lat, viewport));
+      line.setAttribute("x1", left);
+      line.setAttribute("y1", lat);
+      line.setAttribute("x2", right);
+      line.setAttribute("y2", lat);
       line.setAttribute("stroke", isEquator ? "#ff0000" : this._options.gridColor);
       line.setAttribute("stroke-width", isEquator ? 2 : 1);
       line.setAttribute("opacity", this._options.gridOpacity);
@@ -199,8 +213,8 @@ render(world, viewport, currentTime) {
       // 緯度ラベル
       if (Math.abs(lat) > 0.001) {
         const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        text.setAttribute("x", this._toScreenX(left + 1, viewport));
-        text.setAttribute("y", this._toScreenY(lat, viewport) - 5);
+        text.setAttribute("x", left + 1);
+        text.setAttribute("y", lat - 5);
         text.setAttribute("font-size", "10");
         text.setAttribute("fill", this._options.gridColor);
         text.textContent = `${Math.abs(lat)}°${lat >= 0 ? 'N' : 'S'}`;
@@ -217,10 +231,10 @@ render(world, viewport, currentTime) {
       const isDateLine = Math.abs(Math.abs(lng) - 180) < 0.001;
       
       const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", this._toScreenX(lng, viewport));
-      line.setAttribute("y1", this._toScreenY(top, viewport));
-      line.setAttribute("x2", this._toScreenX(lng, viewport));
-      line.setAttribute("y2", this._toScreenY(bottom, viewport));
+      line.setAttribute("x1", lng);
+      line.setAttribute("y1", top);
+      line.setAttribute("x2", lng);
+      line.setAttribute("y2", bottom);
       line.setAttribute("stroke", isPrimeMeridian || isDateLine ? "#ff0000" : this._options.gridColor);
       line.setAttribute("stroke-width", isPrimeMeridian || isDateLine ? 2 : 1);
       line.setAttribute("opacity", this._options.gridOpacity);
@@ -230,8 +244,8 @@ render(world, viewport, currentTime) {
       // 経度ラベル
       if (!isPrimeMeridian) {
         const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        text.setAttribute("x", this._toScreenX(lng, viewport) + 5);
-        text.setAttribute("y", this._toScreenY(top + 1, viewport));
+        text.setAttribute("x", lng + 5);
+        text.setAttribute("y", top + 10);
         text.setAttribute("font-size", "10");
         text.setAttribute("fill", this._options.gridColor);
         text.textContent = `${Math.abs(lng)}°${lng >= 0 ? 'E' : 'W'}`;
@@ -508,8 +522,8 @@ render(world, viewport, currentTime) {
    * @private
    */
   _toScreenX(worldX, viewport) {
-    const { x, zoom, width } = viewport;
-    return (worldX - x) * zoom + width / 2;
+    // viewBoxを使用するため、単純にワールド座標をそのまま返す
+    return worldX;
   }
 
   /**
@@ -520,8 +534,8 @@ render(world, viewport, currentTime) {
    * @private
    */
   _toScreenY(worldY, viewport) {
-    const { y, zoom, height } = viewport;
-    return (worldY - y) * zoom + height / 2;
+    // viewBoxを使用するため、単純にワールド座標をそのまま返す
+    return worldY;
   }
 
   /**
@@ -531,8 +545,8 @@ render(world, viewport, currentTime) {
    * @returns {number} 世界X座標
    */
   toWorldX(screenX, viewport) {
-    const { x, zoom, width } = viewport;
-    return (screenX - width / 2) / zoom + x;
+    // viewBoxを使用するため、単純にスクリーン座標をそのまま返す
+    return screenX;
   }
 
   /**
@@ -542,8 +556,8 @@ render(world, viewport, currentTime) {
    * @returns {number} 世界Y座標
    */
   toWorldY(screenY, viewport) {
-    const { y, zoom, height } = viewport;
-    return (screenY - height / 2) / zoom + y;
+    // viewBoxを使用するため、単純にスクリーン座標をそのまま返す
+    return screenY;
   }
 
   /**
