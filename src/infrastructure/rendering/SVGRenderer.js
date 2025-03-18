@@ -78,63 +78,73 @@ export class SVGRenderer {
   }
 
   /**
-   * 地図を描画
-   * @param {Object} world - 世界データ
-   * @param {Object} viewport - ビューポート情報 { x, y, zoom, width, height }
-   * @param {TimePoint} currentTime - 現在の時間点
-   */
-  render(world, viewport, currentTime) {
-    // グリッドを描画
-    this._renderGrid(viewport);
+ * 地図を描画
+ * @param {Object} world - 世界データ
+ * @param {Object} viewport - ビューポート情報 { x, y, zoom, width, height }
+ * @param {TimePoint} currentTime - 現在の時間点
+ */
+render(world, viewport, currentTime) {
+  console.log('SVGRenderer.render 開始');
+  console.log('ビューポート情報:', viewport);
+  
+  // グリッドを描画
+  this._renderGrid(viewport);
+  
+  // 地物を描画
+  this._clearFeatures();
+  
+  // レイヤーを順序でソート
+  const sortedLayers = [...world.layers].sort((a, b) => a.order - b.order);
+  console.log('レイヤー数:', sortedLayers.length);
+  
+  // レイヤーごとに地物を描画
+  for (const layer of sortedLayers) {
+    if (!layer.visible) continue;
     
-    // 地物を描画
-    this._clearFeatures();
+    const layerGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    layerGroup.setAttribute("class", `layer-${layer.id}`);
+    layerGroup.style.opacity = layer.opacity;
     
-    // レイヤーを順序でソート
-    const sortedLayers = [...world.layers].sort((a, b) => a.order - b.order);
+    // このレイヤーに属する地物をフィルタリング
+    const layerFeatures = world.features.filter(f => 
+      f.layerId === layer.id && f.existsAt(currentTime)
+    );
     
-    // レイヤーごとに地物を描画
-    for (const layer of sortedLayers) {
-      if (!layer.visible) continue;
-      
-      const layerGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      layerGroup.setAttribute("class", `layer-${layer.id}`);
-      layerGroup.style.opacity = layer.opacity;
-      
-      // このレイヤーに属する地物をフィルタリング
-      const layerFeatures = world.features.filter(f => 
-        f.layerId === layer.id && f.existsAt(currentTime)
-      );
-      
-      // 地物を種類別に分けて描画順序を制御
-      const polygons = layerFeatures.filter(f => f instanceof Polygon);
-      const lines = layerFeatures.filter(f => f instanceof Line);
-      const points = layerFeatures.filter(f => f instanceof Point);
-      
-      // 面 → 線 → 点の順で描画
-      for (const polygon of polygons) {
-        const element = this._renderPolygon(polygon, world.vertices, currentTime, viewport);
-        if (element) {
-          layerGroup.appendChild(element);
-        }
+    console.log(`レイヤー ${layer.name} の地物数:`, layerFeatures.length);
+    
+    // 地物を種類別に分けて描画順序を制御
+    const polygons = layerFeatures.filter(f => f instanceof Polygon);
+    const lines = layerFeatures.filter(f => f instanceof Line);
+    const points = layerFeatures.filter(f => f instanceof Point);
+    
+    console.log(`ポリゴン:${polygons.length}, ライン:${lines.length}, ポイント:${points.length}`);
+    
+    // 面 → 線 → 点の順で描画
+    for (const polygon of polygons) {
+      const element = this._renderPolygon(polygon, world.vertices, currentTime, viewport);
+      if (element) {
+        layerGroup.appendChild(element);
       }
-      
-      for (const line of lines) {
-        const element = this._renderLine(line, world.vertices, currentTime, viewport);
-        if (element) {
-          layerGroup.appendChild(element);
-        }
-      }
-      
-      for (const point of points) {
-        const element = this._renderPoint(point, world.vertices, currentTime, viewport);
-        if (element) {
-          layerGroup.appendChild(element);
-        }
-      }
-      
-      this._featuresGroup.appendChild(layerGroup);
     }
+    
+    for (const line of lines) {
+      const element = this._renderLine(line, world.vertices, currentTime, viewport);
+      if (element) {
+        layerGroup.appendChild(element);
+      }
+    }
+    
+    for (const point of points) {
+      const element = this._renderPoint(point, world.vertices, currentTime, viewport);
+      if (element) {
+        layerGroup.appendChild(element);
+      }
+    }
+    
+    this._featuresGroup.appendChild(layerGroup);
+  }
+    
+  console.log('SVGRenderer.render 完了');
   }
 
   /**

@@ -21,6 +21,8 @@ export class ViewportManager {
     this._isDragging = false;
     this._dragStart = { x: 0, y: 0 };
     this._viewportStart = { x: 0, y: 0 };
+    
+    console.log('ViewportManager初期化完了:', this._viewport);
   }
 
   /**
@@ -36,6 +38,9 @@ export class ViewportManager {
    * @param {Object} updates - 更新内容
    */
   updateViewport(updates) {
+    console.log('ビューポート更新前:', this._viewport);
+    console.log('更新内容:', updates);
+    
     const oldViewport = { ...this._viewport };
     
     // ビューポートを更新
@@ -47,9 +52,14 @@ export class ViewportManager {
       Math.min(this._viewport.maxZoom, this._viewport.zoom)
     );
     
+    console.log('ビューポート更新後:', this._viewport);
+    
     // ビューポートに変更があった場合のみリスナーを呼び出す
     if (this._hasViewportChanged(oldViewport, this._viewport)) {
+      console.log('ビューポートに変更があったため、リスナーに通知します');
       this._notifyListeners();
+    } else {
+      console.log('ビューポートに変更がなかったため、通知しません');
     }
   }
 
@@ -59,6 +69,7 @@ export class ViewportManager {
    * @param {number} height - 新しい高さ
    */
   resize(width, height) {
+    console.log('ビューポートリサイズ:', width, height);
     this.updateViewport({ width, height });
   }
 
@@ -68,6 +79,7 @@ export class ViewportManager {
    * @param {number} y - 新しいY座標
    */
   setCenter(x, y) {
+    console.log('ビューポート中心設定:', x, y);
     this.updateViewport({ x, y });
   }
 
@@ -77,9 +89,13 @@ export class ViewportManager {
    * @param {number} dy - Y方向の移動量
    */
   pan(dx, dy) {
+    console.log('パン移動量:', dx, dy);
+    
     // ズームレベルに合わせて移動量を調整
     const adjustedDx = dx / this._viewport.zoom;
     const adjustedDy = dy / this._viewport.zoom;
+    
+    console.log('調整後の移動量:', adjustedDx, adjustedDy);
     
     this.updateViewport({
       x: this._viewport.x - adjustedDx,
@@ -92,6 +108,7 @@ export class ViewportManager {
    * @param {number} zoom - 新しいズームレベル
    */
   setZoom(zoom) {
+    console.log('ズームレベル設定:', zoom);
     this.updateViewport({ zoom });
   }
 
@@ -102,11 +119,15 @@ export class ViewportManager {
    * @param {number} zoomDelta - ズーム量の変化
    */
   zoomAt(x, y, zoomDelta) {
+    console.log('指定地点でのズーム:', x, y, zoomDelta);
+    
     const oldZoom = this._viewport.zoom;
     const newZoom = Math.max(
       this._viewport.minZoom,
       Math.min(this._viewport.maxZoom, oldZoom * (1 + zoomDelta))
     );
+    
+    console.log('ズーム変更:', oldZoom, '->', newZoom);
     
     // ズーム中心点の調整
     const viewportX = this._viewport.x;
@@ -117,10 +138,18 @@ export class ViewportManager {
     
     const scaleFactor = newZoom / oldZoom;
     
+    console.log('スケールファクター:', scaleFactor);
+    console.log('ズーム中心点からの距離:', dx, dy);
+    
+    const newX = viewportX - dx * (scaleFactor - 1) / scaleFactor;
+    const newY = viewportY - dy * (scaleFactor - 1) / scaleFactor;
+    
+    console.log('新しい中心座標:', newX, newY);
+    
     this.updateViewport({
       zoom: newZoom,
-      x: viewportX - dx * (scaleFactor - 1) / scaleFactor,
-      y: viewportY - dy * (scaleFactor - 1) / scaleFactor
+      x: newX,
+      y: newY
     });
   }
 
@@ -130,6 +159,7 @@ export class ViewportManager {
    * @param {number} screenY - スクリーンY座標
    */
   startDrag(screenX, screenY) {
+    console.log('ドラッグ開始:', screenX, screenY);
     this._isDragging = true;
     this._dragStart = { x: screenX, y: screenY };
     this._viewportStart = { x: this._viewport.x, y: this._viewport.y };
@@ -141,14 +171,27 @@ export class ViewportManager {
    * @param {number} screenY - スクリーンY座標
    */
   drag(screenX, screenY) {
-    if (!this._isDragging) return;
+    if (!this._isDragging) {
+      console.log('ドラッグ中だが、ドラッグ状態でないため無視');
+      return;
+    }
+    
+    console.log('ドラッグ中:', screenX, screenY);
     
     const dx = screenX - this._dragStart.x;
     const dy = screenY - this._dragStart.y;
     
+    console.log('ドラッグ距離:', dx, dy);
+    
     // ズームレベルに合わせて移動量を調整
     const adjustedDx = dx / this._viewport.zoom;
     const adjustedDy = dy / this._viewport.zoom;
+    
+    console.log('調整後のドラッグ距離:', adjustedDx, adjustedDy);
+    console.log('ドラッグ開始位置からの新しい位置:', 
+      this._viewportStart.x - adjustedDx, 
+      this._viewportStart.y - adjustedDy
+    );
     
     this.updateViewport({
       x: this._viewportStart.x - adjustedDx,
@@ -160,6 +203,7 @@ export class ViewportManager {
    * ドラッグ終了
    */
   endDrag() {
+    console.log('ドラッグ終了');
     this._isDragging = false;
   }
 
@@ -168,6 +212,7 @@ export class ViewportManager {
    * @param {number} degrees - シフトする度数
    */
   shiftLongitude(degrees) {
+    console.log('経度シフト:', degrees);
     this.updateViewport({ x: this._viewport.x + degrees });
   }
 
@@ -177,6 +222,7 @@ export class ViewportManager {
    */
   addListener(listener) {
     this._listeners.push(listener);
+    console.log('ビューポートリスナーを追加しました。現在のリスナー数:', this._listeners.length);
   }
 
   /**
@@ -187,6 +233,7 @@ export class ViewportManager {
     const index = this._listeners.indexOf(listener);
     if (index !== -1) {
       this._listeners.splice(index, 1);
+      console.log('ビューポートリスナーを削除しました。現在のリスナー数:', this._listeners.length);
     }
   }
 
@@ -198,11 +245,14 @@ export class ViewportManager {
    * @private
    */
   _hasViewportChanged(oldViewport, newViewport) {
-    return oldViewport.x !== newViewport.x ||
+    const changed = oldViewport.x !== newViewport.x ||
            oldViewport.y !== newViewport.y ||
            oldViewport.zoom !== newViewport.zoom ||
            oldViewport.width !== newViewport.width ||
            oldViewport.height !== newViewport.height;
+    
+    console.log('ビューポート変更確認:', changed ? '変更あり' : '変更なし');
+    return changed;
   }
 
   /**
@@ -211,8 +261,14 @@ export class ViewportManager {
    */
   _notifyListeners() {
     const viewport = this.getViewport();
+    console.log('リスナーに通知:', viewport);
+    
     for (const listener of this._listeners) {
-      listener(viewport);
+      try {
+        listener(viewport);
+      } catch (error) {
+        console.error('ビューポートリスナーでエラーが発生しました:', error);
+      }
     }
   }
 
@@ -225,10 +281,10 @@ export class ViewportManager {
   screenToWorld(screenX, screenY) {
     const { x, y, zoom, width, height } = this._viewport;
     
-    return {
-      x: (screenX - width / 2) / zoom + x,
-      y: (screenY - height / 2) / zoom + y
-    };
+    const worldX = (screenX - width / 2) / zoom + x;
+    const worldY = (screenY - height / 2) / zoom + y;
+    
+    return { x: worldX, y: worldY };
   }
 
   /**

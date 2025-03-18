@@ -362,116 +362,134 @@ export class MapView {
    * @param {MouseEvent} event - マウスイベント
    * @private
    */
-  _onMouseDown(event) {
-    // 右クリックは無視（コンテキストメニュー用）
-    if (event.button === 2) return;
-    
-    // マウス位置を取得
-    const rect = this._mapElement.getBoundingClientRect();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
+_onMouseDown(event) {
+  // 右クリックは無視（コンテキストメニュー用）
+  if (event.button === 2) return;
+  
+  // マウス位置を取得
+  const rect = this._mapElement.getBoundingClientRect();
+  const screenX = event.clientX - rect.left;
+  const screenY = event.clientY - rect.top;
 
-    console.log('マウスダウン:', screenX, screenY);
-    
-    this._isMouseDown = true;
-    this._lastMousePosition = { x: screenX, y: screenY };
-    
-    // 編集モードに応じた処理
-    const mode = this._editingViewModel.getMode();
-    switch (mode) {
-      case 'view':
-        // ビューモードでは、ドラッグでパン
-        this._viewportManager.startDrag(screenX, screenY);
-        break;
-        
-      case 'add':
-        // 追加モードでは、クリックで点を追加
-        this._handleAddPoint(event);
-        break;
-        
-      case 'edit':
-        // 編集モードでは、クリックで選択
-        this._handleSelectObject(event);
-        break;
-        
-      default:
-        break;
-    }
-    
-    // 距離測定モード
-    if (this._isMeasuringDistance) {
-      this._handleAddMeasurePoint(event);
-    }
+  console.log('マウスダウン:', screenX, screenY);
+  
+  this._isMouseDown = true;
+  this._lastMousePosition = { x: screenX, y: screenY };
+  
+  // 編集モードに応じた処理
+  const mode = this._editingViewModel.getMode();
+  console.log('現在の編集モード:', mode);
+  
+  switch (mode) {
+    case 'view':
+      // ビューモードでは、ドラッグでパン
+      console.log('ビューモードでドラッグ開始');
+      this._viewportManager.startDrag(screenX, screenY);
+      break;
+      
+    case 'add':
+      // 追加モードでは、クリックで点を追加
+      console.log('追加モードで点を追加');
+      this._handleAddPoint(event);
+      break;
+      
+    case 'edit':
+      // 編集モードでは、クリックで選択
+      console.log('編集モードでオブジェクト選択');
+      this._handleSelectObject(event);
+      break;
+      
+    default:
+      console.log('不明なモード:', mode);
+      break;
   }
+  
+  // 距離測定モード
+  if (this._isMeasuringDistance) {
+    console.log('距離測定点を追加');
+    this._handleAddMeasurePoint(event);
+  }
+}
 
   /**
    * マウス移動のハンドラ
    * @param {MouseEvent} event - マウスイベント
    * @private
    */
-  _onMouseMove(event) {
-    const rect = this._mapElement.getBoundingClientRect();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
-    
-    if (this._isMouseDown) {
-      // マウスドラッグ
-      if (!this._isDragging) {
-        // ドラッグ開始判定
-        const dx = screenX - this._lastMousePosition.x;
-        const dy = screenY - this._lastMousePosition.y;
-        const dragThreshold = 5;
-        
-        if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
-          this._isDragging = true;
-        }
-      }
+_onMouseMove(event) {
+  const rect = this._mapElement.getBoundingClientRect();
+  const screenX = event.clientX - rect.left;
+  const screenY = event.clientY - rect.top;
+  
+  if (this._isMouseDown) {
+    // マウスドラッグ
+    if (!this._isDragging) {
+      // ドラッグ開始判定
+      const dx = screenX - this._lastMousePosition.x;
+      const dy = screenY - this._lastMousePosition.y;
+      const dragThreshold = 5;
       
-      if (this._isDragging) {
-        // ドラッグ処理
-        const mode = this._editingViewModel.getMode();
-        
-        if (mode === 'view') {
-          // ビューモードでは、ドラッグでパン
-          this._viewportManager.drag(screenX, screenY);
-        } else if (mode === 'edit') {
-          // 編集モードでは、ドラッグで移動
-          this._handleDragObject(event);
-        }
+      if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
+        this._isDragging = true;
+        console.log('ドラッグ開始判定: ドラッグ開始');
       }
-    } else {
-      // 単なるマウス移動
-      this._handleMouseHover(event);
     }
     
-    this._lastMousePosition = { x: screenX, y: screenY };
+    if (this._isDragging) {
+      // ドラッグ処理
+      const mode = this._editingViewModel.getMode();
+      console.log('ドラッグ中 - モード:', mode);
+      
+      if (mode === 'view') {
+        // ビューモードでは、ドラッグでパン
+        console.log('ビューモードでパン - 座標:', screenX, screenY);
+        this._viewportManager.drag(screenX, screenY);
+      } else if (mode === 'edit') {
+        // 編集モードでは、ドラッグで移動
+        console.log('編集モードでオブジェクト移動');
+        this._handleDragObject(event);
+      }
+    }
+  } else {
+    // 単なるマウス移動
+    this._handleMouseHover(event);
   }
+  
+  this._lastMousePosition = { x: screenX, y: screenY };
+}
 
   /**
    * マウスアップのハンドラ
    * @param {MouseEvent} event - マウスイベント
    * @private
    */
-  _onMouseUp(event) {
-    const mode = this._editingViewModel.getMode();
+_onMouseUp(event) {
+  const mode = this._editingViewModel.getMode();
+  console.log('マウスアップ - モード:', mode);
+  
+  if (this._isMouseDown && this._isDragging) {
+    // ドラッグ終了
+    console.log('ドラッグ終了処理');
     
-    if (this._isMouseDown && this._isDragging) {
-      // ドラッグ終了
-      if (mode === 'view') {
-        this._viewportManager.endDrag();
-      } else if (mode === 'edit') {
-        this._handleDragEnd(event);
-      }
-    } else if (this._isMouseDown && !this._isDragging) {
-      // クリック（ドラッグなし）
-      if (mode === 'view') {
-        this._handleClick(event);
-      }
+    if (mode === 'view') {
+      console.log('ビューモードでドラッグ終了');
+      this._viewportManager.endDrag();
+    } else if (mode === 'edit') {
+      console.log('編集モードでドラッグ終了');
+      this._handleDragEnd(event);
     }
+  } else if (this._isMouseDown && !this._isDragging) {
+    // クリック（ドラッグなし）
+    console.log('クリック処理（ドラッグなし）');
     
-    this._isMouseDown = false;
-    this._isDragging = false;
+    if (mode === 'view') {
+      this._handleClick(event);
+    }
   }
+  
+  this._isMouseDown = false;
+  this._isDragging = false;
+}
 
   /**
    * マウス離脱のハンドラ
@@ -496,19 +514,24 @@ export class MapView {
    * @param {WheelEvent} event - ホイールイベント
    * @private
    */
-  _onWheel(event) {
-    event.preventDefault();
-    
-    const delta = -event.deltaY;
-    const zoomFactor = delta > 0 ? 0.1 : -0.1;
-    
-    const rect = this._mapElement.getBoundingClientRect();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
-    
-    const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
-    
-    this._viewportManager.zoomAt(worldPoint.x, worldPoint.y, zoomFactor);
+_onWheel(event) {
+  event.preventDefault();
+  
+  const delta = -event.deltaY;
+  const zoomFactor = delta > 0 ? 0.1 : -0.1;
+  
+  console.log('ホイール操作 - delta:', delta, 'zoomFactor:', zoomFactor);
+  
+  const rect = this._mapElement.getBoundingClientRect();
+  const screenX = event.clientX - rect.left;
+  const screenY = event.clientY - rect.top;
+  
+  console.log('ホイール位置 - screen:', screenX, screenY);
+  
+  const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
+  console.log('ホイール位置 - world:', worldPoint);
+  
+  this._viewportManager.zoomAt(worldPoint.x, worldPoint.y, zoomFactor);
   }
 
   /**
