@@ -18,21 +18,22 @@ export class MapView {
     this._viewportManager = viewportManager;
     this._renderer = renderer;
     this._configManager = configManager;
-    
+
     // DOM要素
     this._mapElement = null;
     this._mapOverlay = null; // 追加: 透明なオーバーレイ要素
-    
+    this._svgPoint = null; // SVG座標変換用
+
     // 計測モードの状態
     this._isMeasuringDistance = false;
     this._measurePoints = [];
-    this._measureElements = [];
-    
+    this._measureElements = []; // 描画した測定要素を保持
+
     // マウス状態
     this._isMouseDown = false;
     this._isDragging = false;
     this._lastMousePosition = { x: 0, y: 0 };
-    
+
     // 初期化
     this._initialize();
   }
@@ -50,10 +51,10 @@ export class MapView {
     this._mapElement.style.position = 'relative';
     this._mapElement.style.overflow = 'hidden';
     this._mapElement.style.backgroundColor = '#f0f0f0';
-    
+
     // マップコンテナに追加
     this._container.appendChild(this._mapElement);
-    
+
     // 透明なオーバーレイを作成
     this._mapOverlay = document.createElement('div');
     this._mapOverlay.className = 'map-overlay';
@@ -65,23 +66,59 @@ export class MapView {
     this._mapOverlay.style.zIndex = '10'; // SVGの上に配置
     this._mapOverlay.style.pointerEvents = 'auto'; // マウスイベントを受け取る
     this._mapOverlay.style.cursor = 'default';
-    
+
     // オーバーレイをマップコンテナに追加
     this._mapElement.appendChild(this._mapOverlay);
-    
+
+    // SVG座標変換用のSVGPointを作成 (SVGRendererの初期化後に実行)
+    if (this._renderer && this._renderer._svg) {
+        this._svgPoint = this._renderer._svg.createSVGPoint();
+    } else {
+        console.warn("SVGRendererが初期化されていないため、SVGPointを作成できませんでした。");
+        // SVGRendererの初期化を待つか、後で作成するロジックが必要
+    }
+
+
     // ビューモデルとの連携
     this._viewModel.addObserver(this._onViewModelChanged.bind(this));
     this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
-    
+
     // ビューポートの変更監視
     this._viewportManager.addListener(this._onViewportChanged.bind(this));
-    
+
     // イベントリスナーの設定
     this._setupEventListeners();
-    
+
     // 初回描画
     this._render();
   }
+
+  /**
+ * スクリーン座標をSVG座標に変換するヘルパー関数
+ * @param {number} screenX - スクリーンX座標 (コンテナ基準)
+ * @param {number} screenY - スクリーンY座標 (コンテナ基準)
+ * @returns {DOMPoint | null} SVG座標 (DOMPoint) または null
+ * @private
+ */
+_getSVGPoint(screenX, screenY) {
+    if (!this._renderer || !this._renderer._svg || !this._svgPoint) {
+        console.error("SVG要素またはSVGPointが利用できません。");
+        return null;
+    }
+    this._svgPoint.x = screenX;
+    this._svgPoint.y = screenY;
+    try {
+        const ctm = this._renderer._svg.getScreenCTM();
+        if (!ctm) {
+            console.error("SVG要素のCTMが取得できませんでした。");
+            return null;
+        }
+        return this._svgPoint.matrixTransform(ctm.inverse());
+    } catch (e) {
+        console.error("SVG座標への変換中にエラーが発生しました:", e);
+        return null;
+    }
+}
 
   /**
    * イベントリスナーの設定
@@ -98,16 +135,16 @@ export class MapView {
     this._mapOverlay.addEventListener('wheel', this._onWheel.bind(this), { passive: false });
     this._mapOverlay.addEventListener('dblclick', this._onDoubleClick.bind(this));
     this._mapOverlay.addEventListener('contextmenu', this._onContextMenu.bind(this));
-    
+
     // タッチイベント
     this._mapOverlay.addEventListener('touchstart', this._onTouchStart.bind(this), { passive: false });
     this._mapOverlay.addEventListener('touchmove', this._onTouchMove.bind(this), { passive: false });
     this._mapOverlay.addEventListener('touchend', this._onTouchEnd.bind(this));
-    
+
     // キーボードイベント
     window.addEventListener('keydown', this._onKeyDown.bind(this));
     window.addEventListener('keyup', this._onKeyUp.bind(this));
-    
+
     // ウィンドウリサイズ
     window.addEventListener('resize', this._onResize.bind(this));
   }
@@ -131,7 +168,7 @@ export class MapView {
         // 再描画
         this._render();
         break;
-      
+
       default:
         break;
     }
@@ -154,7 +191,7 @@ export class MapView {
         // 再描画
         this._render();
         break;
-      
+
       default:
         break;
     }
@@ -177,22 +214,28 @@ export class MapView {
   _render() {
     const world = this._viewModel.getWorld();
     if (!world) return;
-    
+
+    // レンダラーに SVGPoint がない場合はここで作成
+    if (this._renderer && this._renderer._svg && !this._svgPoint) {
+        this._svgPoint = this._renderer._svg.createSVGPoint();
+        console.log("SVGPointを遅延作成しました。");
+    }
+
     const viewport = this._viewportManager.getViewport();
     const currentTime = this._viewModel._navigateTimeUseCase.getCurrentTime();
-    
+
     // レンダラーでマップを描画
     this._renderer.render(world, viewport, currentTime);
-    
+
     // 選択要素のハイライト
     this._renderSelection();
-    
+
     // 追加中の地物の描画
     this._renderAddingFeature();
-    
+
     // 一時的な表示要素の描画
     this._renderTemporaryElements();
-    
+
     // 距離測定の描画
     this._renderDistanceMeasurement();
   }
@@ -206,8 +249,10 @@ export class MapView {
     const selectedVertices = this._viewModel.getSelectedVertices();
     const hoveredFeature = this._viewModel.getHoveredFeature();
     const hoveredVertex = this._viewModel.getHoveredVertex();
-    
+
     // TODO: 選択要素のハイライト処理
+    // 既存の地物要素を見つけてスタイルを変更するか、
+    // 別途ハイライト用の要素をレンダラーで描画する
   }
 
   /**
@@ -215,72 +260,83 @@ export class MapView {
    * @private
    */
   _renderAddingFeature() {
+     // 既存の一時要素を削除
+     this._clearTemporaryDrawings('adding-');
+
     if (this._editingViewModel.getMode() !== 'add') return;
-    
+
     const addingPoints = this._editingViewModel.getAddingPoints();
     if (addingPoints.length === 0) return;
-    
+
     const tool = this._editingViewModel.getTool();
     const viewport = this._viewportManager.getViewport();
-    
+    let tempElements = []; // この描画で作成した一時要素
+
     // ツールタイプに応じた描画
     switch (tool) {
       case 'point':
         // 点の描画
         if (addingPoints.length === 1) {
-          this._renderer.drawPoint(
+          const elem = this._renderer.drawPoint(
             addingPoints[0].x,
             addingPoints[0].y,
             { fill: '#ff0000', radius: 6, stroke: '#ffffff', strokeWidth: 2 },
             viewport
           );
+           if (elem) tempElements.push(elem);
         }
         break;
-        
+
       case 'line':
         // 線の描画
         if (addingPoints.length >= 2) {
-          this._renderer.drawLine(
+           const elem = this._renderer.drawLine(
             addingPoints,
             { stroke: '#0000ff', strokeWidth: 3, strokeDasharray: '5,5' },
             viewport
           );
+           if (elem) tempElements.push(elem);
         }
         break;
-        
+
       case 'polygon':
         // 多角形の描画
         if (addingPoints.length >= 3) {
           // 線の描画（閉じる）
           const polygonPoints = [...addingPoints, addingPoints[0]];
-          this._renderer.drawLine(
+           const elem = this._renderer.drawLine(
             polygonPoints,
             { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' },
             viewport
           );
+           if (elem) tempElements.push(elem);
         } else if (addingPoints.length >= 2) {
           // 線の描画（開いた状態）
-          this._renderer.drawLine(
+           const elem = this._renderer.drawLine(
             addingPoints,
             { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' },
             viewport
           );
+           if (elem) tempElements.push(elem);
         }
         break;
-        
+
       default:
         break;
     }
-    
+
     // 各頂点の描画
     for (const point of addingPoints) {
-      this._renderer.drawPoint(
+       const elem = this._renderer.drawPoint(
         point.x,
         point.y,
         { fill: '#ffffff', radius: 4, stroke: '#000000', strokeWidth: 1 },
         viewport
       );
+       if (elem) tempElements.push(elem);
     }
+     // 作成した一時要素にマーカーを付ける
+     tempElements.forEach(el => el.classList.add('temp-drawing', 'adding-feature'));
   }
 
   /**
@@ -290,72 +346,107 @@ export class MapView {
   _renderTemporaryElements() {
     const elements = this._editingViewModel.getTemporaryElements();
     // TODO: 一時的な表示要素の描画処理
+    // _renderer を使って要素を描画し、'temp-drawing' クラスなどを付与する
   }
 
   /**
-   * 距離測定の描画
-   * @private
-   */
-  _renderDistanceMeasurement() {
+ * 距離測定の描画
+ * @private
+ */
+_renderDistanceMeasurement() {
+    // 既存の測定要素を削除
+    this._clearTemporaryDrawings('measure-');
+
     if (!this._isMeasuringDistance || this._measurePoints.length === 0) return;
-    
+
     const viewport = this._viewportManager.getViewport();
-    
+    let tempElements = []; // この描画で作成した一時要素
+
     // 測定点の描画
-    for (const point of this._measurePoints) {
-      this._renderer.drawPoint(
-        point.x,
-        point.y,
-        { fill: '#ffff00', radius: 4, stroke: '#000000', strokeWidth: 1 },
-        viewport
-      );
-    }
-    
+    this._measurePoints.forEach((point, index) => {
+        const pointElem = this._renderer.drawPoint(
+            point.x,
+            point.y,
+            { fill: '#ffff00', radius: 4, stroke: '#000000', strokeWidth: 1 },
+            viewport
+        );
+        if (pointElem) tempElements.push(pointElem);
+
+        // 点ラベル (A, B, C...)
+        const labelElem = this._renderer.drawText(
+            point.x,
+            point.y - 10 / Math.sqrt(viewport.zoom), // ラベルの位置調整
+            String.fromCharCode(65 + index), // A, B, C...
+            { fontSize: 10, textColor: '#000000', textAnchor: 'middle'},
+            viewport
+        );
+        if(labelElem) tempElements.push(labelElem);
+    });
+
+
     // 測定線の描画
     if (this._measurePoints.length >= 2) {
-      this._renderer.drawLine(
-        this._measurePoints,
-        { stroke: '#ffff00', strokeWidth: 2, strokeDasharray: '5,5' },
-        viewport
-      );
-      
-      // 距離の計算
-      const equatorLength = this._configManager.get('map.equatorLength', 40000);
-      
-      const distances = [];
-      for (let i = 1; i < this._measurePoints.length; i++) {
-        const p1 = this._measurePoints[i - 1];
-        const p2 = this._measurePoints[i];
-        
-        const distance = this._viewModel.calculateDistance(p1, p2, equatorLength);
-        distances.push(distance);
-      }
-      
-      // 総距離
-      const totalLinear = distances.reduce((sum, d) => sum + d.linear, 0);
-      const totalGreatCircle = distances.reduce((sum, d) => sum + d.greatCircle, 0);
-      
-      // 距離表示
-      const midIndex = Math.floor(this._measurePoints.length / 2);
-      const midPoint = this._measurePoints[midIndex];
-      
-      this._renderer.drawText(
-        midPoint.x,
-        midPoint.y - 20,
-        `直線距離: ${totalLinear.toFixed(2)} km`,
-        { fontSize: 12, textColor: '#000000', textAnchor: 'middle' },
-        viewport
-      );
-      
-      this._renderer.drawText(
-        midPoint.x,
-        midPoint.y - 5,
-        `大円距離: ${totalGreatCircle.toFixed(2)} km`,
-        { fontSize: 12, textColor: '#000000', textAnchor: 'middle' },
-        viewport
-      );
+        const lineElem = this._renderer.drawLine(
+            this._measurePoints,
+            { stroke: '#ffff00', strokeWidth: 2, strokeDasharray: '5,5' },
+            viewport
+        );
+        if (lineElem) tempElements.push(lineElem);
+
+        // 距離の計算
+        const equatorLength = this._configManager.get('map.equatorLength', 40000);
+
+        const distances = [];
+        for (let i = 1; i < this._measurePoints.length; i++) {
+            const p1 = this._measurePoints[i - 1];
+            const p2 = this._measurePoints[i];
+
+            const distance = this._viewModel.calculateDistance(p1, p2, equatorLength);
+            distances.push(distance);
+
+            // 各区間の距離表示 (オプション)
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            const segmentLabelElem = this._renderer.drawText(
+                midX,
+                midY + 10 / Math.sqrt(viewport.zoom), // 線からのオフセット
+                `${distance.linear.toFixed(1)}km`, // 簡易表示
+                { fontSize: 9, textColor: '#333300', textAnchor: 'middle'},
+                viewport
+            );
+            if(segmentLabelElem) tempElements.push(segmentLabelElem);
+        }
+
+        // 総距離
+        const totalLinear = distances.reduce((sum, d) => sum + d.linear, 0);
+        const totalGreatCircle = distances.reduce((sum, d) => sum + d.greatCircle, 0);
+
+        // 距離表示 (最後の点の近くに表示)
+        const lastPoint = this._measurePoints[this._measurePoints.length - 1];
+        const textYOffset = 15 / Math.sqrt(viewport.zoom);
+
+        const totalLinearElem = this._renderer.drawText(
+            lastPoint.x + 10 / Math.sqrt(viewport.zoom), // Xオフセット
+            lastPoint.y - textYOffset * 2, // Yオフセット
+            `直線計: ${totalLinear.toFixed(1)} km`,
+            { fontSize: 10, textColor: '#000000', textAnchor: 'start' }, // 左揃えに変更
+            viewport
+        );
+        if(totalLinearElem) tempElements.push(totalLinearElem);
+
+        const totalGreatCircleElem = this._renderer.drawText(
+            lastPoint.x + 10 / Math.sqrt(viewport.zoom), // Xオフセット
+            lastPoint.y - textYOffset, // Yオフセット
+            `大円計: ${totalGreatCircle.toFixed(1)} km`,
+            { fontSize: 10, textColor: '#000000', textAnchor: 'start' }, // 左揃えに変更
+            viewport
+        );
+        if(totalGreatCircleElem) tempElements.push(totalGreatCircleElem);
     }
-  }
+     // 作成した一時要素にマーカーを付ける
+     tempElements.forEach(el => el.classList.add('temp-drawing', 'measure-element'));
+     this._measureElements = tempElements; // 描画要素を保持
+}
 
   /**
    * マウスダウンのハンドラ
@@ -365,49 +456,55 @@ export class MapView {
 _onMouseDown(event) {
   // 右クリックは無視（コンテキストメニュー用）
   if (event.button === 2) return;
-  
-  // マウス位置を取得
-  const rect = this._mapElement.getBoundingClientRect();
+
+  // マウス位置をSVG座標に変換
+  const rect = this._mapOverlay.getBoundingClientRect(); // オーバーレイ基準で座標取得
   const screenX = event.clientX - rect.left;
   const screenY = event.clientY - rect.top;
+  const svgPoint = this._getSVGPoint(screenX, screenY);
 
-  console.log('マウスダウン:', screenX, screenY);
-  
+  if (!svgPoint) {
+      console.error("SVG座標を取得できませんでした。");
+      return;
+  }
+
+  console.log('マウスダウン - Screen:', screenX, screenY, 'SVG:', svgPoint.x, svgPoint.y);
+
   this._isMouseDown = true;
-  this._lastMousePosition = { x: screenX, y: screenY };
-  
+  this._lastMousePosition = { x: screenX, y: screenY }; // スクリーン座標を保持
+
   // 編集モードに応じた処理
   const mode = this._editingViewModel.getMode();
   console.log('現在の編集モード:', mode);
-  
+
   switch (mode) {
     case 'view':
       // ビューモードでは、ドラッグでパン
       console.log('ビューモードでドラッグ開始');
-      this._viewportManager.startDrag(screenX, screenY);
+      this._viewportManager.startDrag(screenX, screenY); // パンはスクリーン座標基準でOK
       break;
-      
+
     case 'add':
       // 追加モードでは、クリックで点を追加
       console.log('追加モードで点を追加');
-      this._handleAddPoint(event);
+      this._handleAddPoint(svgPoint); // SVG座標 (ワールド座標) を渡す
       break;
-      
+
     case 'edit':
       // 編集モードでは、クリックで選択
       console.log('編集モードでオブジェクト選択');
-      this._handleSelectObject(event);
+      this._handleSelectObject(svgPoint); // SVG座標 (ワールド座標) を渡す
       break;
-      
+
     default:
       console.log('不明なモード:', mode);
       break;
   }
-  
+
   // 距離測定モード
   if (this._isMeasuringDistance) {
     console.log('距離測定点を追加');
-    this._handleAddMeasurePoint(event);
+    this._handleAddMeasurePoint(svgPoint); // SVG座標 (ワールド座標) を渡す
   }
 }
 
@@ -417,10 +514,13 @@ _onMouseDown(event) {
    * @private
    */
 _onMouseMove(event) {
-  const rect = this._mapElement.getBoundingClientRect();
+  const rect = this._mapOverlay.getBoundingClientRect(); // オーバーレイ基準
   const screenX = event.clientX - rect.left;
   const screenY = event.clientY - rect.top;
-  
+  const svgPoint = this._getSVGPoint(screenX, screenY); // SVG座標に変換
+
+  if (!svgPoint) return; // SVG座標が取れなければ何もしない
+
   if (this._isMouseDown) {
     // マウスドラッグ
     if (!this._isDragging) {
@@ -428,34 +528,34 @@ _onMouseMove(event) {
       const dx = screenX - this._lastMousePosition.x;
       const dy = screenY - this._lastMousePosition.y;
       const dragThreshold = 5;
-      
+
       if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
         this._isDragging = true;
         console.log('ドラッグ開始判定: ドラッグ開始');
       }
     }
-    
+
     if (this._isDragging) {
       // ドラッグ処理
       const mode = this._editingViewModel.getMode();
-      console.log('ドラッグ中 - モード:', mode);
-      
+      // console.log('ドラッグ中 - モード:', mode);
+
       if (mode === 'view') {
         // ビューモードでは、ドラッグでパン
-        console.log('ビューモードでパン - 座標:', screenX, screenY);
-        this._viewportManager.drag(screenX, screenY);
+        // console.log('ビューモードでパン - Screen座標:', screenX, screenY);
+        this._viewportManager.drag(screenX, screenY); // パンはスクリーン座標基準
       } else if (mode === 'edit') {
         // 編集モードでは、ドラッグで移動
         console.log('編集モードでオブジェクト移動');
-        this._handleDragObject(event);
+        this._handleDragObject(svgPoint); // SVG座標 (ワールド座標) を渡す
       }
     }
   } else {
     // 単なるマウス移動
-    this._handleMouseHover(event);
+    this._handleMouseHover(svgPoint); // SVG座標 (ワールド座標) を渡す
   }
-  
-  this._lastMousePosition = { x: screenX, y: screenY };
+
+  this._lastMousePosition = { x: screenX, y: screenY }; // スクリーン座標を更新
 }
 
   /**
@@ -465,28 +565,38 @@ _onMouseMove(event) {
    */
 _onMouseUp(event) {
   const mode = this._editingViewModel.getMode();
-  console.log('マウスアップ - モード:', mode);
-  
+  // console.log('マウスアップ - モード:', mode);
+
+  // マウス位置をSVG座標に変換
+  const rect = this._mapOverlay.getBoundingClientRect();
+  const screenX = event.clientX - rect.left;
+  const screenY = event.clientY - rect.top;
+  const svgPoint = this._getSVGPoint(screenX, screenY);
+
+  if (!svgPoint) return; // SVG座標が取れなければ処理中断
+
   if (this._isMouseDown && this._isDragging) {
     // ドラッグ終了
-    console.log('ドラッグ終了処理');
-    
+    // console.log('ドラッグ終了処理');
+
     if (mode === 'view') {
-      console.log('ビューモードでドラッグ終了');
+      // console.log('ビューモードでドラッグ終了');
       this._viewportManager.endDrag();
     } else if (mode === 'edit') {
-      console.log('編集モードでドラッグ終了');
-      this._handleDragEnd(event);
+      // console.log('編集モードでドラッグ終了');
+      this._handleDragEnd(svgPoint); // SVG座標 (ワールド座標) を渡す
     }
   } else if (this._isMouseDown && !this._isDragging) {
     // クリック（ドラッグなし）
-    console.log('クリック処理（ドラッグなし）');
-    
+    // console.log('クリック処理（ドラッグなし）');
+
     if (mode === 'view') {
-      this._handleClick(event);
+      this._handleClick(svgPoint); // SVG座標 (ワールド座標) を渡す
     }
+    // addモードのクリックは onMouseDown で処理済み
+    // editモードのクリック(選択)は onMouseDown で処理済み
   }
-  
+
   this._isMouseDown = false;
   this._isDragging = false;
 }
@@ -499,14 +609,19 @@ _onMouseUp(event) {
   _onMouseLeave(event) {
     if (this._isMouseDown) {
       const mode = this._editingViewModel.getMode();
-      
-      if (mode === 'view') {
+
+      if (mode === 'view' && this._isDragging) { // ドラッグ中の場合のみ終了処理
         this._viewportManager.endDrag();
       }
-      
+      // 他のモードでのドラッグ終了処理も必要ならここに追加
+
       this._isMouseDown = false;
       this._isDragging = false;
+       console.log("Mouse leave during drag, drag ended.");
     }
+     // ホバー状態などもリセット
+     this._viewModel.hoverFeature(null);
+     this._viewModel.hoverVertex(null);
   }
 
   /**
@@ -516,22 +631,23 @@ _onMouseUp(event) {
    */
 _onWheel(event) {
   event.preventDefault();
-  
+
   const delta = -event.deltaY;
   const zoomFactor = delta > 0 ? 0.1 : -0.1;
-  
-  console.log('ホイール操作 - delta:', delta, 'zoomFactor:', zoomFactor);
-  
-  const rect = this._mapElement.getBoundingClientRect();
+
+  // console.log('ホイール操作 - delta:', delta, 'zoomFactor:', zoomFactor);
+
+  const rect = this._mapOverlay.getBoundingClientRect();
   const screenX = event.clientX - rect.left;
   const screenY = event.clientY - rect.top;
-  
-  console.log('ホイール位置 - screen:', screenX, screenY);
-  
-  const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
-  console.log('ホイール位置 - world:', worldPoint);
-  
-  this._viewportManager.zoomAt(worldPoint.x, worldPoint.y, zoomFactor);
+  const svgPoint = this._getSVGPoint(screenX, screenY); // SVG座標に変換
+
+  if (!svgPoint) return; // SVG座標が取れなければ処理中断
+
+  // console.log('ホイール位置 - Screen:', screenX, screenY, 'SVG:', svgPoint.x, svgPoint.y);
+
+  // SVG座標（ワールド座標）でズーム
+  this._viewportManager.zoomAt(svgPoint.x, svgPoint.y, zoomFactor);
   }
 
   /**
@@ -540,19 +656,17 @@ _onWheel(event) {
    * @private
    */
   _onDoubleClick(event) {
-    // ダブルクリックで表示をリセット
-    const screenX = event.clientX;
-    const screenY = event.clientY;
-    
-    const rect = this._mapElement.getBoundingClientRect();
-    const x = screenX - rect.left;
-    const y = screenY - rect.top;
-    
-    const worldPoint = this._viewportManager.screenToWorld(x, y);
-    
+    // ダブルクリックで表示をリセット（ズーム1、クリック位置中心）
+    const rect = this._mapOverlay.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
+    const svgPoint = this._getSVGPoint(screenX, screenY);
+
+    if (!svgPoint) return;
+
     this._viewportManager.updateViewport({
-      x: worldPoint.x,
-      y: worldPoint.y,
+      x: svgPoint.x,
+      y: svgPoint.y,
       zoom: 1
     });
   }
@@ -564,8 +678,20 @@ _onWheel(event) {
    */
   _onContextMenu(event) {
     event.preventDefault();
-    
-    // 右クリックメニューの表示
+
+    // マウス位置をSVG座標に変換
+    const rect = this._mapOverlay.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
+    const svgPoint = this._getSVGPoint(screenX, screenY);
+
+    if (!svgPoint) return;
+
+    // 右クリック位置にあるオブジェクトを特定
+    // TODO: オブジェクト特定ロジック (getFeatureAtPoint など)
+
+    // コンテキストメニューを表示
+    console.log("Context menu at SVG:", svgPoint.x, svgPoint.y);
     // TODO: コンテキストメニュー処理
   }
 
@@ -576,21 +702,33 @@ _onWheel(event) {
    */
   _onTouchStart(event) {
     event.preventDefault();
-    
+
     if (event.touches.length === 1) {
-      // 単一タッチはマウスと同様の処理
+      // 単一タッチ
       const touch = event.touches[0];
-      const rect = this._mapElement.getBoundingClientRect();
+      const rect = this._mapOverlay.getBoundingClientRect();
       const screenX = touch.clientX - rect.left;
       const screenY = touch.clientY - rect.top;
-      
+      const svgPoint = this._getSVGPoint(screenX, screenY);
+
+      if (!svgPoint) return;
+
       this._isMouseDown = true;
-      this._lastMousePosition = { x: screenX, y: screenY };
-      
+      this._lastMousePosition = { x: screenX, y: screenY }; // スクリーン座標
+
       const mode = this._editingViewModel.getMode();
       if (mode === 'view') {
-        this._viewportManager.startDrag(screenX, screenY);
+        this._viewportManager.startDrag(screenX, screenY); // スクリーン座標
+      } else if (mode === 'add') {
+          this._handleAddPoint(svgPoint); // SVG座標
+      } else if (mode === 'edit') {
+          this._handleSelectObject(svgPoint); // SVG座標
       }
+
+      if (this._isMeasuringDistance) {
+        this._handleAddMeasurePoint(svgPoint); // SVG座標
+      }
+
     } else if (event.touches.length === 2) {
       // ピンチ処理の準備
       // TODO: ピンチ処理
@@ -604,35 +742,40 @@ _onWheel(event) {
    */
   _onTouchMove(event) {
     event.preventDefault();
-    
+
     if (event.touches.length === 1) {
-      // 単一タッチはマウスと同様の処理
+      // 単一タッチ
       const touch = event.touches[0];
-      const rect = this._mapElement.getBoundingClientRect();
+      const rect = this._mapOverlay.getBoundingClientRect();
       const screenX = touch.clientX - rect.left;
       const screenY = touch.clientY - rect.top;
-      
+      const svgPoint = this._getSVGPoint(screenX, screenY);
+
+      if (!svgPoint) return;
+
       if (this._isMouseDown) {
         if (!this._isDragging) {
           // ドラッグ開始判定
           const dx = screenX - this._lastMousePosition.x;
           const dy = screenY - this._lastMousePosition.y;
-          const dragThreshold = 5;
-          
+          const dragThreshold = 10; // タッチは閾値を少し大きめに
+
           if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
             this._isDragging = true;
           }
         }
-        
+
         if (this._isDragging) {
           const mode = this._editingViewModel.getMode();
           if (mode === 'view') {
-            this._viewportManager.drag(screenX, screenY);
+            this._viewportManager.drag(screenX, screenY); // スクリーン座標
+          } else if (mode === 'edit') {
+            this._handleDragObject(svgPoint); // SVG座標
           }
         }
       }
-      
-      this._lastMousePosition = { x: screenX, y: screenY };
+
+      this._lastMousePosition = { x: screenX, y: screenY }; // スクリーン座標
     } else if (event.touches.length === 2) {
       // ピンチ処理
       // TODO: ピンチ処理
@@ -645,15 +788,30 @@ _onWheel(event) {
    * @private
    */
   _onTouchEnd(event) {
+    // 最後のタッチ座標を取得しておく必要があるかもしれない
+    // const touch = event.changedTouches[0]; // changedTouches を使う
+    // ... svgPoint を計算 ...
+
     if (this._isMouseDown) {
-      const mode = this._editingViewModel.getMode();
-      
-      if (mode === 'view') {
-        this._viewportManager.endDrag();
-      }
-      
-      this._isMouseDown = false;
-      this._isDragging = false;
+        const mode = this._editingViewModel.getMode();
+
+        if (mode === 'view' && this._isDragging) { // ドラッグ中だった場合のみ
+            this._viewportManager.endDrag();
+        } else if (mode === 'edit' && this._isDragging) {
+            // ドラッグ終了処理 (最後の座標が必要なら上で計算)
+            // this._handleDragEnd(svgPoint);
+        } else if (!this._isDragging) {
+             // タップ（クリック相当）の処理
+             // this._handleClick(svgPoint);
+        }
+    }
+
+    this._isMouseDown = false;
+    this._isDragging = false;
+
+    // ピンチ終了処理
+    if (event.touches.length < 2) {
+        // TODO: ピンチ状態のリセット
     }
   }
 
@@ -663,44 +821,66 @@ _onWheel(event) {
    * @private
    */
   _onKeyDown(event) {
+    // 対象が入力要素の場合は無視
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) {
+      return;
+    }
+
     // ESCキーで選択解除または編集キャンセル
     if (event.key === 'Escape') {
+       event.preventDefault(); // デフォルト動作を抑制
       const mode = this._editingViewModel.getMode();
-      
+
       if (mode === 'add' && this._editingViewModel.getAddingPoints().length > 0) {
         // 追加作業のキャンセル
         this._editingViewModel._clearAddingPoints();
+         console.log("Add operation cancelled by ESC.");
       } else if (mode === 'edit' && (this._viewModel.getSelectedFeature() || this._viewModel.getSelectedVertices().length > 0)) {
         // 選択解除
         this._viewModel.clearSelection();
+         console.log("Selection cleared by ESC.");
+      } else if (this._isMeasuringDistance) {
+          // 測定キャンセル
+          this.clearMeasurements();
+          this.setMeasuringDistance(false);
+          // TODO: ツールバーの測定ボタンの状態も更新する通知が必要
+          console.log("Measurement cancelled by ESC.");
       } else {
         // 表示モードに戻る
         this._editingViewModel.setMode('view');
+         console.log("Mode set to 'view' by ESC.");
       }
     }
-    
-    // Deleteキーで選択要素削除
-    if (event.key === 'Delete') {
+
+    // DeleteキーまたはBackspaceキーで選択要素削除
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+       event.preventDefault(); // デフォルト動作を抑制
       const selectedFeature = this._viewModel.getSelectedFeature();
-      if (selectedFeature) {
+      if (selectedFeature && this._editingViewModel.getMode() === 'edit') { // 編集モードでのみ削除
+        // TODO: 削除前の確認ダイアログ表示
+        console.log("Deleting feature:", selectedFeature.id);
         this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature);
       }
+       // TODO: 選択された頂点の削除
     }
-    
+
     // アンドゥ・リドゥ
-    if (event.ctrlKey || event.metaKey) {
+    if (event.ctrlKey || event.metaKey) { // metaKey for macOS
       if (event.key === 'z') {
         event.preventDefault();
         if (event.shiftKey) {
           // Ctrl+Shift+Z: リドゥ
+          console.log("Redo triggered by Ctrl+Shift+Z");
           this._editingViewModel.redo();
         } else {
           // Ctrl+Z: アンドゥ
+          console.log("Undo triggered by Ctrl+Z");
           this._editingViewModel.undo();
         }
       } else if (event.key === 'y') {
         event.preventDefault();
         // Ctrl+Y: リドゥ
+        console.log("Redo triggered by Ctrl+Y");
         this._editingViewModel.redo();
       }
     }
@@ -712,7 +892,7 @@ _onWheel(event) {
    * @private
    */
   _onKeyUp(event) {
-    // キー修飾子の状態更新など
+    // キー修飾子の状態更新など (必要であれば)
   }
 
   /**
@@ -720,89 +900,145 @@ _onWheel(event) {
    * @private
    */
   _onResize() {
+    // コンテナのサイズを取得
+    // 注意: getBoundingClientRect() は小数点を含むことがあるため、整数化が必要な場合がある
     const rect = this._container.getBoundingClientRect();
-    
+    const width = Math.floor(rect.width);
+    const height = Math.floor(rect.height);
+
+    // console.log("Resize event:", width, height);
+
     // レンダラーのリサイズ
-    this._renderer.resize(rect.width, rect.height);
-    
-    // ビューポートのリサイズ
-    this._viewportManager.resize(rect.width, rect.height);
+    this._renderer.resize(width, height);
+
+    // ビューポートのリサイズ (幅と高さのみ更新)
+    this._viewportManager.resize(width, height);
+    // resize は内部で updateViewport を呼び、変更があれば _onViewportChanged がトリガーされるはず
   }
 
   /**
    * オブジェクト選択処理
-   * @param {MouseEvent} event - マウスイベント
+   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
    * @private
    */
-  _handleSelectObject(event) {
+  _handleSelectObject(svgPoint) {
     // TODO: オブジェクト選択処理
+    // 1. svgPoint に最も近いオブジェクト（頂点、線、面）を特定する
+    //    - 空間インデックスを使うと効率的
+    //    - クリック許容範囲 (tolerance) を考慮する
+    // 2. 見つかったオブジェクトを viewModel.selectFeature または viewModel.selectVertex で選択する
+    // 3. 何も見つからなければ viewModel.clearSelection() を呼ぶ
+    console.log("Select object at SVG:", svgPoint.x, svgPoint.y);
+    // 仮実装: 選択解除
+    this._viewModel.clearSelection();
   }
 
   /**
-   * クリック処理
-   * @param {MouseEvent} event - マウスイベント
+   * クリック処理 (ビューモード)
+   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
    * @private
    */
-  _handleClick(event) {
-    // TODO: クリック処理
+  _handleClick(svgPoint) {
+    // TODO: クリック処理 (ビューモード)
+    // - 情報表示など？ 現状では特に何もしないかも
+    console.log("Click at SVG (view mode):", svgPoint.x, svgPoint.y);
+    // クリックした地点の情報を表示するなどの処理をここに追加可能
   }
 
   /**
    * オブジェクトドラッグ処理
-   * @param {MouseEvent} event - マウスイベント
+   * @param {DOMPoint} svgPoint - 現在のSVG座標 (ワールド座標)
    * @private
    */
-  _handleDragObject(event) {
+  _handleDragObject(svgPoint) {
     // TODO: オブジェクトドラッグ処理
+    // 1. 選択されているオブジェクト（頂点など）を取得
+    // 2. editingViewModel.moveVertex などを使って移動を試みる
+    // 3. 描画は ViewModel の変更通知 → _render で行われる
+    const selectedVertices = this._viewModel.getSelectedVertices();
+    if (selectedVertices.length === 1) {
+        // console.log("Dragging vertex:", selectedVertices[0].id, "to SVG:", svgPoint.x, svgPoint.y);
+        // TODO: moveVertex を呼ぶ (ただし、高頻度で呼ばれるためスロットリングが必要かも)
+        // 仮に直接描画を更新する場合（非推奨）：
+        // this._renderer.updateVertexPosition(selectedVertices[0].id, svgPoint.x, svgPoint.y);
+    } else if (this._viewModel.getSelectedFeature()) {
+        // TODO: 地物全体のドラッグ（今は頂点移動のみ想定）
+        // console.log("Dragging feature:", this._viewModel.getSelectedFeature().id);
+    }
   }
 
   /**
    * ドラッグ終了処理
-   * @param {MouseEvent} event - マウスイベント
+   * @param {DOMPoint} svgPoint - 最終的なSVG座標 (ワールド座標)
    * @private
    */
-  _handleDragEnd(event) {
+  _handleDragEnd(svgPoint) {
     // TODO: ドラッグ終了処理
+    // 1. ドラッグ開始時の位置と終了位置から移動操作を確定
+    // 2. editingViewModel.moveVertex などを呼び出して変更を永続化
+    const selectedVertices = this._viewModel.getSelectedVertices();
+    if (selectedVertices.length === 1) {
+        const vertex = selectedVertices[0];
+        // TODO: ドラッグ開始位置を保持しておく必要がある
+        const oldPosition = { x: vertex.x, y: vertex.y }; // これは正しくない、開始位置が必要
+        const newPosition = { x: svgPoint.x, y: svgPoint.y };
+        console.log("Drag ended for vertex:", vertex.id, "New position:", newPosition);
+        // this._editingViewModel.moveVertex(vertex.id, oldPosition, newPosition); // oldPositionを正しく渡す
+    }
+    // TODO: feature全体のドラッグ終了処理
   }
 
   /**
    * マウスホバー処理
-   * @param {MouseEvent} event - マウスイベント
+   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
    * @private
    */
-  _handleMouseHover(event) {
+  _handleMouseHover(svgPoint) {
     // TODO: マウスホバー処理
+    // 1. svgPoint に最も近いオブジェクトを特定
+    // 2. viewModel.hoverFeature または viewModel.hoverVertex を呼ぶ
+    // 3. マウスカーソルの形状を変更するなど
+    // console.log("Hover at SVG:", svgPoint.x, svgPoint.y);
+    // 仮実装：ホバー解除
+    // this._viewModel.hoverFeature(null);
+    // this._viewModel.hoverVertex(null);
   }
 
   /**
    * 点追加処理
-   * @param {MouseEvent} event - マウスイベント
+   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
    * @private
    */
-  _handleAddPoint(event) {
-    const rect = this._mapElement.getBoundingClientRect();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
-    
-    const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
-    
+  _handleAddPoint(svgPoint) {
+    // const rect = this._mapElement.getBoundingClientRect();
+    // const screenX = event.clientX - rect.left;
+    // const screenY = event.clientY - rect.top;
+    // const svgPoint = this._getSVGPoint(screenX, screenY);
+    if (!svgPoint) return;
+
+    const worldPoint = { x: svgPoint.x, y: svgPoint.y };
+    console.log("Adding point at World:", worldPoint.x, worldPoint.y);
+
     this._editingViewModel.addPoint(worldPoint);
   }
 
   /**
    * 測定点追加処理
-   * @param {MouseEvent} event - マウスイベント
+   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
    * @private
    */
-  _handleAddMeasurePoint(event) {
-    const rect = this._mapElement.getBoundingClientRect();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
-    
-    const worldPoint = this._viewportManager.screenToWorld(screenX, screenY);
-    
+  _handleAddMeasurePoint(svgPoint) {
+    // const rect = this._mapElement.getBoundingClientRect();
+    // const screenX = event.clientX - rect.left;
+    // const screenY = event.clientY - rect.top;
+    // const svgPoint = this._getSVGPoint(screenX, screenY);
+    if (!svgPoint) return;
+
+    const worldPoint = { x: svgPoint.x, y: svgPoint.y };
+    console.log("Adding measure point at World:", worldPoint.x, worldPoint.y);
+
     this._measurePoints.push(worldPoint);
-    this._render();
+    this._render(); // 測定点を追加したらすぐに再描画
   }
 
   /**
@@ -810,11 +1046,19 @@ _onWheel(event) {
    * @param {boolean} enabled - 有効化するかどうか
    */
   setMeasuringDistance(enabled) {
-    this._isMeasuringDistance = enabled;
-    
-    if (!enabled) {
-      this._measurePoints = [];
-      this._render();
+    if (this._isMeasuringDistance !== enabled) {
+        this._isMeasuringDistance = enabled;
+        console.log("Measuring distance mode:", enabled);
+
+        if (!enabled) {
+            this.clearMeasurements(); // モード解除時に測定結果をクリア
+        } else {
+            // 測定モード開始時に他のモードを解除するなど（必要であれば）
+            this._editingViewModel.setMode('view');
+        }
+        // カーソル形状の変更など
+        this._mapOverlay.style.cursor = enabled ? 'crosshair' : 'default';
+        this._render(); // 状態が変わったので再描画
     }
   }
 
@@ -831,6 +1075,29 @@ _onWheel(event) {
    */
   clearMeasurements() {
     this._measurePoints = [];
-    this._render();
+    this._clearTemporaryDrawings('measure-'); // 描画された要素も削除
+    this._measureElements = []; // 保持している要素リストもクリア
+     console.log("Measurements cleared.");
+    // this._render(); // _clearTemporaryDrawings の後、必要なら再描画
+  }
+
+  /**
+   * 特定のクラスを持つ一時的な描画要素を削除
+   * @param {string} classNamePrefix - 削除する要素のクラス名プレフィックス (e.g., 'measure-', 'adding-')
+   * @private
+   */
+  _clearTemporaryDrawings(classNamePrefix) {
+    const tempElements = this._renderer._mainGroup.querySelectorAll(`.temp-drawing.${classNamePrefix}element, .temp-drawing.${classNamePrefix}feature`);
+    tempElements.forEach(el => this._renderer.removeElement(el));
+    // console.log(`Cleared temporary drawings with prefix: ${classNamePrefix}`);
+  }
+
+  /**
+   * グリッド表示の切り替え
+   * @param {boolean} show - 表示する場合はtrue
+   */
+  toggleGrid(show) {
+    this._renderer.toggleGrid(show);
+    this._render(); // グリッドの状態が変わったので再描画
   }
 }
