@@ -1,3 +1,5 @@
+// src/infrastructure/rendering/SVGRenderer.js
+
 /**
  * SVGベースの地図レンダリング
  */
@@ -14,6 +16,7 @@ export class SVGRenderer {
     this._mainGroup = null;
     this._gridGroup = null;
     this._featuresGroup = null;
+    this._backgroundGroup = null; // 背景グループの参照を追加
 
     this._options = {
       width: options.width || 800,
@@ -53,13 +56,19 @@ export class SVGRenderer {
     this._mainGroup.setAttribute("class", "main-group");
     this._svg.appendChild(this._mainGroup);
 
+    // 背景グループを最初に作成し、参照を保持
+    this._backgroundGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    this._backgroundGroup.setAttribute("class", "background-map");
+    this._backgroundGroup.setAttribute("pointer-events", "none"); // クリックイベントを拾わないように
+    this._mainGroup.appendChild(this._backgroundGroup); // メイングループの最初の子として挿入
+
     this._gridGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._gridGroup.setAttribute("class", "grid-group");
-    this._mainGroup.appendChild(this._gridGroup);
+    this._mainGroup.appendChild(this._gridGroup); // グリッドは背景の上
 
     this._featuresGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._featuresGroup.setAttribute("class", "features-group");
-    this._mainGroup.appendChild(this._featuresGroup);
+    this._mainGroup.appendChild(this._featuresGroup); // 地物はグリッドの上
 
     // コンテナに追加
     this._container.appendChild(this._svg);
@@ -929,35 +938,64 @@ toWorldY(svgY, viewport) {
  */
   loadBackgroundMap(svgContent) {
     // 既存の背景要素をクリア
-    const existingBackground = this._svg.querySelector('.background-map');
-    if (existingBackground) {
-      existingBackground.remove();
+    while (this._backgroundGroup.firstChild) {
+        this._backgroundGroup.removeChild(this._backgroundGroup.firstChild);
     }
 
-    // 新しい背景グループ要素を作成
-    const backgroundGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    backgroundGroup.setAttribute("class", "background-map");
-    // 背景地図がクリックイベントを拾わないようにする
-    backgroundGroup.setAttribute("pointer-events", "none");
-
-
-    // SVG文字列からDOMを解析して挿入
+    // SVG文字列からDOMを解析
     const parser = new DOMParser();
     const svgDoc = parser.parseFromString(svgContent, "image/svg+xml");
     const svgElement = svgDoc.documentElement;
 
+    if (!svgElement || svgElement.nodeName !== 'svg') {
+        console.error('読み込まれたSVGコンテンツが無効です。');
+        return;
+    }
+
+    // SVGの幅と高さを取得 (viewBox優先、なければwidth/height)
+    let svgWidth, svgHeight;
+    const viewBox = svgElement.getAttribute('viewBox');
+    if (viewBox) {
+        const parts = viewBox.split(/\s+|,/);
+        if (parts.length === 4) {
+            svgWidth = parseFloat(parts[2]);
+            svgHeight = parseFloat(parts[3]);
+        }
+    }
+    if (!svgWidth || !svgHeight) {
+        svgWidth = parseFloat(svgElement.getAttribute('width'));
+        svgHeight = parseFloat(svgElement.getAttribute('height'));
+    }
+
+    if (!svgWidth || !svgHeight || svgWidth <= 0 || svgHeight <= 0) {
+        console.error('背景地図SVGの幅または高さを特定できませんでした。');
+        return;
+    }
+
+    // ワールド座標系（経度360度、緯度180度）にマッピング
+    const targetWidth = 360;
+    const targetHeight = 180;
+
+    // スケーリング係数 (Y軸は反転)
+    const scaleX = targetWidth / svgWidth;
+    const scaleY = -targetHeight / svgHeight;
+
+    // 平行移動量 (SVGの左上(0,0)をワールド座標の左上(-180, 90)に移動)
+    const translateX = -180;
+    const translateY = 90;
+
+    // 背景グループにtransform属性を設定して座標変換
+    this._backgroundGroup.setAttribute('transform', `translate(${translateX} ${translateY}) scale(${scaleX} ${scaleY})`);
+
     // SVGの内容をグループに追加
-    // 注意: importNodeを使用して他のドキュメントからノードをインポート
     for (const child of svgElement.childNodes) {
       if (child.nodeType === Node.ELEMENT_NODE) {
-        backgroundGroup.appendChild(document.importNode(child, true));
+        // 不要な要素（例：<title>, <desc>）はスキップするなど、必要に応じてフィルタリング
+        this._backgroundGroup.appendChild(document.importNode(child, true));
       }
     }
 
-    // メイングループの最初の子として挿入 (グリッドより下)
-    this._mainGroup.insertBefore(backgroundGroup, this._gridGroup);
-
-    console.log('背景地図を設定しました');
+    console.log(`背景地図を設定しました。 元サイズ: ${svgWidth}x${svgHeight}, 変換: translate(${translateX},${translateY}) scale(${scaleX.toFixed(4)},${scaleY.toFixed(4)})`);
   }
 
   /**
