@@ -32,6 +32,7 @@ export class MapView {
     // マウス状態
     this._isMouseDown = false;
     this._isDragging = false;
+    // _lastMousePosition はページ全体の座標を保持するように変更
     this._lastMousePosition = { x: 0, y: 0 };
 
     // 初期化
@@ -95,24 +96,25 @@ export class MapView {
 
   /**
  * スクリーン座標をSVG座標に変換するヘルパー関数
- * @param {number} screenX - スクリーンX座標 (コンテナ基準)
- * @param {number} screenY - スクリーンY座標 (コンテナ基準)
+ * @param {number} pageX - ページ全体のX座標
+ * @param {number} pageY - ページ全体のY座標
  * @returns {DOMPoint | null} SVG座標 (DOMPoint) または null
  * @private
  */
-_getSVGPoint(screenX, screenY) {
+_getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
     if (!this._renderer || !this._renderer._svg || !this._svgPoint) {
         console.error("SVG要素またはSVGPointが利用できません。");
         return null;
     }
-    this._svgPoint.x = screenX;
-    this._svgPoint.y = screenY;
+    this._svgPoint.x = pageX;
+    this._svgPoint.y = pageY;
     try {
         const ctm = this._renderer._svg.getScreenCTM();
         if (!ctm) {
             console.error("SVG要素のCTMが取得できませんでした。");
             return null;
         }
+        // CTMの逆行列を使ってページ座標をSVG座標に変換
         return this._svgPoint.matrixTransform(ctm.inverse());
     } catch (e) {
         console.error("SVG座標への変換中にエラーが発生しました:", e);
@@ -457,21 +459,21 @@ _onMouseDown(event) {
   // 右クリックは無視（コンテキストメニュー用）
   if (event.button === 2) return;
 
-  // マウス位置をSVG座標に変換
-  const rect = this._mapOverlay.getBoundingClientRect(); // オーバーレイ基準で座標取得
-  const screenX = event.clientX - rect.left;
-  const screenY = event.clientY - rect.top;
-  const svgPoint = this._getSVGPoint(screenX, screenY);
+  // ページ全体の座標を取得
+  const pageX = event.clientX;
+  const pageY = event.clientY;
+  // SVG座標に変換
+  const svgPoint = this._getSVGPoint(pageX, pageY);
 
   if (!svgPoint) {
       console.error("SVG座標を取得できませんでした。");
       return;
   }
 
-  console.log('マウスダウン - Screen:', screenX, screenY, 'SVG:', svgPoint.x, svgPoint.y);
+  console.log('マウスダウン - Page:', pageX, pageY, 'SVG:', svgPoint.x, svgPoint.y);
 
   this._isMouseDown = true;
-  this._lastMousePosition = { x: screenX, y: screenY }; // スクリーン座標を保持
+  this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を保持
 
   // 編集モードに応じた処理
   const mode = this._editingViewModel.getMode();
@@ -481,7 +483,7 @@ _onMouseDown(event) {
     case 'view':
       // ビューモードでは、ドラッグでパン
       console.log('ビューモードでドラッグ開始');
-      this._viewportManager.startDrag(screenX, screenY); // パンはスクリーン座標基準でOK
+      this._viewportManager.startDrag(pageX, pageY); // ページ座標を渡す
       break;
 
     case 'add':
@@ -514,10 +516,11 @@ _onMouseDown(event) {
    * @private
    */
 _onMouseMove(event) {
-  const rect = this._mapOverlay.getBoundingClientRect(); // オーバーレイ基準
-  const screenX = event.clientX - rect.left;
-  const screenY = event.clientY - rect.top;
-  const svgPoint = this._getSVGPoint(screenX, screenY); // SVG座標に変換
+  // ページ全体の座標を取得
+  const pageX = event.clientX;
+  const pageY = event.clientY;
+  // SVG座標に変換
+  const svgPoint = this._getSVGPoint(pageX, pageY);
 
   if (!svgPoint) return; // SVG座標が取れなければ何もしない
 
@@ -525,8 +528,8 @@ _onMouseMove(event) {
     // マウスドラッグ
     if (!this._isDragging) {
       // ドラッグ開始判定
-      const dx = screenX - this._lastMousePosition.x;
-      const dy = screenY - this._lastMousePosition.y;
+      const dx = pageX - this._lastMousePosition.x;
+      const dy = pageY - this._lastMousePosition.y;
       const dragThreshold = 5;
 
       if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
@@ -542,8 +545,8 @@ _onMouseMove(event) {
 
       if (mode === 'view') {
         // ビューモードでは、ドラッグでパン
-        // console.log('ビューモードでパン - Screen座標:', screenX, screenY);
-        this._viewportManager.drag(screenX, screenY); // パンはスクリーン座標基準
+        // console.log('ビューモードでパン - Page座標:', pageX, pageY);
+        this._viewportManager.drag(pageX, pageY); // ページ座標を渡す
       } else if (mode === 'edit') {
         // 編集モードでは、ドラッグで移動
         console.log('編集モードでオブジェクト移動');
@@ -555,7 +558,7 @@ _onMouseMove(event) {
     this._handleMouseHover(svgPoint); // SVG座標 (ワールド座標) を渡す
   }
 
-  this._lastMousePosition = { x: screenX, y: screenY }; // スクリーン座標を更新
+  this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を更新
 }
 
   /**
@@ -567,11 +570,11 @@ _onMouseUp(event) {
   const mode = this._editingViewModel.getMode();
   // console.log('マウスアップ - モード:', mode);
 
-  // マウス位置をSVG座標に変換
-  const rect = this._mapOverlay.getBoundingClientRect();
-  const screenX = event.clientX - rect.left;
-  const screenY = event.clientY - rect.top;
-  const svgPoint = this._getSVGPoint(screenX, screenY);
+  // ページ全体の座標を取得
+  const pageX = event.clientX;
+  const pageY = event.clientY;
+  // SVG座標に変換
+  const svgPoint = this._getSVGPoint(pageX, pageY);
 
   if (!svgPoint) return; // SVG座標が取れなければ処理中断
 
@@ -637,14 +640,15 @@ _onWheel(event) {
 
   // console.log('ホイール操作 - delta:', delta, 'zoomFactor:', zoomFactor);
 
-  const rect = this._mapOverlay.getBoundingClientRect();
-  const screenX = event.clientX - rect.left;
-  const screenY = event.clientY - rect.top;
-  const svgPoint = this._getSVGPoint(screenX, screenY); // SVG座標に変換
+  // ページ全体の座標を取得
+  const pageX = event.clientX;
+  const pageY = event.clientY;
+  // SVG座標に変換
+  const svgPoint = this._getSVGPoint(pageX, pageY);
 
   if (!svgPoint) return; // SVG座標が取れなければ処理中断
 
-  // console.log('ホイール位置 - Screen:', screenX, screenY, 'SVG:', svgPoint.x, svgPoint.y);
+  // console.log('ホイール位置 - Page:', pageX, pageY, 'SVG:', svgPoint.x, svgPoint.y);
 
   // SVG座標（ワールド座標）でズーム
   this._viewportManager.zoomAt(svgPoint.x, svgPoint.y, zoomFactor);
@@ -656,14 +660,15 @@ _onWheel(event) {
    * @private
    */
   _onDoubleClick(event) {
-    // ダブルクリックで表示をリセット（ズーム1、クリック位置中心）
-    const rect = this._mapOverlay.getBoundingClientRect();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
-    const svgPoint = this._getSVGPoint(screenX, screenY);
+    // ページ全体の座標を取得
+    const pageX = event.clientX;
+    const pageY = event.clientY;
+    // SVG座標に変換
+    const svgPoint = this._getSVGPoint(pageX, pageY);
 
     if (!svgPoint) return;
 
+    // ダブルクリックで表示をリセット（ズーム1、クリック位置中心）
     this._viewportManager.updateViewport({
       x: svgPoint.x,
       y: svgPoint.y,
@@ -679,11 +684,11 @@ _onWheel(event) {
   _onContextMenu(event) {
     event.preventDefault();
 
-    // マウス位置をSVG座標に変換
-    const rect = this._mapOverlay.getBoundingClientRect();
-    const screenX = event.clientX - rect.left;
-    const screenY = event.clientY - rect.top;
-    const svgPoint = this._getSVGPoint(screenX, screenY);
+    // ページ全体の座標を取得
+    const pageX = event.clientX;
+    const pageY = event.clientY;
+    // SVG座標に変換
+    const svgPoint = this._getSVGPoint(pageX, pageY);
 
     if (!svgPoint) return;
 
@@ -706,19 +711,20 @@ _onWheel(event) {
     if (event.touches.length === 1) {
       // 単一タッチ
       const touch = event.touches[0];
-      const rect = this._mapOverlay.getBoundingClientRect();
-      const screenX = touch.clientX - rect.left;
-      const screenY = touch.clientY - rect.top;
-      const svgPoint = this._getSVGPoint(screenX, screenY);
+      // ページ全体の座標を取得
+      const pageX = touch.clientX;
+      const pageY = touch.clientY;
+      // SVG座標に変換
+      const svgPoint = this._getSVGPoint(pageX, pageY);
 
       if (!svgPoint) return;
 
       this._isMouseDown = true;
-      this._lastMousePosition = { x: screenX, y: screenY }; // スクリーン座標
+      this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を保持
 
       const mode = this._editingViewModel.getMode();
       if (mode === 'view') {
-        this._viewportManager.startDrag(screenX, screenY); // スクリーン座標
+        this._viewportManager.startDrag(pageX, pageY); // ページ座標を渡す
       } else if (mode === 'add') {
           this._handleAddPoint(svgPoint); // SVG座標
       } else if (mode === 'edit') {
@@ -746,18 +752,19 @@ _onWheel(event) {
     if (event.touches.length === 1) {
       // 単一タッチ
       const touch = event.touches[0];
-      const rect = this._mapOverlay.getBoundingClientRect();
-      const screenX = touch.clientX - rect.left;
-      const screenY = touch.clientY - rect.top;
-      const svgPoint = this._getSVGPoint(screenX, screenY);
+      // ページ全体の座標を取得
+      const pageX = touch.clientX;
+      const pageY = touch.clientY;
+      // SVG座標に変換
+      const svgPoint = this._getSVGPoint(pageX, pageY);
 
       if (!svgPoint) return;
 
       if (this._isMouseDown) {
         if (!this._isDragging) {
           // ドラッグ開始判定
-          const dx = screenX - this._lastMousePosition.x;
-          const dy = screenY - this._lastMousePosition.y;
+          const dx = pageX - this._lastMousePosition.x;
+          const dy = pageY - this._lastMousePosition.y;
           const dragThreshold = 10; // タッチは閾値を少し大きめに
 
           if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
@@ -768,14 +775,14 @@ _onWheel(event) {
         if (this._isDragging) {
           const mode = this._editingViewModel.getMode();
           if (mode === 'view') {
-            this._viewportManager.drag(screenX, screenY); // スクリーン座標
+            this._viewportManager.drag(pageX, pageY); // ページ座標を渡す
           } else if (mode === 'edit') {
             this._handleDragObject(svgPoint); // SVG座標
           }
         }
       }
 
-      this._lastMousePosition = { x: screenX, y: screenY }; // スクリーン座標
+      this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を更新
     } else if (event.touches.length === 2) {
       // ピンチ処理
       // TODO: ピンチ処理
@@ -788,9 +795,12 @@ _onWheel(event) {
    * @private
    */
   _onTouchEnd(event) {
-    // 最後のタッチ座標を取得しておく必要があるかもしれない
-    // const touch = event.changedTouches[0]; // changedTouches を使う
-    // ... svgPoint を計算 ...
+    // 最後のタッチ座標を取得する必要がある場合
+    // const touch = event.changedTouches[0];
+    // const pageX = touch.clientX;
+    // const pageY = touch.clientY;
+    // const svgPoint = this._getSVGPoint(pageX, pageY);
+    // if (!svgPoint) return;
 
     if (this._isMouseDown) {
         const mode = this._editingViewModel.getMode();
@@ -802,7 +812,8 @@ _onWheel(event) {
             // this._handleDragEnd(svgPoint);
         } else if (!this._isDragging) {
              // タップ（クリック相当）の処理
-             // this._handleClick(svgPoint);
+             // const lastSvgPoint = this._getSVGPoint(this._lastMousePosition.x, this._lastMousePosition.y);
+             // if (lastSvgPoint) this._handleClick(lastSvgPoint);
         }
     }
 
@@ -1010,10 +1021,6 @@ _onWheel(event) {
    * @private
    */
   _handleAddPoint(svgPoint) {
-    // const rect = this._mapElement.getBoundingClientRect();
-    // const screenX = event.clientX - rect.left;
-    // const screenY = event.clientY - rect.top;
-    // const svgPoint = this._getSVGPoint(screenX, screenY);
     if (!svgPoint) return;
 
     const worldPoint = { x: svgPoint.x, y: svgPoint.y };
@@ -1028,10 +1035,6 @@ _onWheel(event) {
    * @private
    */
   _handleAddMeasurePoint(svgPoint) {
-    // const rect = this._mapElement.getBoundingClientRect();
-    // const screenX = event.clientX - rect.left;
-    // const screenY = event.clientY - rect.top;
-    // const svgPoint = this._getSVGPoint(screenX, screenY);
     if (!svgPoint) return;
 
     const worldPoint = { x: svgPoint.x, y: svgPoint.y };
