@@ -976,13 +976,14 @@ toWorldY(svgY, viewport) {
     const targetWidth = 360;
     const targetHeight = 180;
 
-    // スケーリング係数 (Y軸は反転)
+    // スケーリング係数
     const scaleX = targetWidth / svgWidth;
-    const scaleY = -targetHeight / svgHeight;
+    // Y軸反転を削除し、ワールド座標に合わせる
+    const scaleY = targetHeight / svgHeight;
 
-    // 平行移動量 (SVGの左上(0,0)をワールド座標の左上(-180, 90)に移動)
+    // 平行移動量 (SVGの左上(0,0)をワールド座標の左下(-180, -90)に移動)
     const translateX = -180;
-    const translateY = 90;
+    const translateY = -90; // Y座標の基点をワールド座標の下端（南緯90度）に移動
 
     // 背景グループにtransform属性を設定して座標変換
     this._backgroundGroup.setAttribute('transform', `translate(${translateX} ${translateY}) scale(${scaleX} ${scaleY})`);
