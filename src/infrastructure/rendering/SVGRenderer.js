@@ -17,6 +17,15 @@ export class SVGRenderer {
     this._gridGroup = null;
     this._featuresGroup = null;
     this._backgroundGroup = null; // 背景グループの参照を追加
+    this._originalBackgroundContent = null; // 追加: 元の背景SVG内容を保持
+    this._backgroundTransform = { // 追加: 背景の基準変換情報
+        scaleX: 1,
+        scaleY: 1,
+        translateX: 0,
+        translateY: 0,
+        worldWidth: 360, // ワールド座標系での背景地図の幅
+    };
+
 
     this._options = {
       width: options.width || 800,
@@ -110,6 +119,9 @@ render(world, viewport, currentTime) {
   this._svg.setAttribute("viewBox", `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
   // console.log('SVG viewBox 更新:', `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
 
+  // 背景を描画 (左右ループ対応)
+  this._renderBackground(viewport);
+
   // グリッドを描画
   this._renderGrid(viewport);
 
@@ -129,6 +141,7 @@ render(world, viewport, currentTime) {
     layerGroup.style.opacity = layer.opacity;
 
     // このレイヤーに属する地物をフィルタリング
+    // TODO: 将来的に地物のループ描画もここで行う
     const layerFeatures = world.features.filter(f =>
       f.layerId === layer.id && f.existsAt(currentTime)
     );
@@ -181,6 +194,55 @@ render(world, viewport, currentTime) {
   }
 
   /**
+   * 背景地図を描画（左右ループ対応）
+   * @param {Object} viewport - ビューポート情報
+   * @private
+   */
+  _renderBackground(viewport) {
+    if (!this._originalBackgroundContent) return; // 背景が読み込まれていない場合は何もしない
+
+    // 既存の背景要素をクリア
+    while (this._backgroundGroup.firstChild) {
+        this._backgroundGroup.removeChild(this._backgroundGroup.firstChild);
+    }
+
+    const viewBoxWidth = viewport.width / viewport.zoom;
+    const viewBoxX = viewport.x - viewBoxWidth / 2;
+    const worldWidth = this._backgroundTransform.worldWidth; // 360
+
+    // ビューポートが表示する範囲（ワールド座標）
+    const viewLeft = viewBoxX;
+    const viewRight = viewBoxX + viewBoxWidth;
+
+    // 元の地図が表示されるべきXオフセットを計算
+    // ビューポートの中心に最も近い地図の中心を探す
+    // viewport.x を worldWidth で割った余りを基準にする
+    const baseOffset = Math.round(viewport.x / worldWidth) * worldWidth;
+
+    // 描画する地図のオフセット範囲を決定
+    // 最低限、ビューポートの左端と右端を含むようにオフセットを計算
+    const minOffsetIndex = Math.floor((viewLeft - baseOffset) / worldWidth);
+    const maxOffsetIndex = Math.ceil((viewRight - baseOffset) / worldWidth);
+
+    // console.log(`Rendering background from index ${minOffsetIndex} to ${maxOffsetIndex} relative to base offset ${baseOffset}`);
+
+    // 各オフセットに対して地図を描画
+    for (let i = minOffsetIndex; i <= maxOffsetIndex; i++) {
+        const offsetX = baseOffset + i * worldWidth;
+        // console.log(`Drawing background copy at offset: ${offsetX}`);
+
+        // 元のSVGコンテンツをクローン
+        const clone = this._originalBackgroundContent.cloneNode(true);
+
+        // クローンに変換を適用
+        const transformString = `translate(${offsetX + this._backgroundTransform.translateX} ${this._backgroundTransform.translateY}) scale(${this._backgroundTransform.scaleX} ${this._backgroundTransform.scaleY})`;
+        clone.setAttribute('transform', transformString);
+
+        this._backgroundGroup.appendChild(clone);
+    }
+  }
+
+/**
  * グリッドを描画
  * @param {Object} viewport - ビューポート情報
  * @private
@@ -207,11 +269,13 @@ _renderGrid(viewport) {
   // グリッド間隔（度単位）
   const gridInterval = this._options.gridInterval || 10;
 
-  // 緯度・経度の描画範囲を計算（-90～90, -180～180 の範囲に限定しつつ、ループを考慮）
+  // 緯度・経度の描画範囲を計算（-90～90, 無限ループ）
   const latMin = Math.max(-90, Math.floor(top / gridInterval) * gridInterval);
   const latMax = Math.min(90, Math.ceil(bottom / gridInterval) * gridInterval);
-  const lonMin = Math.floor(left / gridInterval) * gridInterval;
-  const lonMax = Math.ceil(right / gridInterval) * gridInterval;
+  // 経度はビューポートの左右端に基づいて計算
+  const lonMinGrid = Math.floor(left / gridInterval) * gridInterval;
+  const lonMaxGrid = Math.ceil(right / gridInterval) * gridInterval;
+
 
   // 線の太さ（ズームに応じて細くする）
   const strokeWidth = 1 / zoom;
@@ -254,18 +318,19 @@ _renderGrid(viewport) {
   }
 
   // 経線（縦線）を描画
-  for (let lng = lonMin; lng <= lonMax; lng += gridInterval) {
+  // lonMinGrid から lonMaxGrid までの範囲で線を描画
+  for (let lng = lonMinGrid; lng <= lonMaxGrid; lng += gridInterval) {
       let currentLng = lng;
-      // 経度を -180 から 180 の範囲に正規化
-      while (currentLng > 180) currentLng -= 360;
-      while (currentLng <= -180) currentLng += 360;
+      // 経度を -180 から 180 の範囲に正規化 (ラベル表示用)
+      let normalizedLng = ((currentLng + 180) % 360 + 360) % 360 - 180;
+
 
       // 本初子午線（0度）と日付変更線（+/-180度）は強調表示
-      const isPrimeMeridian = Math.abs(currentLng) < 0.001;
-      const isDateLine = Math.abs(Math.abs(currentLng) - 180) < 0.001;
+      const isPrimeMeridian = Math.abs(normalizedLng) < 0.001;
+      const isDateLine = Math.abs(Math.abs(normalizedLng) - 180) < 0.001;
 
       const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", lng); // 元の経度値で描画
+      line.setAttribute("x1", lng); // 描画は非正規化座標で行う
       line.setAttribute("y1", top); // 線の描画は viewBox 全体に行う
       line.setAttribute("x2", lng);
       line.setAttribute("y2", bottom);
@@ -288,9 +353,9 @@ _renderGrid(viewport) {
       // クリックイベントを無効化
       text.setAttribute("pointer-events", "none");
 
-      let labelLng = Math.abs(currentLng);
+      let labelLng = Math.abs(normalizedLng);
       if (labelLng === 180) labelLng = 180; // 180度は符号なし
-      text.textContent = `${labelLng}°${currentLng > 0 && currentLng !== 180 ? 'E' : (currentLng < 0 && currentLng !== -180 ? 'W' : '')}`; // 0度と180度は記号なし
+      text.textContent = `${labelLng}°${normalizedLng > 0 && normalizedLng !== 180 ? 'E' : (normalizedLng < 0 && normalizedLng !== -180 ? 'W' : '')}`; // 0度と180度は記号なし
 
       this._gridGroup.appendChild(text);
   }
@@ -621,7 +686,7 @@ _renderGrid(viewport) {
 
   /**
  * スクリーン座標から世界座標へのX変換
- * @param {number} screenX - SVG要素上のX座標
+ * @param {number} svgX - SVG要素上のX座標
  * @param {Object} viewport - ビューポート情報
  * @returns {number} 世界X座標
  */
@@ -632,7 +697,7 @@ toWorldX(svgX, viewport) {
 
 /**
  * スクリーン座標から世界座標へのY変換
- * @param {number} screenY - SVG要素上のY座標
+ * @param {number} svgY - SVG要素上のY座標
  * @param {Object} viewport - ビューポート情報
  * @returns {number} 世界Y座標
  */
@@ -941,6 +1006,7 @@ toWorldY(svgY, viewport) {
     while (this._backgroundGroup.firstChild) {
         this._backgroundGroup.removeChild(this._backgroundGroup.firstChild);
     }
+    this._originalBackgroundContent = null; // 元の内容もクリア
 
     // SVG文字列からDOMを解析
     const parser = new DOMParser();
@@ -973,30 +1039,43 @@ toWorldY(svgY, viewport) {
     }
 
     // ワールド座標系（経度360度、緯度180度）にマッピング
-    const targetWidth = 360;
-    const targetHeight = 180;
+    const targetWidth = 360; // ワールドの幅
+    const targetHeight = 180; // ワールドの高さ
 
     // スケーリング係数
     const scaleX = targetWidth / svgWidth;
-    // Y軸反転を削除し、ワールド座標に合わせる
-    const scaleY = targetHeight / svgHeight;
+    // Y軸は下が正になるように調整 (SVGは上が正、ワールドは南緯が負なので一致？ いや、ワールドは上が正（北緯が正）なので反転が必要かも)
+    // ワールド座標は上が北緯+90、下が南緯-90。SVGは上が0、下が高。
+    // SVG Y=0 を 北緯+90 に、SVG Y=svgHeight を 南緯-90 にマッピングする
+    const scaleY = -targetHeight / svgHeight; // Y軸反転
+    const translateY = 90; // Y座標の基点をワールドの上端（北緯90度）に移動
+    const translateX = -180; // X座標の基点をワールドの左端（西経180度）に移動
 
-    // 平行移動量 (SVGの左上(0,0)をワールド座標の左下(-180, -90)に移動)
-    const translateX = -180;
-    const translateY = -90; // Y座標の基点をワールド座標の下端（南緯90度）に移動
+    // 背景の基準変換情報を保存
+    this._backgroundTransform = {
+        scaleX: scaleX,
+        scaleY: scaleY,
+        translateX: translateX, // SVG原点をワールド左端に
+        translateY: translateY, // SVG原点をワールド上端に
+        worldWidth: targetWidth, // ループのための幅
+    };
 
-    // 背景グループにtransform属性を設定して座標変換
-    this._backgroundGroup.setAttribute('transform', `translate(${translateX} ${translateY}) scale(${scaleX} ${scaleY})`);
-
-    // SVGの内容をグループに追加
-    for (const child of svgElement.childNodes) {
-      if (child.nodeType === Node.ELEMENT_NODE) {
-        // 不要な要素（例：<title>, <desc>）はスキップするなど、必要に応じてフィルタリング
-        this._backgroundGroup.appendChild(document.importNode(child, true));
-      }
+    // 元のSVGコンテンツをグループ化して保持 (コピー元とする)
+    const originalGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    while (svgElement.firstChild) {
+        if (svgElement.firstChild.nodeType === Node.ELEMENT_NODE) {
+            originalGroup.appendChild(svgElement.firstChild);
+        } else {
+            svgElement.removeChild(svgElement.firstChild); // テキストノードなどは削除
+        }
     }
+    this._originalBackgroundContent = originalGroup;
 
-    console.log(`背景地図を設定しました。 元サイズ: ${svgWidth}x${svgHeight}, 変換: translate(${translateX},${translateY}) scale(${scaleX.toFixed(4)},${scaleY.toFixed(4)})`);
+
+    console.log(`背景地図を読み込みました。 元サイズ: ${svgWidth}x${svgHeight}, 基準変換: translate(${translateX},${translateY}) scale(${scaleX.toFixed(4)},${scaleY.toFixed(4)})`);
+
+    // 初回描画をトリガー
+    // this.render(...) を外部から呼ぶ、またはここで呼ぶ
   }
 
   /**

@@ -46,6 +46,13 @@ export class ViewportManager {
     // ビューポートを更新
     Object.assign(this._viewport, updates);
 
+    // x 座標を -180 <= x < 180 の範囲に正規化
+    if (updates.x !== undefined) {
+        const worldWidth = 360; // 地図の幅 (経度)
+        // ((値 + 半周期) % 全周期 + 全周期) % 全周期 - 半周期 の形で正規化
+        this._viewport.x = ((this._viewport.x + worldWidth / 2) % worldWidth + worldWidth) % worldWidth - worldWidth / 2;
+    }
+
     // ズーム制限を適用
     this._viewport.zoom = Math.max(
       this._viewport.minZoom,
@@ -142,8 +149,16 @@ export class ViewportManager {
     const currentCenterY = this._viewport.y;
 
     // ズーム中心から現在のビューポート中心へのベクトル（ワールド座標）
-    const dx = currentCenterX - worldX;
+    // X座標の差分計算時にループを考慮 (最短距離ベクトル)
+    let dx = currentCenterX - worldX;
+    const worldWidth = 360;
+    if (dx > worldWidth / 2) {
+        dx -= worldWidth; // 右回りより左回りの方が近い場合
+    } else if (dx < -worldWidth / 2) {
+        dx += worldWidth; // 左回りより右回りの方が近い場合
+    }
     const dy = currentCenterY - worldY;
+
 
     // ズーム後のベクトルを計算
     const scaleRatio = oldZoom / newZoom; // 新しいズームに対する古いズームの比率
@@ -208,6 +223,7 @@ export class ViewportManager {
     // );
 
     // ドラッグ開始時の中心から移動量を引いて新しい中心を計算
+    // updateViewport が x を正規化してくれる
     this.updateViewport({
       x: this._viewportStart.x - dxWorld, // パン方向のため減算
       y: this._viewportStart.y - dyWorld  // パン方向のため減算
