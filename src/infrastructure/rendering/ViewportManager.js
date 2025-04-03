@@ -15,8 +15,9 @@ export class ViewportManager {
       zoom: options.zoom || 1,  // ズームレベル
       width: options.width || 800, // ビューポートの幅 (ピクセル)
       height: options.height || 600, // ビューポートの高さ (ピクセル)
-      minZoom: options.minZoom || 0.1,
-      maxZoom: options.maxZoom || 10
+      minZoom: options.minZoom || 0.1, // 設定上の最小ズーム
+      maxZoom: options.maxZoom || 10,
+      worldWidth: options.worldWidth || 360 // 地図のワールド座標幅を追加
     };
 
     this._listeners = [];
@@ -50,16 +51,21 @@ export class ViewportManager {
 
     // x 座標を -180 <= x < 180 の範囲に正規化
     if (updates.x !== undefined) {
-        const worldWidth = 360; // 地図の幅 (経度)
+        const worldWidth = this._viewport.worldWidth; // 地図の幅 (経度)
         // ((値 + 半周期) % 全周期 + 全周期) % 全周期 - 半周期 の形で正規化
         this._viewport.x = ((this._viewport.x + worldWidth / 2) % worldWidth + worldWidth) % worldWidth - worldWidth / 2;
     }
 
-    // ズーム制限を適用
+    // 最小ズームレベルを計算 (設定値と画面幅に基づく値の大きい方)
+    const calculatedMinZoom = this._viewport.width / this._viewport.worldWidth;
+    const effectiveMinZoom = Math.max(this._viewport.minZoom, calculatedMinZoom);
+
+    // ズーム制限を適用 (最小ズームは計算された値を使用)
     this._viewport.zoom = Math.max(
-      this._viewport.minZoom,
+      effectiveMinZoom,
       Math.min(this._viewport.maxZoom, this._viewport.zoom)
     );
+
 
     // console.log('ビューポート更新後:', this._viewport);
 
@@ -79,11 +85,13 @@ export class ViewportManager {
    */
   resize(width, height) {
     // console.log('ビューポートリサイズ:', width, height);
+    // updateViewport が新しい幅/高さを使って effectiveMinZoom を再計算し、
+    // 必要であればズームレベルを制限するので、ここでは width/height の更新のみでOK
     this.updateViewport({ width, height });
   }
 
   /**
-   * 中心座標を変更
+   * 中心座標を設定
    * @param {number} x - 新しいワールドX座標
    * @param {number} y - 新しいワールドY座標
    */
@@ -133,10 +141,17 @@ export class ViewportManager {
     const oldZoom = this._viewport.zoom;
     // zoomDeltaは変化「率」なので、新しいズームレベルは掛け算で計算
     let newZoom = oldZoom * (1 + zoomDelta);
+
+    // 最小ズームレベルを計算
+    const calculatedMinZoom = this._viewport.width / this._viewport.worldWidth;
+    const effectiveMinZoom = Math.max(this._viewport.minZoom, calculatedMinZoom);
+
+    // ズーム制限を適用
     newZoom = Math.max(
-        this._viewport.minZoom,
+        effectiveMinZoom,
         Math.min(this._viewport.maxZoom, newZoom)
     );
+
 
     if (Math.abs(newZoom - oldZoom) < 1e-6) {
         // console.log("ズームレベルが変化しないため処理を中断");
@@ -153,7 +168,7 @@ export class ViewportManager {
     // ズーム中心から現在のビューポート中心へのベクトル（ワールド座標）
     // X座標の差分計算時にループを考慮 (最短距離ベクトル)
     let dx = currentCenterX - worldX;
-    const worldWidth = 360;
+    const worldWidth = this._viewport.worldWidth;
     if (dx > worldWidth / 2) {
         dx -= worldWidth; // 右回りより左回りの方が近い場合
     } else if (dx < -worldWidth / 2) {

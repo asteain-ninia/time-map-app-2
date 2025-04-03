@@ -1,3 +1,4 @@
+// src/main/Config.js
 /**
  * アプリケーション全体の設定
  */
@@ -8,27 +9,27 @@ export class Config {
       // 地図表示設定
       map: {
         zoomMin: 0.1,
-        zoomMax: 10,
+        zoomMax: 50, // 修正: デフォルトの最大ズームを50に変更
         gridInterval: 10,
         gridColor: "#cccccc",
         gridOpacity: 0.5,
         equatorLength: 40000 // 赤道長（km）
       },
-      
+
       // 時間スライダー設定
       timeline: {
         minYear: 0,
         maxYear: 10000,
         stepSize: 1
       },
-      
+
       // 自動保存設定
       autoSave: {
         enabled: true,
         interval: 300, // 秒
         maxBackups: 5
       },
-      
+
       // UIレイアウト設定
       ui: {
         leftPanelWidth: 250,
@@ -36,7 +37,7 @@ export class Config {
         timelineHeight: 100,
         darkMode: false
       },
-      
+
       // カスタムカレンダー設定
       calendar: {
         daysPerYear: 365.25,
@@ -55,14 +56,14 @@ export class Config {
   get(path, defaultValue = null) {
     const parts = path.split('.');
     let current = this._config;
-    
+
     for (const part of parts) {
       if (current === undefined || current === null) {
         return defaultValue;
       }
       current = current[part];
     }
-    
+
     return current !== undefined ? current : defaultValue;
   }
 
@@ -92,7 +93,7 @@ export class Config {
     if (!this._config[section]) {
       this._config[section] = {};
     }
-    
+
     this._config[section] = this._deepMerge(this._config[section], updates);
   }
 
@@ -105,7 +106,7 @@ export class Config {
    */
   _deepMerge(target, source) {
     const output = { ...target };
-    
+
     if (this._isObject(target) && this._isObject(source)) {
       Object.keys(source).forEach(key => {
         if (this._isObject(source[key])) {
@@ -119,7 +120,7 @@ export class Config {
         }
       });
     }
-    
+
     return output;
   }
 

@@ -82,19 +82,35 @@ export class MapView {
         // SVGRendererの初期化を待つか、後で作成するロジックが必要
     }
 
+    // 初期ズームレベルを計算して設定
+    // MapView のコンテナサイズが確定してから実行する
+    // requestAnimationFrame を使って次の描画フレームで実行を試みる
+    requestAnimationFrame(() => {
+      const rect = this._mapElement.getBoundingClientRect();
+      if (rect.width > 0) {
+        const worldWidth = this._viewportManager.getViewport().worldWidth || 360;
+        const initialZoom = rect.width / worldWidth;
+        console.log(`初期ズーム計算: width=${rect.width}, worldWidth=${worldWidth}, initialZoom=${initialZoom}`);
+        // ViewportManagerのzoomも更新する
+        this._viewportManager.updateViewport({ zoom: initialZoom });
+      } else {
+         console.warn("MapView コンテナ幅が 0 のため、初期ズームを計算できませんでした。");
+      }
+      // ビューモデルとの連携をここで開始するか、タイミングを調整
+      this._viewModel.addObserver(this._onViewModelChanged.bind(this));
+      this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
 
-    // ビューモデルとの連携
-    this._viewModel.addObserver(this._onViewModelChanged.bind(this));
-    this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
+      // ビューポートの変更監視
+      this._viewportManager.addListener(this._onViewportChanged.bind(this));
 
-    // ビューポートの変更監視
-    this._viewportManager.addListener(this._onViewportChanged.bind(this));
+      // イベントリスナーの設定
+      this._setupEventListeners();
 
-    // イベントリスナーの設定
-    this._setupEventListeners();
+      // 初回描画
+      this._render();
+    });
 
-    // 初回描画
-    this._render();
+
   }
 
   /**
