@@ -23,7 +23,8 @@ export class SVGRenderer {
         scaleY: 1,
         translateX: 0,
         translateY: 0,
-        worldWidth: 360, // ワールド座標系での背景地図の幅
+        worldWidth: 360, // ワールド座標系での背景地図の幅 (経度360度分)
+        worldHeight: 180, // ワールド座標系での背景地図の高さ (緯度180度分)
     };
 
 
@@ -113,7 +114,8 @@ render(world, viewport, currentTime) {
   const viewBoxWidth = viewport.width / viewport.zoom;
   const viewBoxHeight = viewport.height / viewport.zoom;
   const viewBoxX = viewport.x - viewBoxWidth / 2;
-  const viewBoxY = viewport.y - viewBoxHeight / 2;
+  // viewBoxのY座標もY軸下向き正として計算
+  const viewBoxY = -viewport.y - viewBoxHeight / 2; // ワールド座標のYを反転
 
   // viewBox属性を更新
   this._svg.setAttribute("viewBox", `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
@@ -206,35 +208,27 @@ render(world, viewport, currentTime) {
         this._backgroundGroup.removeChild(this._backgroundGroup.firstChild);
     }
 
-    const viewBoxWidth = viewport.width / viewport.zoom;
-    const viewBoxX = viewport.x - viewBoxWidth / 2;
+    // const viewBoxWidth = viewport.width / viewport.zoom;
+    // const viewBoxX = viewport.x - viewBoxWidth / 2;
     const worldWidth = this._backgroundTransform.worldWidth; // 360
 
-    // ビューポートが表示する範囲（ワールド座標）
-    const viewLeft = viewBoxX;
-    const viewRight = viewBoxX + viewBoxWidth;
-
-    // 元の地図が表示されるべきXオフセットを計算
-    // ビューポートの中心に最も近い地図の中心を探す
-    // viewport.x を worldWidth で割った余りを基準にする
+    // 常に中央とその左右の合計3枚を描画 ---
+    // ビューポートの中心に最も近い地図の中心オフセットを計算
     const baseOffset = Math.round(viewport.x / worldWidth) * worldWidth;
 
-    // 描画する地図のオフセット範囲を決定
-    // 最低限、ビューポートの左端と右端を含むようにオフセットを計算
-    const minOffsetIndex = Math.floor((viewLeft - baseOffset) / worldWidth);
-    const maxOffsetIndex = Math.ceil((viewRight - baseOffset) / worldWidth);
+    // 描画するオフセットのインデックス (中央: 0, 左: -1, 右: 1)
+    const offsetsIndices = [-1, 0, 1];
 
     // console.log(`Rendering background from index ${minOffsetIndex} to ${maxOffsetIndex} relative to base offset ${baseOffset}`);
 
-    // 各オフセットに対して地図を描画
-    for (let i = minOffsetIndex; i <= maxOffsetIndex; i++) {
-        const offsetX = baseOffset + i * worldWidth;
+    for (const index of offsetsIndices) {
+        const offsetX = baseOffset + index * worldWidth;
         // console.log(`Drawing background copy at offset: ${offsetX}`);
 
         // 元のSVGコンテンツをクローン
         const clone = this._originalBackgroundContent.cloneNode(true);
 
-        // クローンに変換を適用
+        // クローンに変換を適用 (修正後の _backgroundTransform を使用)
         const transformString = `translate(${offsetX + this._backgroundTransform.translateX} ${this._backgroundTransform.translateY}) scale(${this._backgroundTransform.scaleX} ${this._backgroundTransform.scaleY})`;
         clone.setAttribute('transform', transformString);
 
@@ -258,21 +252,20 @@ _renderGrid(viewport) {
 
   const { x, y, zoom, width, height } = viewport;
 
-  // viewBoxの範囲を計算
+  // viewBoxの範囲を計算 (ワールド座標)
   const viewBoxWidth = width / zoom;
   const viewBoxHeight = height / zoom;
   const left = x - viewBoxWidth / 2;
   const right = x + viewBoxWidth / 2;
-  const top = y - viewBoxHeight / 2;
-  const bottom = y + viewBoxHeight / 2;
+  const top = y + viewBoxHeight / 2; // ワールド座標の上端 (緯度が高い方)
+  const bottom = y - viewBoxHeight / 2; // ワールド座標の下端 (緯度が低い方)
 
   // グリッド間隔（度単位）
   const gridInterval = this._options.gridInterval || 10;
 
-  // 緯度・経度の描画範囲を計算（-90～90, 無限ループ）
-  const latMin = Math.max(-90, Math.floor(top / gridInterval) * gridInterval);
-  const latMax = Math.min(90, Math.ceil(bottom / gridInterval) * gridInterval);
-  // 経度はビューポートの左右端に基づいて計算
+  // 緯度・経度の描画範囲を計算 (ワールド座標)
+  const latMin = Math.max(-90, Math.floor(bottom / gridInterval) * gridInterval);
+  const latMax = Math.min(90, Math.ceil(top / gridInterval) * gridInterval);
   const lonMinGrid = Math.floor(left / gridInterval) * gridInterval;
   const lonMaxGrid = Math.ceil(right / gridInterval) * gridInterval;
 
@@ -286,39 +279,40 @@ _renderGrid(viewport) {
 
   // 緯線（横線）を描画
   for (let lat = latMin; lat <= latMax; lat += gridInterval) {
-    // 赤道（0度）は強調表示
     const isEquator = Math.abs(lat) < 0.001;
+    const svgY = -lat; // 修正: Y座標を反転してSVG座標に
 
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", left); // 線の描画は viewBox 全体に行う
-    line.setAttribute("y1", lat);
+    line.setAttribute("x1", left); // 線はビューボックスの左右端まで
+    line.setAttribute("y1", svgY);
     line.setAttribute("x2", right);
-    line.setAttribute("y2", lat);
+    line.setAttribute("y2", svgY);
     line.setAttribute("stroke", isEquator ? "#ff0000" : this._options.gridColor);
     line.setAttribute("stroke-width", (isEquator ? 2 : 1) * strokeWidth);
     line.setAttribute("opacity", this._options.gridOpacity);
-    // クリックイベントを無効化
     line.setAttribute("pointer-events", "none");
-
     this._gridGroup.appendChild(line);
 
     // 緯度ラベル（画面左端に表示）
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", left + 2 * strokeWidth); // 左端からのオフセット
-    text.setAttribute("y", lat - 2 * strokeWidth); // 線からのオフセット
+    // 修正: ラベルを線の少し「上」(SVG座標ではYが小さい方)に表示
+    text.setAttribute("y", svgY - 2 * strokeWidth);
     text.setAttribute("font-size", fontSize);
     text.setAttribute("fill", this._options.gridColor);
     text.setAttribute("text-anchor", "start"); // 左揃え
-    text.setAttribute("dominant-baseline", "alphabetic"); // ベースライン調整
-    // クリックイベントを無効化
+    // 修正: ベースラインを文字の上に合わせる (hanging)
+    text.setAttribute("dominant-baseline", "alphabetic"); //hanging");
     text.setAttribute("pointer-events", "none");
-    text.textContent = `${Math.abs(lat)}°${lat > 0 ? 'N' : (lat < 0 ? 'S' : '')}`; // 0度は記号なし
-
+    text.textContent = `${Math.abs(lat)}°${lat > 0 ? 'N' : (lat < 0 ? 'S' : '')}`;
     this._gridGroup.appendChild(text);
   }
 
   // 経線（縦線）を描画
-  // lonMinGrid から lonMaxGrid までの範囲で線を描画
+  // SVG座標の上下端を計算
+  const svgTopY = -top;
+  const svgBottomY = -bottom;
+
   for (let lng = lonMinGrid; lng <= lonMaxGrid; lng += gridInterval) {
       let currentLng = lng;
       // 経度を -180 から 180 の範囲に正規化 (ラベル表示用)
@@ -330,10 +324,10 @@ _renderGrid(viewport) {
       const isDateLine = Math.abs(Math.abs(normalizedLng) - 180) < 0.001;
 
       const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", lng); // 描画は非正規化座標で行う
-      line.setAttribute("y1", top); // 線の描画は viewBox 全体に行う
+      line.setAttribute("x1", lng);
+      line.setAttribute("y1", svgTopY);   // SVG座標の上端
       line.setAttribute("x2", lng);
-      line.setAttribute("y2", bottom);
+      line.setAttribute("y2", svgBottomY); // SVG座標の下端
       line.setAttribute("stroke", isPrimeMeridian || isDateLine ? "#ff0000" : this._options.gridColor);
       line.setAttribute("stroke-width", (isPrimeMeridian || isDateLine ? 2 : 1) * strokeWidth);
       line.setAttribute("opacity", this._options.gridOpacity);
@@ -345,18 +339,16 @@ _renderGrid(viewport) {
       // 経度ラベル（画面上端に表示）
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
       text.setAttribute("x", lng + 2 * strokeWidth); // 線からのオフセット
-      text.setAttribute("y", top + fontSize); // 上端からのオフセット
+      text.setAttribute("y", svgTopY + fontSize); // SVG座標の上端からのオフセット
       text.setAttribute("font-size", fontSize);
       text.setAttribute("fill", this._options.gridColor);
-      text.setAttribute("text-anchor", "start"); // 左揃え
+      text.setAttribute("text-anchor", "start");
       text.setAttribute("dominant-baseline", "hanging"); // 上揃え
-      // クリックイベントを無効化
       text.setAttribute("pointer-events", "none");
 
       let labelLng = Math.abs(normalizedLng);
-      if (labelLng === 180) labelLng = 180; // 180度は符号なし
-      text.textContent = `${labelLng}°${normalizedLng > 0 && normalizedLng !== 180 ? 'E' : (normalizedLng < 0 && normalizedLng !== -180 ? 'W' : '')}`; // 0度と180度は記号なし
-
+      if (labelLng === 180) labelLng = 180;
+      text.textContent = `${labelLng}°${normalizedLng > 0 && normalizedLng !== 180 ? 'E' : (normalizedLng < 0 && normalizedLng !== -180 ? 'W' : '')}`;
       this._gridGroup.appendChild(text);
   }
 }
@@ -381,6 +373,8 @@ _renderGrid(viewport) {
 
     // カテゴリに基づいたスタイルを取得
     const style = this._getPointStyle(property);
+    const svgX = this._toScreenX(vertex.x, viewport);
+    const svgY = -this._toScreenY(vertex.y, viewport); // 修正: Y座標反転
 
     // グループ要素を作成
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -389,9 +383,9 @@ _renderGrid(viewport) {
 
     // 点を描画
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", this._toScreenX(vertex.x, viewport));
-    circle.setAttribute("cy", this._toScreenY(vertex.y, viewport));
-    circle.setAttribute("r", style.radius / Math.sqrt(viewport.zoom)); // ズームに応じてサイズ調整
+    circle.setAttribute("cx", svgX);
+    circle.setAttribute("cy", svgY);
+    circle.setAttribute("r", style.radius / Math.sqrt(viewport.zoom));// ズームに応じてサイズ調整
     circle.setAttribute("fill", style.fill);
     circle.setAttribute("stroke", style.stroke);
     circle.setAttribute("stroke-width", style.strokeWidth / viewport.zoom); // ズームに応じて線幅調整
@@ -403,15 +397,18 @@ _renderGrid(viewport) {
        const baseFontSize = style.fontSize || 10;
        const fontSize = Math.max(5, Math.min(16, baseFontSize / Math.sqrt(viewport.zoom)));
        const radius = style.radius / Math.sqrt(viewport.zoom);
-       const textOffsetY = radius + 2 / viewport.zoom; // ポイントからのオフセット
+       // ラベルをポイントの「上」(SVG座標でYが小さい方)に表示
+       const textOffsetY = radius + 2 / viewport.zoom;// ポイントからのオフセット
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      text.setAttribute("x", this._toScreenX(vertex.x, viewport));
-      text.setAttribute("y", this._toScreenY(vertex.y, viewport) - textOffsetY);
+      text.setAttribute("x", svgX);
+      text.setAttribute("y", svgY - textOffsetY); // SVG Y座標からオフセットを引く
       text.setAttribute("text-anchor", "middle");
+      // ベースラインを下に(alphabetic) -> これで上に表示されるはず
+      text.setAttribute("dominant-baseline", "alphabetic");
       text.setAttribute("font-size", fontSize);
       text.setAttribute("fill", style.textColor);
-       text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff"; // 白い縁取り
+       text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
       text.textContent = property.name;
        // クリックイベントを透過させる
        text.setAttribute("pointer-events", "none");
@@ -437,7 +434,7 @@ _renderGrid(viewport) {
 
     // 頂点を取得
     const lineVertices = line.vertexIds.map(id => vertices.find(v => v.id === id));
-    if (lineVertices.some(v => !v) || lineVertices.length < 2) return null; // 頂点が見つからないか、頂点数が不足
+    if (lineVertices.some(v => !v) || lineVertices.length < 2) return null;
 
     // カテゴリに基づいたスタイルを取得
     const style = this._getLineStyle(property);
@@ -450,9 +447,8 @@ _renderGrid(viewport) {
     // パスを作成
     const pathElement = document.createElementNS("http://www.w3.org/2000/svg", "path");
 
-    // パスデータを構築
-    let pathData = `M ${this._toScreenX(lineVertices[0].x, viewport)} ${this._toScreenY(lineVertices[0].y, viewport)}`;
-
+    // パスデータのY座標を反転
+    let pathData = `M ${this._toScreenX(lineVertices[0].x, viewport)} ${-this._toScreenY(lineVertices[0].y, viewport)}`;
     for (let i = 1; i < lineVertices.length; i++) {
       pathData += ` L ${this._toScreenX(lineVertices[i].x, viewport)} ${this._toScreenY(lineVertices[i].y, viewport)}`;
     }
@@ -460,7 +456,7 @@ _renderGrid(viewport) {
     pathElement.setAttribute("d", pathData);
     pathElement.setAttribute("fill", "none");
     pathElement.setAttribute("stroke", style.stroke);
-    pathElement.setAttribute("stroke-width", style.strokeWidth / viewport.zoom); // ズームに応じて線幅調整
+    pathElement.setAttribute("stroke-width", style.strokeWidth / viewport.zoom);
     pathElement.setAttribute("stroke-dasharray", style.strokeDasharray || "");
     // 破線の場合、パターンもズームに合わせて調整（オプション）
     if (style.strokeDasharray) {
@@ -472,10 +468,8 @@ _renderGrid(viewport) {
 
     // ラベルを描画（オプション）
     if (property.name && style.showLabel) {
-      // 線の中央位置を計算
-      const midIndex = Math.floor(lineVertices.length / 2);
-      // 中央の線分の中点を計算
       let midX, midY;
+      const midIndex = Math.floor(lineVertices.length / 2);
       if(lineVertices.length % 2 === 1 || lineVertices.length === 2) {
          midX = lineVertices[midIndex].x;
          midY = lineVertices[midIndex].y;
@@ -483,18 +477,22 @@ _renderGrid(viewport) {
          midX = (lineVertices[midIndex-1].x + lineVertices[midIndex].x) / 2;
          midY = (lineVertices[midIndex-1].y + lineVertices[midIndex].y) / 2;
       }
+       const svgX = this._toScreenX(midX, viewport);
+       const svgY = -this._toScreenY(midY, viewport); // 修正: Y座標反転
 
        const baseFontSize = style.fontSize || 10;
        const fontSize = Math.max(5, Math.min(16, baseFontSize / Math.sqrt(viewport.zoom)));
-       const textOffsetY = 5 / viewport.zoom; // 線からのオフセット
+       // 線の上に表示するためのオフセット(SVG座標ではYを減らす)
+       const textOffsetY = 5 / viewport.zoom;
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      text.setAttribute("x", this._toScreenX(midX, viewport));
-      text.setAttribute("y", this._toScreenY(midY, viewport) - textOffsetY);
+      text.setAttribute("x", svgX);
+      text.setAttribute("y", svgY - textOffsetY); // 修正
       text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "alphabetic"); // 修正
       text.setAttribute("font-size", fontSize);
       text.setAttribute("fill", style.textColor);
-       text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff"; // 白い縁取り
+       text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
       text.textContent = property.name;
        // クリックイベントを透過させる
        text.setAttribute("pointer-events", "none");
@@ -529,36 +527,36 @@ _renderGrid(viewport) {
     // 共通スタイル
     const fill = style.fill;
     const stroke = style.stroke;
-    const strokeWidth = style.strokeWidth / viewport.zoom; // ズームに応じて線幅調整
+    const strokeWidth = style.strokeWidth / viewport.zoom;
     const fillOpacity = style.fillOpacity;
+
+    const invertY = true; // Y座標を反転させるフラグ
 
     if (polygon.isMultiPolygon) {
       // 飛び地の描画
       for (const subPoly of polygon.subPolygons) {
         const subVertices = subPoly.vertexIds.map(id => vertices.find(v => v.id === id));
-        if (subVertices.some(v => !v) || subVertices.length < 3) continue; // 頂点が見つからないか、頂点数が不足
+        if (subVertices.some(v => !v) || subVertices.length < 3) continue;
 
-        const path = this._createPolygonPath(subVertices, subPoly.holesVertexIds, vertices, viewport);
+        const path = this._createPolygonPath(subVertices, subPoly.holesVertexIds, vertices, viewport, invertY); // 修正: invertYフラグを渡す
         path.setAttribute("fill", fill);
         path.setAttribute("stroke", stroke);
         path.setAttribute("stroke-width", strokeWidth);
-        path.setAttribute("fill-opacity", fillOpacity); // fill-opacityを使用
-        path.setAttribute("fill-rule", "evenodd"); // 穴を正しく描画するため
-
+        path.setAttribute("fill-opacity", fillOpacity);
+        path.setAttribute("fill-rule", "evenodd");
         group.appendChild(path);
       }
     } else if (polygon.vertexIds && polygon.vertexIds.length > 0) {
       // 通常の多角形
       const polyVertices = polygon.vertexIds.map(id => vertices.find(v => v.id === id));
-      if (polyVertices.some(v => !v) || polyVertices.length < 3) return null; // 頂点が見つからないか、頂点数が不足
+      if (polyVertices.some(v => !v) || polyVertices.length < 3) return null;
 
-      const path = this._createPolygonPath(polyVertices, polygon.holesVertexIds, vertices, viewport);
+      const path = this._createPolygonPath(polyVertices, polygon.holesVertexIds, vertices, viewport, invertY); // 修正: invertYフラグを渡す
       path.setAttribute("fill", fill);
       path.setAttribute("stroke", stroke);
       path.setAttribute("stroke-width", strokeWidth);
-      path.setAttribute("fill-opacity", fillOpacity); // fill-opacityを使用
-      path.setAttribute("fill-rule", "evenodd"); // 穴を正しく描画するため
-
+      path.setAttribute("fill-opacity", fillOpacity);
+      path.setAttribute("fill-rule", "evenodd");
       group.appendChild(path);
     } else if (polygon.childIds && polygon.childIds.length > 0) {
       // 子ポリゴンから構成される多角形の処理
@@ -594,18 +592,20 @@ _renderGrid(viewport) {
       if (vertexCount > 0) {
         centroidX /= vertexCount;
         centroidY /= vertexCount;
+        const svgX = this._toScreenX(centroidX, viewport);
+        const svgY = -this._toScreenY(centroidY, viewport); // 修正: Y座標反転
 
          const baseFontSize = style.fontSize || 12;
          const fontSize = Math.max(6, Math.min(20, baseFontSize / Math.sqrt(viewport.zoom)));
 
         const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        text.setAttribute("x", this._toScreenX(centroidX, viewport));
-        text.setAttribute("y", this._toScreenY(centroidY, viewport));
+        text.setAttribute("x", svgX);
+        text.setAttribute("y", svgY); // 修正: Y座標反転
         text.setAttribute("text-anchor", "middle");
-        text.setAttribute("dominant-baseline", "middle"); // 中央揃え
+        text.setAttribute("dominant-baseline", "middle");
         text.setAttribute("font-size", fontSize);
         text.setAttribute("fill", style.textColor);
-         text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff"; // 白い縁取り
+         text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
         text.textContent = property.name;
          // クリックイベントを透過させる
          text.setAttribute("pointer-events", "none");
@@ -623,33 +623,33 @@ _renderGrid(viewport) {
    * @param {string[][]} holesVertexIds - 穴の頂点IDの配列の配列
    * @param {Vertex[]} allVertices - すべての頂点
    * @param {Object} viewport - ビューポート情報
+   * @param {boolean} [invertY=false] - Y座標を反転するかどうか
    * @returns {SVGElement} パス要素
    * @private
    */
-  _createPolygonPath(vertices, holesVertexIds, allVertices, viewport) {
+  _createPolygonPath(vertices, holesVertexIds, allVertices, viewport, invertY = false) { // invertYフラグ追加
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    // Y座標取得関数を定義
+    const yCoord = (y) => invertY ? -this._toScreenY(y, viewport) : this._toScreenY(y, viewport);
 
     // 外周のパスデータ
-    let pathData = `M ${this._toScreenX(vertices[0].x, viewport)} ${this._toScreenY(vertices[0].y, viewport)}`;
-
+    let pathData = `M ${this._toScreenX(vertices[0].x, viewport)} ${yCoord(vertices[0].y)}`;
     for (let i = 1; i < vertices.length; i++) {
-      pathData += ` L ${this._toScreenX(vertices[i].x, viewport)} ${this._toScreenY(vertices[i].y, viewport)}`;
+      pathData += ` L ${this._toScreenX(vertices[i].x, viewport)} ${yCoord(vertices[i].y)}`;
     }
 
     pathData += " Z";
 
-    // 穴のパスデータ (逆順で指定すると SVG の fill-rule: evenodd で穴になる)
+    // 穴のパスデータ
     for (const holeIds of holesVertexIds) {
       const holeVertices = holeIds.map(id => allVertices.find(v => v.id === id)).filter(v => v);
 
-      if (holeVertices.length > 2) { // 穴は3頂点以上必要
-        // 穴の頂点を逆順にする
-        const reversedHoleVertices = [...holeVertices].reverse();
-
-        pathData += ` M ${this._toScreenX(reversedHoleVertices[0].x, viewport)} ${this._toScreenY(reversedHoleVertices[0].y, viewport)}`;
-
-        for (let i = 1; i < reversedHoleVertices.length; i++) {
-          pathData += ` L ${this._toScreenX(reversedHoleVertices[i].x, viewport)} ${this._toScreenY(reversedHoleVertices[i].y, viewport)}`;
+      if (holeVertices.length > 2) {
+        // SVGの fill-rule: evenodd を使う場合、穴の頂点順序は外周と同じでよい
+        // const reversedHoleVertices = [...holeVertices].reverse(); // 逆順にする必要はない
+        pathData += ` M ${this._toScreenX(holeVertices[0].x, viewport)} ${yCoord(holeVertices[0].y)}`;
+        for (let i = 1; i < holeVertices.length; i++) {
+          pathData += ` L ${this._toScreenX(holeVertices[i].x, viewport)} ${yCoord(holeVertices[i].y)}`;
         }
 
         pathData += " Z";
@@ -661,10 +661,10 @@ _renderGrid(viewport) {
   }
 
   /**
-   * 世界座標からスクリーン座標へのX変換
+   * 世界座標からスクリーン座標へのX変換 (SVG座標系)
    * @param {number} worldX - 世界X座標
    * @param {Object} viewport - ビューポート情報
-   * @returns {number} スクリーンX座標
+   * @returns {number} SVG X座標
    * @private
    */
   _toScreenX(worldX, viewport) {
@@ -673,14 +673,14 @@ _renderGrid(viewport) {
   }
 
   /**
-   * 世界座標からスクリーン座標へのY変換
-   * @param {number} worldY - 世界Y座標
+   * 世界座標からスクリーン座標へのY変換 (SVG座標系)
+   * @param {number} worldY - 世界Y座標 (上向き正)
    * @param {Object} viewport - ビューポート情報
-   * @returns {number} スクリーンY座標
+   * @returns {number} SVG Y座標 (下向き正) - 反転は呼び出し元で行う
    * @private
    */
   _toScreenY(worldY, viewport) {
-    // viewBoxを使用するため、単純にワールド座標をそのまま返す
+    // viewBoxを使用するため、単純にワールド座標をそのまま返す (反転は描画時に行う)
     return worldY;
   }
 
@@ -697,13 +697,13 @@ toWorldX(svgX, viewport) {
 
 /**
  * スクリーン座標から世界座標へのY変換
- * @param {number} svgY - SVG要素上のY座標
+ * @param {number} svgY - SVG要素上のY座標 (下向き正)
  * @param {Object} viewport - ビューポート情報
- * @returns {number} 世界Y座標
+ * @returns {number} 世界Y座標 (上向き正)
  */
 toWorldY(svgY, viewport) {
-  // viewBoxを使用しているため、SVG要素上の座標がそのままワールド座標となる
-  return svgY;
+  // viewBoxを使用しているため、SVG要素上のY座標を反転させる
+  return -svgY;
 }
 
   /**
@@ -910,13 +910,16 @@ toWorldY(svgY, viewport) {
    * @returns {SVGElement} SVG要素
    */
   drawPoint(x, y, style, viewport) {
+    const svgX = this._toScreenX(x, viewport);
+    const svgY = -this._toScreenY(y, viewport); // Y座標反転
+
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", this._toScreenX(x, viewport));
-    circle.setAttribute("cy", this._toScreenY(y, viewport));
-    circle.setAttribute("r", (style.radius || 5) / Math.sqrt(viewport.zoom)); // ズームに応じて調整
+    circle.setAttribute("cx", svgX);
+    circle.setAttribute("cy", svgY);
+    circle.setAttribute("r", (style.radius || 5) / Math.sqrt(viewport.zoom));
     circle.setAttribute("fill", style.fill || "#ff0000");
     circle.setAttribute("stroke", style.stroke || "#000000");
-    circle.setAttribute("stroke-width", (style.strokeWidth || 1) / viewport.zoom); // ズームに応じて調整
+    circle.setAttribute("stroke-width", (style.strokeWidth || 1) / viewport.zoom);
     // クリックイベントを透過させる
     circle.setAttribute("pointer-events", "none");
 
@@ -926,26 +929,26 @@ toWorldY(svgY, viewport) {
 
   /**
    * 線を描画 (一時要素用)
-   * @param {Array<{x: number, y: number}>} points - 点の配列
+   * @param {Array<{x: number, y: number}>} points - 点の配列 (ワールド座標)
    * @param {Object} style - スタイル情報
    * @param {Object} viewport - ビューポート情報
    * @returns {SVGElement} SVG要素
    */
   drawLine(points, style, viewport) {
-    if (!points || points.length < 2) return null; // 点が2つ以上ないと線は描けない
+    if (!points || points.length < 2) return null;
 
     const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
 
-    let pathData = `M ${this._toScreenX(points[0].x, viewport)} ${this._toScreenY(points[0].y, viewport)}`;
-
+    // パスデータのY座標を反転
+    let pathData = `M ${this._toScreenX(points[0].x, viewport)} ${-this._toScreenY(points[0].y, viewport)}`;
     for (let i = 1; i < points.length; i++) {
-      pathData += ` L ${this._toScreenX(points[i].x, viewport)} ${this._toScreenY(points[i].y, viewport)}`;
+      pathData += ` L ${this._toScreenX(points[i].x, viewport)} ${-this._toScreenY(points[i].y, viewport)}`;
     }
 
     line.setAttribute("d", pathData);
     line.setAttribute("fill", "none");
     line.setAttribute("stroke", style.stroke || "#000000");
-    line.setAttribute("stroke-width", (style.strokeWidth || 2) / viewport.zoom); // ズームに応じて調整
+    line.setAttribute("stroke-width", (style.strokeWidth || 2) / viewport.zoom);
     line.setAttribute("stroke-dasharray", style.strokeDasharray || "");
     // 破線の場合、パターンもズームに合わせて調整（オプション）
     if (style.strokeDasharray) {
@@ -969,17 +972,20 @@ toWorldY(svgY, viewport) {
    * @returns {SVGElement} SVG要素
    */
   drawText(x, y, content, style, viewport) {
+    const svgX = this._toScreenX(x, viewport);
+    const svgY = -this._toScreenY(y, viewport); // 修正: Y座標反転
+
     const baseFontSize = style.fontSize || 12;
     const fontSize = Math.max(6, Math.min(18, baseFontSize / Math.sqrt(viewport.zoom)));
 
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    text.setAttribute("x", this._toScreenX(x, viewport));
-    text.setAttribute("y", this._toScreenY(y, viewport));
+    text.setAttribute("x", svgX);
+    text.setAttribute("y", svgY); // Y座標は反転済み
     text.setAttribute("text-anchor", style.textAnchor || "middle");
-    text.setAttribute("dominant-baseline", "middle");
+    text.setAttribute("dominant-baseline", style.dominantBaseline || "middle"); // スタイルで指定可能に
     text.setAttribute("font-size", fontSize);
     text.setAttribute("fill", style.textColor || "#000000");
-    text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff"; // 白い縁取り
+    text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
     text.textContent = content;
     // クリックイベントを透過させる
     text.setAttribute("pointer-events", "none");
@@ -1039,25 +1045,25 @@ toWorldY(svgY, viewport) {
     }
 
     // ワールド座標系（経度360度、緯度180度）にマッピング
-    const targetWidth = 360; // ワールドの幅
-    const targetHeight = 180; // ワールドの高さ
+    const targetWidth = this._backgroundTransform.worldWidth; // 360
+    const targetHeight = this._backgroundTransform.worldHeight; // 180
 
     // スケーリング係数
     const scaleX = targetWidth / svgWidth;
-    // Y軸は下が正になるように調整 (SVGは上が正、ワールドは南緯が負なので一致？ いや、ワールドは上が正（北緯が正）なので反転が必要かも)
-    // ワールド座標は上が北緯+90、下が南緯-90。SVGは上が0、下が高。
-    // SVG Y=0 を 北緯+90 に、SVG Y=svgHeight を 南緯-90 にマッピングする
-    const scaleY = -targetHeight / svgHeight; // Y軸反転
-    const translateY = 90; // Y座標の基点をワールドの上端（北緯90度）に移動
-    const translateX = -180; // X座標の基点をワールドの左端（西経180度）に移動
+    // Y軸反転をやめ、Y軸下向き正の座標系に合わせる
+    const scaleY = targetHeight / svgHeight; // 正の値
+    // SVG(0,0)をワールド(-180, 90)ではなく、viewBox座標(-180, -90)にマッピング
+    const translateX = -targetWidth / 2; // -180
+    const translateY = -targetHeight / 2; // -90
 
     // 背景の基準変換情報を保存
     this._backgroundTransform = {
         scaleX: scaleX,
-        scaleY: scaleY,
-        translateX: translateX, // SVG原点をワールド左端に
-        translateY: translateY, // SVG原点をワールド上端に
-        worldWidth: targetWidth, // ループのための幅
+        scaleY: scaleY, // 修正: 正の値
+        translateX: translateX, // 修正: -180
+        translateY: translateY, // 修正: -90
+        worldWidth: targetWidth,
+        worldHeight: targetHeight,
     };
 
     // 元のSVGコンテンツをグループ化して保持 (コピー元とする)

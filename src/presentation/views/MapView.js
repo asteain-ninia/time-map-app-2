@@ -1,3 +1,5 @@
+// src/presentation/views/MapView.js
+
 /**
  * メインマップ表示
  */
@@ -32,6 +34,7 @@ export class MapView {
     // マウス状態
     this._isMouseDown = false;
     this._isDragging = false;
+    this._dragStartPosition = { x: 0, y: 0 }; // ドラッグ開始時のワールド座標
     // _lastMousePosition はページ全体の座標を保持するように変更
     this._lastMousePosition = { x: 0, y: 0 };
 
@@ -98,7 +101,7 @@ export class MapView {
  * スクリーン座標をSVG座標に変換するヘルパー関数
  * @param {number} pageX - ページ全体のX座標
  * @param {number} pageY - ページ全体のY座標
- * @returns {DOMPoint | null} SVG座標 (DOMPoint) または null
+ * @returns {DOMPoint | null} SVG座標 (DOMPoint, Y軸下向き正) または null
  * @private
  */
 _getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
@@ -115,12 +118,23 @@ _getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
             return null;
         }
         // CTMの逆行列を使ってページ座標をSVG座標に変換
-        return this._svgPoint.matrixTransform(ctm.inverse());
+        return this._svgPoint.matrixTransform(ctm.inverse()); // SVG座標(Y軸下向き正)を返す
     } catch (e) {
         console.error("SVG座標への変換中にエラーが発生しました:", e);
         return null;
     }
 }
+
+/**
+ * SVG座標をワールド座標に変換する
+ * @param {DOMPoint} svgPoint - SVG座標 (Y軸下向き正)
+ * @returns {object | null} ワールド座標 {x, y} (Y軸上向き正) または null
+ */
+_svgToWorld(svgPoint) {
+    if (!svgPoint) return null;
+    return { x: svgPoint.x, y: -svgPoint.y }; // Y座標を反転
+}
+
 
   /**
    * イベントリスナーの設定
@@ -193,7 +207,9 @@ _getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
         // 再描画
         this._render();
         break;
-
+       case 'history': // 履歴変更時にも再描画（アンドゥ・リドゥの結果を反映）
+         this._render();
+         break;
       default:
         break;
     }
@@ -274,7 +290,7 @@ _getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
     const viewport = this._viewportManager.getViewport();
     let tempElements = []; // この描画で作成した一時要素
 
-    // ツールタイプに応じた描画
+    // ツールタイプに応じた描画 (ワールド座標を渡す)
     switch (tool) {
       case 'point':
         // 点の描画
@@ -327,7 +343,7 @@ _getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
         break;
     }
 
-    // 各頂点の描画
+    // 各頂点の描画 (ワールド座標を渡す)
     for (const point of addingPoints) {
        const elem = this._renderer.drawPoint(
         point.x,
@@ -364,7 +380,7 @@ _renderDistanceMeasurement() {
     const viewport = this._viewportManager.getViewport();
     let tempElements = []; // この描画で作成した一時要素
 
-    // 測定点の描画
+    // 測定点の描画 (ワールド座標を渡す)
     this._measurePoints.forEach((point, index) => {
         const pointElem = this._renderer.drawPoint(
             point.x,
@@ -374,19 +390,19 @@ _renderDistanceMeasurement() {
         );
         if (pointElem) tempElements.push(pointElem);
 
-        // 点ラベル (A, B, C...)
+        // 点ラベル (A, B, C...) (ワールド座標を渡す)
         const labelElem = this._renderer.drawText(
             point.x,
-            point.y - 10 / Math.sqrt(viewport.zoom), // ラベルの位置調整
+            point.y + 10 / Math.sqrt(viewport.zoom), // ラベルの位置調整 (ワールド座標で上方向)
             String.fromCharCode(65 + index), // A, B, C...
-            { fontSize: 10, textColor: '#000000', textAnchor: 'middle'},
+            { fontSize: 10, textColor: '#000000', textAnchor: 'middle', dominantBaseline: 'hanging'}, // 修正: ベースライン
             viewport
         );
         if(labelElem) tempElements.push(labelElem);
     });
 
 
-    // 測定線の描画
+    // 測定線の描画 (ワールド座標を渡す)
     if (this._measurePoints.length >= 2) {
         const lineElem = this._renderer.drawLine(
             this._measurePoints,
@@ -406,14 +422,14 @@ _renderDistanceMeasurement() {
             const distance = this._viewModel.calculateDistance(p1, p2, equatorLength);
             distances.push(distance);
 
-            // 各区間の距離表示 (オプション)
+            // 各区間の距離表示 (ワールド座標を渡す)
             const midX = (p1.x + p2.x) / 2;
             const midY = (p1.y + p2.y) / 2;
             const segmentLabelElem = this._renderer.drawText(
                 midX,
-                midY + 10 / Math.sqrt(viewport.zoom), // 線からのオフセット
+                midY - 10 / Math.sqrt(viewport.zoom), // 線からのオフセット (ワールド座標で下方向)
                 `${distance.linear.toFixed(1)}km`, // 簡易表示
-                { fontSize: 9, textColor: '#333300', textAnchor: 'middle'},
+                { fontSize: 9, textColor: '#333300', textAnchor: 'middle', dominantBaseline: 'alphabetic'}, // 修正: ベースライン
                 viewport
             );
             if(segmentLabelElem) tempElements.push(segmentLabelElem);
@@ -423,24 +439,24 @@ _renderDistanceMeasurement() {
         const totalLinear = distances.reduce((sum, d) => sum + d.linear, 0);
         const totalGreatCircle = distances.reduce((sum, d) => sum + d.greatCircle, 0);
 
-        // 距離表示 (最後の点の近くに表示)
+        // 距離表示 (ワールド座標を渡す)
         const lastPoint = this._measurePoints[this._measurePoints.length - 1];
         const textYOffset = 15 / Math.sqrt(viewport.zoom);
 
         const totalLinearElem = this._renderer.drawText(
-            lastPoint.x + 10 / Math.sqrt(viewport.zoom), // Xオフセット
-            lastPoint.y - textYOffset * 2, // Yオフセット
+            lastPoint.x + 10 / Math.sqrt(viewport.zoom),
+            lastPoint.y + textYOffset * 2, // Yオフセット (ワールド座標で上)
             `直線計: ${totalLinear.toFixed(1)} km`,
-            { fontSize: 10, textColor: '#000000', textAnchor: 'start' }, // 左揃えに変更
+            { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging'}, // 左上揃え
             viewport
         );
         if(totalLinearElem) tempElements.push(totalLinearElem);
 
         const totalGreatCircleElem = this._renderer.drawText(
-            lastPoint.x + 10 / Math.sqrt(viewport.zoom), // Xオフセット
-            lastPoint.y - textYOffset, // Yオフセット
+            lastPoint.x + 10 / Math.sqrt(viewport.zoom),
+            lastPoint.y + textYOffset, // Yオフセット (ワールド座標で上)
             `大円計: ${totalGreatCircle.toFixed(1)} km`,
-            { fontSize: 10, textColor: '#000000', textAnchor: 'start' }, // 左揃えに変更
+            { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging'}, // 左上揃え
             viewport
         );
         if(totalGreatCircleElem) tempElements.push(totalGreatCircleElem);
@@ -457,56 +473,55 @@ _renderDistanceMeasurement() {
    */
 _onMouseDown(event) {
   // 右クリックは無視（コンテキストメニュー用）
-  if (event.button === 2) return;
+    if (event.button === 2) return; // 右クリックは無視
 
   // ページ全体の座標を取得
   const pageX = event.clientX;
   const pageY = event.clientY;
-  // SVG座標に変換
-  const svgPoint = this._getSVGPoint(pageX, pageY);
+  const svgPointRaw = this._getSVGPoint(pageX, pageY);
+  const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
 
-  if (!svgPoint) {
-      console.error("SVG座標を取得できませんでした。");
+  if (!worldPoint) {
+      console.error("ワールド座標を取得できませんでした。");
       return;
   }
 
-  console.log('マウスダウン - Page:', pageX, pageY, 'SVG:', svgPoint.x, svgPoint.y);
+  // console.log('マウスダウン - Page:', pageX, pageY, 'World:', worldPoint.x, worldPoint.y);
 
   this._isMouseDown = true;
-  this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を保持
+  this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標
+  this._dragStartPosition = worldPoint; // ★ ドラッグ開始時のワールド座標を保存
 
   // 編集モードに応じた処理
   const mode = this._editingViewModel.getMode();
-  console.log('現在の編集モード:', mode);
+  // console.log('現在の編集モード:', mode);
 
   switch (mode) {
     case 'view':
-      // ビューモードでは、ドラッグでパン
-      console.log('ビューモードでドラッグ開始');
-      this._viewportManager.startDrag(pageX, pageY); // ページ座標を渡す
+      // console.log('ビューモードでドラッグ開始');
+      this._viewportManager.startDrag(pageX, pageY);
       break;
 
     case 'add':
-      // 追加モードでは、クリックで点を追加
-      console.log('追加モードで点を追加');
-      this._handleAddPoint(svgPoint); // SVG座標 (ワールド座標) を渡す
+      // console.log('追加モードで点を追加');
+      this._handleAddPoint(worldPoint); // ワールド座標を渡す
       break;
 
     case 'edit':
-      // 編集モードでは、クリックで選択
-      console.log('編集モードでオブジェクト選択');
-      this._handleSelectObject(svgPoint); // SVG座標 (ワールド座標) を渡す
+      // console.log('編集モードでオブジェクト選択/ドラッグ開始');
+      this._handleSelectObject(worldPoint); // ワールド座標で選択
+      // ドラッグ開始処理はここで行わず、mousemove で判定する
       break;
 
     default:
-      console.log('不明なモード:', mode);
+      // console.log('不明なモード:', mode);
       break;
   }
 
   // 距離測定モード
   if (this._isMeasuringDistance) {
-    console.log('距離測定点を追加');
-    this._handleAddMeasurePoint(svgPoint); // SVG座標 (ワールド座標) を渡す
+    // console.log('距離測定点を追加');
+    this._handleAddMeasurePoint(worldPoint); // ワールド座標を渡す
   }
 }
 
@@ -519,10 +534,10 @@ _onMouseMove(event) {
   // ページ全体の座標を取得
   const pageX = event.clientX;
   const pageY = event.clientY;
-  // SVG座標に変換
-  const svgPoint = this._getSVGPoint(pageX, pageY);
+  const svgPointRaw = this._getSVGPoint(pageX, pageY);
+  const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
 
-  if (!svgPoint) return; // SVG座標が取れなければ何もしない
+  if (!worldPoint) return;
 
   if (this._isMouseDown) {
     // マウスドラッグ
@@ -534,7 +549,8 @@ _onMouseMove(event) {
 
       if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
         this._isDragging = true;
-        console.log('ドラッグ開始判定: ドラッグ開始');
+        // console.log('ドラッグ開始判定: ドラッグ開始');
+        // 編集モードの場合、ドラッグ対象（頂点など）をここで確定する方が良いかも
       }
     }
 
@@ -544,18 +560,15 @@ _onMouseMove(event) {
       // console.log('ドラッグ中 - モード:', mode);
 
       if (mode === 'view') {
-        // ビューモードでは、ドラッグでパン
-        // console.log('ビューモードでパン - Page座標:', pageX, pageY);
-        this._viewportManager.drag(pageX, pageY); // ページ座標を渡す
+        this._viewportManager.drag(pageX, pageY);
       } else if (mode === 'edit') {
-        // 編集モードでは、ドラッグで移動
-        console.log('編集モードでオブジェクト移動');
-        this._handleDragObject(svgPoint); // SVG座標 (ワールド座標) を渡す
+        // console.log('編集モードでオブジェクト移動');
+        this._handleDragObject(worldPoint); // ワールド座標でドラッグ
       }
     }
   } else {
-    // 単なるマウス移動
-    this._handleMouseHover(svgPoint); // SVG座標 (ワールド座標) を渡す
+    // console.log('マウスホバー');
+    this._handleMouseHover(worldPoint); // ワールド座標でホバー
   }
 
   this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を更新
@@ -573,10 +586,10 @@ _onMouseUp(event) {
   // ページ全体の座標を取得
   const pageX = event.clientX;
   const pageY = event.clientY;
-  // SVG座標に変換
-  const svgPoint = this._getSVGPoint(pageX, pageY);
+  const svgPointRaw = this._getSVGPoint(pageX, pageY);
+  const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
 
-  if (!svgPoint) return; // SVG座標が取れなければ処理中断
+  if (!worldPoint) return;
 
   if (this._isMouseDown && this._isDragging) {
     // ドラッグ終了
@@ -587,21 +600,21 @@ _onMouseUp(event) {
       this._viewportManager.endDrag();
     } else if (mode === 'edit') {
       // console.log('編集モードでドラッグ終了');
-      this._handleDragEnd(svgPoint); // SVG座標 (ワールド座標) を渡す
+      this._handleDragEnd(worldPoint); // ワールド座標でドラッグ終了
     }
   } else if (this._isMouseDown && !this._isDragging) {
     // クリック（ドラッグなし）
     // console.log('クリック処理（ドラッグなし）');
 
     if (mode === 'view') {
-      this._handleClick(svgPoint); // SVG座標 (ワールド座標) を渡す
+      this._handleClick(worldPoint); // ワールド座標でクリック
     }
-    // addモードのクリックは onMouseDown で処理済み
-    // editモードのクリック(選択)は onMouseDown で処理済み
+    // add/editモードのクリックは onMouseDown で処理
   }
 
   this._isMouseDown = false;
   this._isDragging = false;
+  // this._dragStartPosition はリセット不要
 }
 
   /**
@@ -613,10 +626,18 @@ _onMouseUp(event) {
     if (this._isMouseDown) {
       const mode = this._editingViewModel.getMode();
 
-      if (mode === 'view' && this._isDragging) { // ドラッグ中の場合のみ終了処理
+      if (mode === 'view' && this._isDragging) {
         this._viewportManager.endDrag();
+         // console.log("Mouse leave during view drag, drag ended.");
+      } else if (mode === 'edit' && this._isDragging) {
+          // 編集モードでのドラッグ中に離れた場合、最後の位置で確定
+          const svgPointRaw = this._getSVGPoint(this._lastMousePosition.x, this._lastMousePosition.y);
+          const worldPoint = this._svgToWorld(svgPointRaw);
+          if (worldPoint) {
+              this._handleDragEnd(worldPoint);
+              // console.log("Mouse leave during edit drag, drag ended at last position.");
+          }
       }
-      // 他のモードでのドラッグ終了処理も必要ならここに追加
 
       this._isMouseDown = false;
       this._isDragging = false;
@@ -638,20 +659,16 @@ _onWheel(event) {
   const delta = -event.deltaY;
   const zoomFactor = delta > 0 ? 0.1 : -0.1;
 
-  // console.log('ホイール操作 - delta:', delta, 'zoomFactor:', zoomFactor);
-
-  // ページ全体の座標を取得
   const pageX = event.clientX;
   const pageY = event.clientY;
-  // SVG座標に変換
-  const svgPoint = this._getSVGPoint(pageX, pageY);
+  const svgPointRaw = this._getSVGPoint(pageX, pageY);
+  const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
 
-  if (!svgPoint) return; // SVG座標が取れなければ処理中断
+  if (!worldPoint) return;
 
-  // console.log('ホイール位置 - Page:', pageX, pageY, 'SVG:', svgPoint.x, svgPoint.y);
+  // console.log('ホイール位置 - Page:', pageX, pageY, 'World:', worldPoint.x, worldPoint.y);
 
-  // SVG座標（ワールド座標）でズーム
-  this._viewportManager.zoomAt(svgPoint.x, svgPoint.y, zoomFactor);
+  this._viewportManager.zoomAt(worldPoint.x, worldPoint.y, zoomFactor); // ワールド座標でズーム
   }
 
   /**
@@ -663,15 +680,15 @@ _onWheel(event) {
     // ページ全体の座標を取得
     const pageX = event.clientX;
     const pageY = event.clientY;
-    // SVG座標に変換
-    const svgPoint = this._getSVGPoint(pageX, pageY);
+    const svgPointRaw = this._getSVGPoint(pageX, pageY);
+    const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
 
-    if (!svgPoint) return;
+    if (!worldPoint) return;
 
-    // ダブルクリックで表示をリセット（ズーム1、クリック位置中心）
+    // console.log('ダブルクリック - World:', worldPoint.x, worldPoint.y);
     this._viewportManager.updateViewport({
-      x: svgPoint.x,
-      y: svgPoint.y,
+      x: worldPoint.x,
+      y: worldPoint.y, // ワールド座標のYをセット
       zoom: 1
     });
   }
@@ -687,17 +704,13 @@ _onWheel(event) {
     // ページ全体の座標を取得
     const pageX = event.clientX;
     const pageY = event.clientY;
-    // SVG座標に変換
-    const svgPoint = this._getSVGPoint(pageX, pageY);
+    const svgPointRaw = this._getSVGPoint(pageX, pageY);
+    const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
 
-    if (!svgPoint) return;
+    if (!worldPoint) return;
 
-    // 右クリック位置にあるオブジェクトを特定
-    // TODO: オブジェクト特定ロジック (getFeatureAtPoint など)
-
-    // コンテキストメニューを表示
-    console.log("Context menu at SVG:", svgPoint.x, svgPoint.y);
-    // TODO: コンテキストメニュー処理
+    // console.log("Context menu at World:", worldPoint.x, worldPoint.y);
+    // TODO: コンテキストメニュー処理 (ワールド座標を使用)
   }
 
   /**
@@ -714,30 +727,30 @@ _onWheel(event) {
       // ページ全体の座標を取得
       const pageX = touch.clientX;
       const pageY = touch.clientY;
-      // SVG座標に変換
-      const svgPoint = this._getSVGPoint(pageX, pageY);
+      const svgPointRaw = this._getSVGPoint(pageX, pageY);
+      const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
 
-      if (!svgPoint) return;
+      if (!worldPoint) return;
 
       this._isMouseDown = true;
-      this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を保持
+      this._lastMousePosition = { x: pageX, y: pageY };
+      this._dragStartPosition = worldPoint; // ★ ドラッグ開始ワールド座標
 
       const mode = this._editingViewModel.getMode();
       if (mode === 'view') {
-        this._viewportManager.startDrag(pageX, pageY); // ページ座標を渡す
+        this._viewportManager.startDrag(pageX, pageY);
       } else if (mode === 'add') {
-          this._handleAddPoint(svgPoint); // SVG座標
+          this._handleAddPoint(worldPoint);
       } else if (mode === 'edit') {
-          this._handleSelectObject(svgPoint); // SVG座標
+          this._handleSelectObject(worldPoint);
       }
 
       if (this._isMeasuringDistance) {
-        this._handleAddMeasurePoint(svgPoint); // SVG座標
+        this._handleAddMeasurePoint(worldPoint);
       }
 
     } else if (event.touches.length === 2) {
-      // ピンチ処理の準備
-      // TODO: ピンチ処理
+      // TODO: ピンチ処理準備
     }
   }
 
@@ -755,18 +768,17 @@ _onWheel(event) {
       // ページ全体の座標を取得
       const pageX = touch.clientX;
       const pageY = touch.clientY;
-      // SVG座標に変換
-      const svgPoint = this._getSVGPoint(pageX, pageY);
+      const svgPointRaw = this._getSVGPoint(pageX, pageY);
+      const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
 
-      if (!svgPoint) return;
+      if (!worldPoint) return;
 
       if (this._isMouseDown) {
         if (!this._isDragging) {
           // ドラッグ開始判定
           const dx = pageX - this._lastMousePosition.x;
           const dy = pageY - this._lastMousePosition.y;
-          const dragThreshold = 10; // タッチは閾値を少し大きめに
-
+          const dragThreshold = 10;
           if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
             this._isDragging = true;
           }
@@ -775,16 +787,15 @@ _onWheel(event) {
         if (this._isDragging) {
           const mode = this._editingViewModel.getMode();
           if (mode === 'view') {
-            this._viewportManager.drag(pageX, pageY); // ページ座標を渡す
+            this._viewportManager.drag(pageX, pageY);
           } else if (mode === 'edit') {
-            this._handleDragObject(svgPoint); // SVG座標
+            this._handleDragObject(worldPoint); // ワールド座標でドラッグ
           }
         }
       }
 
-      this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を更新
+      this._lastMousePosition = { x: pageX, y: pageY };
     } else if (event.touches.length === 2) {
-      // ピンチ処理
       // TODO: ピンチ処理
     }
   }
@@ -795,35 +806,32 @@ _onWheel(event) {
    * @private
    */
   _onTouchEnd(event) {
-    // 最後のタッチ座標を取得する必要がある場合
-    // const touch = event.changedTouches[0];
-    // const pageX = touch.clientX;
-    // const pageY = touch.clientY;
-    // const svgPoint = this._getSVGPoint(pageX, pageY);
-    // if (!svgPoint) return;
-
     if (this._isMouseDown) {
         const mode = this._editingViewModel.getMode();
+        // 最後のタッチ座標を取得
+        const lastTouch = event.changedTouches[0];
+        const pageX = lastTouch ? lastTouch.clientX : this._lastMousePosition.x;
+        const pageY = lastTouch ? lastTouch.clientY : this._lastMousePosition.y;
+        const svgPointRaw = this._getSVGPoint(pageX, pageY);
+        const worldPoint = this._svgToWorld(svgPointRaw);
 
-        if (mode === 'view' && this._isDragging) { // ドラッグ中だった場合のみ
+        if (mode === 'view' && this._isDragging) {
             this._viewportManager.endDrag();
         } else if (mode === 'edit' && this._isDragging) {
-            // ドラッグ終了処理 (最後の座標が必要なら上で計算)
-            // this._handleDragEnd(svgPoint);
+            if (worldPoint) this._handleDragEnd(worldPoint);
         } else if (!this._isDragging) {
-             // タップ（クリック相当）の処理
-             // const lastSvgPoint = this._getSVGPoint(this._lastMousePosition.x, this._lastMousePosition.y);
-             // if (lastSvgPoint) this._handleClick(lastSvgPoint);
+             // タップ（クリック相当）
+             if (mode === 'view' && worldPoint) {
+                 this._handleClick(worldPoint);
+             }
+             // add/editモードのタップは onTouchStart で処理済み
         }
     }
 
     this._isMouseDown = false;
     this._isDragging = false;
 
-    // ピンチ終了処理
-    if (event.touches.length < 2) {
-        // TODO: ピンチ状態のリセット
-    }
+    // TODO: ピンチ状態リセット
   }
 
   /**
@@ -839,59 +847,58 @@ _onWheel(event) {
 
     // ESCキーで選択解除または編集キャンセル
     if (event.key === 'Escape') {
-       event.preventDefault(); // デフォルト動作を抑制
+       event.preventDefault();
       const mode = this._editingViewModel.getMode();
 
       if (mode === 'add' && this._editingViewModel.getAddingPoints().length > 0) {
-        // 追加作業のキャンセル
-        this._editingViewModel._clearAddingPoints();
-         console.log("Add operation cancelled by ESC.");
+        this._editingViewModel._clearAddingPoints(); // 公開メソッドがないので内部メソッドを呼ぶ（要検討）
+         // console.log("Add operation cancelled by ESC.");
       } else if (mode === 'edit' && (this._viewModel.getSelectedFeature() || this._viewModel.getSelectedVertices().length > 0)) {
         // 選択解除
         this._viewModel.clearSelection();
-         console.log("Selection cleared by ESC.");
+         // console.log("Selection cleared by ESC.");
       } else if (this._isMeasuringDistance) {
           // 測定キャンセル
           this.clearMeasurements();
           this.setMeasuringDistance(false);
-          // TODO: ツールバーの測定ボタンの状態も更新する通知が必要
-          console.log("Measurement cancelled by ESC.");
+          // console.log("Measurement cancelled by ESC.");
       } else {
         // 表示モードに戻る
         this._editingViewModel.setMode('view');
-         console.log("Mode set to 'view' by ESC.");
+         // console.log("Mode set to 'view' by ESC.");
       }
     }
 
-    // DeleteキーまたはBackspaceキーで選択要素削除
-    if (event.key === 'Delete' || event.key === 'Backspace') {
-       event.preventDefault(); // デフォルト動作を抑制
+    if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) { // 修飾キーなし
+       event.preventDefault();
       const selectedFeature = this._viewModel.getSelectedFeature();
-      if (selectedFeature && this._editingViewModel.getMode() === 'edit') { // 編集モードでのみ削除
-        // TODO: 削除前の確認ダイアログ表示
-        console.log("Deleting feature:", selectedFeature.id);
-        this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature);
+      const selectedVertices = this._viewModel.getSelectedVertices();
+
+      if (this._editingViewModel.getMode() === 'edit') { // 編集モードでのみ削除
+          if (selectedVertices.length > 0) {
+              // TODO: 選択された頂点の削除処理を実装
+              console.log("Deleting selected vertices:", selectedVertices.map(v => v.id));
+              // await this._editingViewModel.deleteVertices(selectedVertices.map(v => v.id));
+          } else if (selectedFeature) {
+              // console.log("Deleting feature:", selectedFeature.id);
+              this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature); // ViewModel経由でアンドゥ対応
+          }
       }
-       // TODO: 選択された頂点の削除
     }
 
-    // アンドゥ・リドゥ
-    if (event.ctrlKey || event.metaKey) { // metaKey for macOS
+    if (event.ctrlKey || event.metaKey) {
       if (event.key === 'z') {
         event.preventDefault();
         if (event.shiftKey) {
-          // Ctrl+Shift+Z: リドゥ
-          console.log("Redo triggered by Ctrl+Shift+Z");
+          // console.log("Redo triggered");
           this._editingViewModel.redo();
         } else {
-          // Ctrl+Z: アンドゥ
-          console.log("Undo triggered by Ctrl+Z");
+          // console.log("Undo triggered");
           this._editingViewModel.undo();
         }
       } else if (event.key === 'y') {
         event.preventDefault();
-        // Ctrl+Y: リドゥ
-        console.log("Redo triggered by Ctrl+Y");
+        // console.log("Redo triggered");
         this._editingViewModel.redo();
       }
     }
@@ -929,119 +936,122 @@ _onWheel(event) {
 
   /**
    * オブジェクト選択処理
-   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
+   * @param {object} worldPoint - ワールド座標 {x, y}
    * @private
    */
-  _handleSelectObject(svgPoint) {
+  _handleSelectObject(worldPoint) {
     // TODO: オブジェクト選択処理
     // 1. svgPoint に最も近いオブジェクト（頂点、線、面）を特定する
     //    - 空間インデックスを使うと効率的
     //    - クリック許容範囲 (tolerance) を考慮する
     // 2. 見つかったオブジェクトを viewModel.selectFeature または viewModel.selectVertex で選択する
     // 3. 何も見つからなければ viewModel.clearSelection() を呼ぶ
-    console.log("Select object at SVG:", svgPoint.x, svgPoint.y);
+    console.log("Select object at World:", worldPoint.x, worldPoint.y);
     // 仮実装: 選択解除
     this._viewModel.clearSelection();
   }
 
   /**
    * クリック処理 (ビューモード)
-   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
+   * @param {object} worldPoint - ワールド座標 {x, y}
    * @private
    */
-  _handleClick(svgPoint) {
-    // TODO: クリック処理 (ビューモード)
-    // - 情報表示など？ 現状では特に何もしないかも
-    console.log("Click at SVG (view mode):", svgPoint.x, svgPoint.y);
-    // クリックした地点の情報を表示するなどの処理をここに追加可能
+  _handleClick(worldPoint) {
+    console.log("Click at World (view mode):", worldPoint.x, worldPoint.y);
+    // 情報表示など
   }
 
   /**
    * オブジェクトドラッグ処理
-   * @param {DOMPoint} svgPoint - 現在のSVG座標 (ワールド座標)
+   * @param {object} worldPoint - 現在のワールド座標 {x, y}
    * @private
    */
-  _handleDragObject(svgPoint) {
+  _handleDragObject(worldPoint) {
     // TODO: オブジェクトドラッグ処理
     // 1. 選択されているオブジェクト（頂点など）を取得
     // 2. editingViewModel.moveVertex などを使って移動を試みる
     // 3. 描画は ViewModel の変更通知 → _render で行われる
     const selectedVertices = this._viewModel.getSelectedVertices();
     if (selectedVertices.length === 1) {
-        // console.log("Dragging vertex:", selectedVertices[0].id, "to SVG:", svgPoint.x, svgPoint.y);
-        // TODO: moveVertex を呼ぶ (ただし、高頻度で呼ばれるためスロットリングが必要かも)
-        // 仮に直接描画を更新する場合（非推奨）：
-        // this._renderer.updateVertexPosition(selectedVertices[0].id, svgPoint.x, svgPoint.y);
+        const vertex = selectedVertices[0];
+        // console.log("Dragging vertex:", vertex.id, "to World:", worldPoint.x, worldPoint.y);
+        // ドラッグ中はリアルタイムに更新せず、仮表示だけ行うことも検討
+        // 仮表示は _renderAddingFeature のような仕組みを使う
+        // ここでは何もしない or 仮表示更新
     } else if (this._viewModel.getSelectedFeature()) {
-        // TODO: 地物全体のドラッグ（今は頂点移動のみ想定）
-        // console.log("Dragging feature:", this._viewModel.getSelectedFeature().id);
+        // TODO: 地物全体のドラッグ
     }
   }
 
   /**
    * ドラッグ終了処理
-   * @param {DOMPoint} svgPoint - 最終的なSVG座標 (ワールド座標)
+   * @param {object} worldPoint - 最終的なワールド座標 {x, y}
    * @private
    */
-  _handleDragEnd(svgPoint) {
-    // TODO: ドラッグ終了処理
-    // 1. ドラッグ開始時の位置と終了位置から移動操作を確定
-    // 2. editingViewModel.moveVertex などを呼び出して変更を永続化
+  async _handleDragEnd(worldPoint) { // asyncに変更
     const selectedVertices = this._viewModel.getSelectedVertices();
     if (selectedVertices.length === 1) {
         const vertex = selectedVertices[0];
-        // TODO: ドラッグ開始位置を保持しておく必要がある
-        const oldPosition = { x: vertex.x, y: vertex.y }; // これは正しくない、開始位置が必要
-        const newPosition = { x: svgPoint.x, y: svgPoint.y };
+        const oldPosition = { x: this._dragStartPosition.x, y: this._dragStartPosition.y }; // 開始位置を使用
+        const newPosition = { x: worldPoint.x, y: worldPoint.y };
+
+        // 開始位置と終了位置がほぼ同じなら何もしない（誤操作防止）
+        const dx = newPosition.x - oldPosition.x;
+        const dy = newPosition.y - oldPosition.y;
+        if (Math.sqrt(dx*dx + dy*dy) < 1e-6) {
+            // console.log("Drag ended but position didn't change.");
+            return;
+        }
+
         console.log("Drag ended for vertex:", vertex.id, "New position:", newPosition);
-        // this._editingViewModel.moveVertex(vertex.id, oldPosition, newPosition); // oldPositionを正しく渡す
+        try {
+            // ViewModel経由で頂点を移動（アンドゥ対応）
+            await this._editingViewModel.moveVertex(vertex.id, oldPosition, newPosition);
+        } catch (error) {
+            console.error("Failed to move vertex:", error);
+            // エラー時のUIフィードバックなど
+        }
     }
     // TODO: feature全体のドラッグ終了処理
   }
 
   /**
    * マウスホバー処理
-   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
+   * @param {object} worldPoint - ワールド座標 {x, y}
    * @private
    */
-  _handleMouseHover(svgPoint) {
+  _handleMouseHover(worldPoint) {
     // TODO: マウスホバー処理
     // 1. svgPoint に最も近いオブジェクトを特定
     // 2. viewModel.hoverFeature または viewModel.hoverVertex を呼ぶ
     // 3. マウスカーソルの形状を変更するなど
-    // console.log("Hover at SVG:", svgPoint.x, svgPoint.y);
+    // console.log("Hover at World:", worldPoint.x, worldPoint.y);
     // 仮実装：ホバー解除
-    // this._viewModel.hoverFeature(null);
-    // this._viewModel.hoverVertex(null);
+    this._viewModel.hoverFeature(null);
+    this._viewModel.hoverVertex(null);
   }
 
   /**
    * 点追加処理
-   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
+   * @param {object} worldPoint - ワールド座標 {x, y}
    * @private
    */
-  _handleAddPoint(svgPoint) {
-    if (!svgPoint) return;
-
-    const worldPoint = { x: svgPoint.x, y: svgPoint.y };
-    console.log("Adding point at World:", worldPoint.x, worldPoint.y);
-
+  _handleAddPoint(worldPoint) {
+    if (!worldPoint) return;
+    // console.log("Adding point at World:", worldPoint.x, worldPoint.y);
     this._editingViewModel.addPoint(worldPoint);
   }
 
   /**
    * 測定点追加処理
-   * @param {DOMPoint} svgPoint - SVG座標 (ワールド座標)
+   * @param {object} worldPoint - ワールド座標 {x, y}
    * @private
    */
-  _handleAddMeasurePoint(svgPoint) {
-    if (!svgPoint) return;
-
-    const worldPoint = { x: svgPoint.x, y: svgPoint.y };
-    console.log("Adding measure point at World:", worldPoint.x, worldPoint.y);
-
+  _handleAddMeasurePoint(worldPoint) {
+    if (!worldPoint) return;
+    // console.log("Adding measure point at World:", worldPoint.x, worldPoint.y);
     this._measurePoints.push(worldPoint);
-    this._render(); // 測定点を追加したらすぐに再描画
+    this._render();
   }
 
   /**
@@ -1051,8 +1061,7 @@ _onWheel(event) {
   setMeasuringDistance(enabled) {
     if (this._isMeasuringDistance !== enabled) {
         this._isMeasuringDistance = enabled;
-        console.log("Measuring distance mode:", enabled);
-
+        // console.log("Measuring distance mode:", enabled);
         if (!enabled) {
             this.clearMeasurements(); // モード解除時に測定結果をクリア
         } else {
@@ -1078,10 +1087,10 @@ _onWheel(event) {
    */
   clearMeasurements() {
     this._measurePoints = [];
-    this._clearTemporaryDrawings('measure-'); // 描画された要素も削除
-    this._measureElements = []; // 保持している要素リストもクリア
-     console.log("Measurements cleared.");
-    // this._render(); // _clearTemporaryDrawings の後、必要なら再描画
+    this._clearTemporaryDrawings('measure-');
+    this._measureElements = [];
+     // console.log("Measurements cleared.");
+     this._render(); // クリア後に再描画
   }
 
   /**
@@ -1090,9 +1099,11 @@ _onWheel(event) {
    * @private
    */
   _clearTemporaryDrawings(classNamePrefix) {
-    const tempElements = this._renderer._mainGroup.querySelectorAll(`.temp-drawing.${classNamePrefix}element, .temp-drawing.${classNamePrefix}feature`);
-    tempElements.forEach(el => this._renderer.removeElement(el));
-    // console.log(`Cleared temporary drawings with prefix: ${classNamePrefix}`);
+      if (!this._renderer || !this._renderer._mainGroup) return;
+      // クラス名プレフィックスに合致する要素を削除
+      const tempElements = this._renderer._mainGroup.querySelectorAll(`.temp-drawing.${classNamePrefix}element, .temp-drawing.${classNamePrefix}feature`);
+      tempElements.forEach(el => this._renderer.removeElement(el));
+      // console.log(`Cleared temporary drawings with prefix: ${classNamePrefix}`);
   }
 
   /**
