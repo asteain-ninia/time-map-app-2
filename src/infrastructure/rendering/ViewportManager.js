@@ -1,3 +1,5 @@
+// src/infrastructure/rendering/ViewportManager.js
+
 /**
  * ビューポート管理（ズーム、パンなど）
  */
@@ -100,13 +102,13 @@ export class ViewportManager {
 
     // ズームレベルに合わせてワールド座標での移動量に変換
     const worldDx = dx / this._viewport.zoom;
-    const worldDy = dy / this._viewport.zoom;
+    const worldDy = dy / this._viewport.zoom; // スクリーン座標の dy に対応するワールド座標での移動量 (Y軸上向き正)
 
     // console.log('調整後の移動量 (World):', worldDx, worldDy);
 
     this.updateViewport({
-      x: this._viewport.x - worldDx, // パン方向と座標系の関係で減算
-      y: this._viewport.y - worldDy  // パン方向と座標系の関係で減算
+      x: this._viewport.x - worldDx, // スクリーン右への移動はワールドXを減少
+      y: this._viewport.y + worldDy  // スクリーン下への移動はワールドYを増加
     });
   }
 
@@ -214,19 +216,19 @@ export class ViewportManager {
 
     // ワールド座標での移動量に変換
     const dxWorld = dxScreen / this._viewport.zoom;
-    const dyWorld = dyScreen / this._viewport.zoom;
+    const dyWorld = dyScreen / this._viewport.zoom; // スクリーン座標の dy に対応するワールド座標での移動量 (Y軸上向き正)
 
     // console.log('調整後のドラッグ距離 (World):', dxWorld, dyWorld);
     // console.log('ドラッグ開始位置からの新しい位置 (World):',
     //   this._viewportStart.x - dxWorld,
-    //   this._viewportStart.y - dyWorld
+    //   this._viewportStart.y + dyWorld // 修正: ワールド座標Yは増加
     // );
 
     // ドラッグ開始時の中心から移動量を引いて新しい中心を計算
     // updateViewport が x を正規化してくれる
     this.updateViewport({
-      x: this._viewportStart.x - dxWorld, // パン方向のため減算
-      y: this._viewportStart.y - dyWorld  // パン方向のため減算
+      x: this._viewportStart.x - dxWorld, // スクリーン右へのドラッグはワールドXを減少
+      y: this._viewportStart.y + dyWorld  // スクリーン下へのドラッグはワールドYを増加
     });
   }
 
@@ -325,7 +327,8 @@ export class ViewportManager {
 
     // ワールド座標に変換
     const worldX = x + screenOffsetX / zoom;
-    const worldY = y + screenOffsetY / zoom;
+    // ワールドY座標はスクリーンYと逆向きなので符号を反転
+    const worldY = y - screenOffsetY / zoom;
 
     return { x: worldX, y: worldY };
   }
@@ -344,11 +347,12 @@ export class ViewportManager {
 
     // ビューポート中心からのワールド座標の差分
     const worldOffsetX = worldX - x;
-    const worldOffsetY = worldY - y;
+    const worldOffsetY = worldY - y; // ワールドYは上向き正
 
     // スクリーン座標に変換
     const screenX = worldOffsetX * zoom + width / 2;
-    const screenY = worldOffsetY * zoom + height / 2;
+    // スクリーンYはワールドYと逆向きなので符号を反転
+    const screenY = -worldOffsetY * zoom + height / 2;
 
     return { x: screenX, y: screenY };
   }
