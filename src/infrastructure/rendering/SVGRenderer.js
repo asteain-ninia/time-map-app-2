@@ -18,6 +18,7 @@ export class SVGRenderer {
     this._featuresGroup = null;
     this._backgroundGroup = null; // 背景グループの参照を追加
     this._originalBackgroundContent = null; // 追加: 元の背景SVG内容を保持
+    this._backgroundCopies = [null, null, null]; // [left, center, right]
     this._backgroundTransform = { // 追加: 背景の基準変換情報
         scaleX: 1,
         scaleY: 1,
@@ -72,6 +73,14 @@ export class SVGRenderer {
     this._backgroundGroup.setAttribute("pointer-events", "none"); // クリックイベントを拾わないように
     this._mainGroup.appendChild(this._backgroundGroup); // メイングループの最初の子として挿入
 
+    // 背景コピー用のプレースホルダーグループを作成
+    for (let i = 0; i < 3; i++) {
+        const copyGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        copyGroup.setAttribute("class", `background-copy-${i}`);
+        this._backgroundGroup.appendChild(copyGroup);
+        this._backgroundCopies[i] = copyGroup; // 参照を保持
+    }
+
     this._gridGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     this._gridGroup.setAttribute("class", "grid-group");
     this._mainGroup.appendChild(this._gridGroup); // グリッドは背景の上
@@ -121,7 +130,7 @@ render(world, viewport, currentTime) {
   this._svg.setAttribute("viewBox", `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
   // console.log('SVG viewBox 更新:', `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
 
-  // 背景を描画 (左右ループ対応)
+  // 背景を描画 (再生成せず、Transformのみ更新)
   this._renderBackground(viewport);
 
   // グリッドを描画
@@ -196,43 +205,36 @@ render(world, viewport, currentTime) {
   }
 
   /**
-   * 背景地図を描画（左右ループ対応）
+   * 背景地図を描画（Transform属性のみ更新）
    * @param {Object} viewport - ビューポート情報
    * @private
    */
   _renderBackground(viewport) {
-    if (!this._originalBackgroundContent) return; // 背景が読み込まれていない場合は何もしない
-
-    // 既存の背景要素をクリア
-    while (this._backgroundGroup.firstChild) {
-        this._backgroundGroup.removeChild(this._backgroundGroup.firstChild);
+    // 元のコンテンツがない、またはコピーが準備できていない場合は何もしない
+    if (!this._originalBackgroundContent || !this._backgroundCopies[0] || this._backgroundCopies[0].childNodes.length === 0) {
+        return;
     }
 
-    // const viewBoxWidth = viewport.width / viewport.zoom;
-    // const viewBoxX = viewport.x - viewBoxWidth / 2;
     const worldWidth = this._backgroundTransform.worldWidth; // 360
+    const { scaleX, scaleY, translateX, translateY } = this._backgroundTransform;
 
-    // 常に中央とその左右の合計3枚を描画 ---
     // ビューポートの中心に最も近い地図の中心オフセットを計算
     const baseOffset = Math.round(viewport.x / worldWidth) * worldWidth;
 
-    // 描画するオフセットのインデックス (中央: 0, 左: -1, 右: 1)
-    const offsetsIndices = [-1, 0, 1];
+    // 描画するオフセットのインデックスと対応するコピー要素
+    const copiesToUpdate = [
+        { index: -1, element: this._backgroundCopies[0] }, // Left
+        { index: 0,  element: this._backgroundCopies[1] }, // Center
+        { index: 1,  element: this._backgroundCopies[2] }  // Right
+    ];
 
-    // console.log(`Rendering background from index ${minOffsetIndex} to ${maxOffsetIndex} relative to base offset ${baseOffset}`);
-
-    for (const index of offsetsIndices) {
-        const offsetX = baseOffset + index * worldWidth;
-        // console.log(`Drawing background copy at offset: ${offsetX}`);
-
-        // 元のSVGコンテンツをクローン
-        const clone = this._originalBackgroundContent.cloneNode(true);
-
-        // クローンに変換を適用 (修正後の _backgroundTransform を使用)
-        const transformString = `translate(${offsetX + this._backgroundTransform.translateX} ${this._backgroundTransform.translateY}) scale(${this._backgroundTransform.scaleX} ${this._backgroundTransform.scaleY})`;
-        clone.setAttribute('transform', transformString);
-
-        this._backgroundGroup.appendChild(clone);
+    // 各コピーのTransform属性を更新
+    for (const copyInfo of copiesToUpdate) {
+        const offsetX = baseOffset + copyInfo.index * worldWidth;
+        // transform属性を計算して設定
+        // translate(offsetX + 固定translateX, 固定translateY) scale(固定scaleX, 固定scaleY)
+        const transformString = `translate(${offsetX + translateX} ${translateY}) scale(${scaleX} ${scaleY})`;
+        copyInfo.element.setAttribute('transform', transformString);
     }
   }
 
@@ -280,7 +282,7 @@ _renderGrid(viewport) {
   // 緯線（横線）を描画
   for (let lat = latMin; lat <= latMax; lat += gridInterval) {
     const isEquator = Math.abs(lat) < 0.001;
-    const svgY = -lat; // 修正: Y座標を反転してSVG座標に
+    const svgY = -lat; // Y座標を反転してSVG座標に
 
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
     line.setAttribute("x1", left); // 線はビューボックスの左右端まで
@@ -296,12 +298,12 @@ _renderGrid(viewport) {
     // 緯度ラベル（画面左端に表示）
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", left + 2 * strokeWidth); // 左端からのオフセット
-    // 修正: ラベルを線の少し「上」(SVG座標ではYが小さい方)に表示
+    // ラベルを線の少し「上」(SVG座標ではYが小さい方)に表示
     text.setAttribute("y", svgY - 2 * strokeWidth);
     text.setAttribute("font-size", fontSize);
     text.setAttribute("fill", this._options.gridColor);
     text.setAttribute("text-anchor", "start"); // 左揃え
-    // 修正: ベースラインを文字の上に合わせる (hanging)
+    // ベースラインを文字の上に合わせる (hanging)
     text.setAttribute("dominant-baseline", "alphabetic"); //hanging");
     text.setAttribute("pointer-events", "none");
     text.textContent = `${Math.abs(lat)}°${lat > 0 ? 'N' : (lat < 0 ? 'S' : '')}`;
@@ -374,7 +376,7 @@ _renderGrid(viewport) {
     // カテゴリに基づいたスタイルを取得
     const style = this._getPointStyle(property);
     const svgX = this._toScreenX(vertex.x, viewport);
-    const svgY = -this._toScreenY(vertex.y, viewport); // 修正: Y座標反転
+    const svgY = -this._toScreenY(vertex.y, viewport); // Y座標反転
 
     // グループ要素を作成
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -450,7 +452,7 @@ _renderGrid(viewport) {
     // パスデータのY座標を反転
     let pathData = `M ${this._toScreenX(lineVertices[0].x, viewport)} ${-this._toScreenY(lineVertices[0].y, viewport)}`;
     for (let i = 1; i < lineVertices.length; i++) {
-      pathData += ` L ${this._toScreenX(lineVertices[i].x, viewport)} ${this._toScreenY(lineVertices[i].y, viewport)}`;
+      pathData += ` L ${this._toScreenX(lineVertices[i].x, viewport)} ${-this._toScreenY(lineVertices[i].y, viewport)}`; // ★ Y座標反転
     }
 
     pathElement.setAttribute("d", pathData);
@@ -478,7 +480,7 @@ _renderGrid(viewport) {
          midY = (lineVertices[midIndex-1].y + lineVertices[midIndex].y) / 2;
       }
        const svgX = this._toScreenX(midX, viewport);
-       const svgY = -this._toScreenY(midY, viewport); // 修正: Y座標反転
+       const svgY = -this._toScreenY(midY, viewport); // Y座標反転
 
        const baseFontSize = style.fontSize || 10;
        const fontSize = Math.max(5, Math.min(16, baseFontSize / Math.sqrt(viewport.zoom)));
@@ -487,9 +489,9 @@ _renderGrid(viewport) {
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
       text.setAttribute("x", svgX);
-      text.setAttribute("y", svgY - textOffsetY); // 修正
+      text.setAttribute("y", svgY - textOffsetY);
       text.setAttribute("text-anchor", "middle");
-      text.setAttribute("dominant-baseline", "alphabetic"); // 修正
+      text.setAttribute("dominant-baseline", "alphabetic");
       text.setAttribute("font-size", fontSize);
       text.setAttribute("fill", style.textColor);
        text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
@@ -538,7 +540,7 @@ _renderGrid(viewport) {
         const subVertices = subPoly.vertexIds.map(id => vertices.find(v => v.id === id));
         if (subVertices.some(v => !v) || subVertices.length < 3) continue;
 
-        const path = this._createPolygonPath(subVertices, subPoly.holesVertexIds, vertices, viewport, invertY); // 修正: invertYフラグを渡す
+        const path = this._createPolygonPath(subVertices, subPoly.holesVertexIds, vertices, viewport, invertY); // invertYフラグを渡す
         path.setAttribute("fill", fill);
         path.setAttribute("stroke", stroke);
         path.setAttribute("stroke-width", strokeWidth);
@@ -551,7 +553,7 @@ _renderGrid(viewport) {
       const polyVertices = polygon.vertexIds.map(id => vertices.find(v => v.id === id));
       if (polyVertices.some(v => !v) || polyVertices.length < 3) return null;
 
-      const path = this._createPolygonPath(polyVertices, polygon.holesVertexIds, vertices, viewport, invertY); // 修正: invertYフラグを渡す
+      const path = this._createPolygonPath(polyVertices, polygon.holesVertexIds, vertices, viewport, invertY); // invertYフラグを渡す
       path.setAttribute("fill", fill);
       path.setAttribute("stroke", stroke);
       path.setAttribute("stroke-width", strokeWidth);
@@ -593,14 +595,14 @@ _renderGrid(viewport) {
         centroidX /= vertexCount;
         centroidY /= vertexCount;
         const svgX = this._toScreenX(centroidX, viewport);
-        const svgY = -this._toScreenY(centroidY, viewport); // 修正: Y座標反転
+        const svgY = -this._toScreenY(centroidY, viewport); // Y座標反転
 
          const baseFontSize = style.fontSize || 12;
          const fontSize = Math.max(6, Math.min(20, baseFontSize / Math.sqrt(viewport.zoom)));
 
         const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
         text.setAttribute("x", svgX);
-        text.setAttribute("y", svgY); // 修正: Y座標反転
+        text.setAttribute("y", svgY); // Y座標反転
         text.setAttribute("text-anchor", "middle");
         text.setAttribute("dominant-baseline", "middle");
         text.setAttribute("font-size", fontSize);
@@ -973,7 +975,7 @@ toWorldY(svgY, viewport) {
    */
   drawText(x, y, content, style, viewport) {
     const svgX = this._toScreenX(x, viewport);
-    const svgY = -this._toScreenY(y, viewport); // 修正: Y座標反転
+    const svgY = -this._toScreenY(y, viewport); // Y座標反転
 
     const baseFontSize = style.fontSize || 12;
     const fontSize = Math.max(6, Math.min(18, baseFontSize / Math.sqrt(viewport.zoom)));
@@ -1008,10 +1010,12 @@ toWorldY(svgY, viewport) {
  * @param {string} svgContent - SVG形式の地図内容
  */
   loadBackgroundMap(svgContent) {
-    // 既存の背景要素をクリア
-    while (this._backgroundGroup.firstChild) {
-        this._backgroundGroup.removeChild(this._backgroundGroup.firstChild);
-    }
+    // ★ 変更: 既存の背景コピーの内容をクリア
+    this._backgroundCopies.forEach(copyGroup => {
+        while (copyGroup.firstChild) {
+            copyGroup.removeChild(copyGroup.firstChild);
+        }
+    });
     this._originalBackgroundContent = null; // 元の内容もクリア
 
     // SVG文字列からDOMを解析
@@ -1059,29 +1063,41 @@ toWorldY(svgY, viewport) {
     // 背景の基準変換情報を保存
     this._backgroundTransform = {
         scaleX: scaleX,
-        scaleY: scaleY, // 修正: 正の値
-        translateX: translateX, // 修正: -180
-        translateY: translateY, // 修正: -90
+        scaleY: scaleY, // 正の値
+        translateX: translateX, // -180
+        translateY: translateY, // -90
         worldWidth: targetWidth,
         worldHeight: targetHeight,
     };
 
-    // 元のSVGコンテンツをグループ化して保持 (コピー元とする)
+    // 元のSVGコンテンツをグループ化して保持 (クローンの元データ)
     const originalGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     while (svgElement.firstChild) {
         if (svgElement.firstChild.nodeType === Node.ELEMENT_NODE) {
-            originalGroup.appendChild(svgElement.firstChild);
-        } else {
-            svgElement.removeChild(svgElement.firstChild); // テキストノードなどは削除
+            // ノードを移動する前にクローンする
+            originalGroup.appendChild(svgElement.firstChild.cloneNode(true));
         }
+        // 元の要素は不要なので削除
+        svgElement.removeChild(svgElement.firstChild);
     }
     this._originalBackgroundContent = originalGroup;
+
+    //  保持している3つのコピーグループにクローンした内容を追加
+    this._backgroundCopies.forEach(copyGroup => {
+        // 各コピーグループに元のコンテンツをクローンして追加
+        const contentClone = this._originalBackgroundContent.cloneNode(true);
+        // g要素の中身（実際のパスなど）を追加する
+        while (contentClone.firstChild) {
+            copyGroup.appendChild(contentClone.firstChild);
+        }
+    });
 
 
     console.log(`背景地図を読み込みました。 元サイズ: ${svgWidth}x${svgHeight}, 基準変換: translate(${translateX},${translateY}) scale(${scaleX.toFixed(4)},${scaleY.toFixed(4)})`);
 
-    // 初回描画をトリガー
-    // this.render(...) を外部から呼ぶ、またはここで呼ぶ
+    // 初回描画をトリガーするために render を呼び出す必要がある
+    // 外部から呼ばれるか、ここで render をトリガーする
+    // 例: this.render(...)
   }
 
   /**
