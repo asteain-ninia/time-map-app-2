@@ -1,5 +1,9 @@
 // src/infrastructure/rendering/SVGRenderer.js
 
+import { Point } from '../../domain/entities/Point.js';
+import { Line } from '../../domain/entities/Line.js';
+import { Polygon } from '../../domain/entities/Polygon.js';
+
 /**
  * SVGベースの地図レンダリング
  */
