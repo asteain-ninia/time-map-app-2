@@ -40,7 +40,11 @@ export class EditFeatureUseCase {
     let feature;
     switch (featureType) {
       case 'point':
-        feature = Point.create(featureId, properties, processedGeometry, layerId);
+        // Point.create は geometry.vertexId を期待するが、
+        // processedGeometry は geometry.vertexIds (配列) を持つため、
+        // 最初の要素を geometry.vertexId として渡す
+        const pointGeometry = { ...processedGeometry, vertexId: processedGeometry.vertexIds[0] };
+        feature = Point.create(featureId, properties, pointGeometry, layerId);
         break;
       case 'line':
         feature = Line.create(featureId, properties, processedGeometry, layerId);
