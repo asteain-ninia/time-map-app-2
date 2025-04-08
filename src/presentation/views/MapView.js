@@ -1,4 +1,5 @@
 // src/presentation/views/MapView.js
+import { Property } from '../../domain/value-objects/Property.js'; // Propertyクラスをインポート
 
 /**
  * メインマップ表示
@@ -25,6 +26,7 @@ export class MapView {
     this._mapElement = null;
     this._mapOverlay = null; // 追加: 透明なオーバーレイ要素
     this._svgPoint = null; // SVG座標変換用
+    this._actionButtonsContainer = null; // 追加: アクションボタン用コンテナ
 
     // 計測モードの状態
     this._isMeasuringDistance = false;
@@ -74,6 +76,21 @@ export class MapView {
     // オーバーレイをマップコンテナに追加
     this._mapElement.appendChild(this._mapOverlay);
 
+    // アクションボタンコンテナを作成
+    this._actionButtonsContainer = document.createElement('div');
+    this._actionButtonsContainer.className = 'action-buttons-container';
+    this._actionButtonsContainer.style.position = 'absolute';
+    this._actionButtonsContainer.style.bottom = '20px';
+    this._actionButtonsContainer.style.left = '50%';
+    this._actionButtonsContainer.style.transform = 'translateX(-50%)';
+    this._actionButtonsContainer.style.zIndex = '20'; // オーバーレイより上
+    this._actionButtonsContainer.style.display = 'none'; // 初期状態は非表示
+    this._actionButtonsContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+    this._actionButtonsContainer.style.padding = '5px 10px';
+    this._actionButtonsContainer.style.borderRadius = '5px';
+    this._mapElement.appendChild(this._actionButtonsContainer);
+    this._createActionButtons(); // ボタンを作成
+
     // SVG座標変換用のSVGPointを作成 (SVGRendererの初期化後に実行)
     if (this._renderer && this._renderer._svg) {
         this._svgPoint = this._renderer._svg.createSVGPoint();
@@ -113,7 +130,7 @@ export class MapView {
 
   }
 
-  /**
+/**
  * スクリーン座標をSVG座標に変換するヘルパー関数
  * @param {number} pageX - ページ全体のX座標
  * @param {number} pageY - ページ全体のY座標
@@ -218,6 +235,9 @@ _svgToWorld(svgPoint) {
       case 'mode':
       case 'tool':
       case 'addingPoints':
+        this._updateActionButtonsVisibility(); // ボタン表示状態を更新
+        this._render(); // 再描画
+        break;
       case 'addingHole':
       case 'temporaryElements':
         // 再描画
@@ -272,6 +292,9 @@ _svgToWorld(svgPoint) {
 
     // 距離測定の描画
     this._renderDistanceMeasurement();
+
+    // アクションボタンの表示更新
+    this._updateActionButtonsVisibility();
   }
 
   /**
@@ -701,12 +724,18 @@ _onWheel(event) {
 
     if (!worldPoint) return;
 
-    // console.log('ダブルクリック - World:', worldPoint.x, worldPoint.y);
-    this._viewportManager.updateViewport({
-      x: worldPoint.x,
-      y: worldPoint.y, // ワールド座標のYをセット
-      zoom: 1
-    });
+    // 追加モードでのダブルクリックは確定処理とする
+    if (this._editingViewModel.getMode() === 'add') {
+      this._handleConfirmClick();
+    } else {
+      // 通常のダブルクリック（ビューポートリセット）
+      console.log('ダブルクリック - World:', worldPoint.x, worldPoint.y);
+      this._viewportManager.updateViewport({
+        x: worldPoint.x,
+        y: worldPoint.y, // ワールド座標のYをセット
+        zoom: 1
+      });
+    }
   }
 
   /**
@@ -841,6 +870,11 @@ _onWheel(event) {
                  this._handleClick(worldPoint);
              }
              // add/editモードのタップは onTouchStart で処理済み
+             // ダブルタップでの確定処理は別途考慮
+             // if (mode === 'add' && !this._isDragging) {
+             //    // ダブルタップ検出が必要
+             //    this._handleConfirmClick();
+             // }
         }
     }
 
@@ -858,34 +892,62 @@ _onWheel(event) {
   _onKeyDown(event) {
     // 対象が入力要素の場合は無視
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) {
-      return;
+      // ただし、プロパティ入力ダイアログ表示中のEnterは確定として扱いたい
+       const propertyDialog = this._mapElement.querySelector('.property-input-dialog');
+       if (propertyDialog && event.key === 'Enter') {
+           // プロパティ入力ダイアログ内のEnterキーはフォーム送信に任せる（または特定のボタンをクリック）
+           event.stopPropagation(); // MapView全体でのEnter処理を抑制
+           const confirmButton = propertyDialog.querySelector('button:not([data-action="cancel"])');
+            if (confirmButton) confirmButton.click();
+           return;
+       } else if (propertyDialog && event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            const cancelButton = propertyDialog.querySelector('button[data-action="cancel"]');
+            if (cancelButton) cancelButton.click();
+            else propertyDialog.remove(); // キャンセルボタンがなければダイアログを閉じる
+           return;
+       } else if(propertyDialog) {
+           // プロパティダイアログ表示中は他のキー操作を無効化
+           event.stopPropagation();
+           return;
+       }
+       else if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement){
+            // それ以外の入力要素の場合
+            return;
+       }
     }
+
+    const mode = this._editingViewModel.getMode();
 
     // ESCキーで選択解除または編集キャンセル
     if (event.key === 'Escape') {
        event.preventDefault();
-      const mode = this._editingViewModel.getMode();
 
-      if (mode === 'add' && this._editingViewModel.getAddingPoints().length > 0) {
-        this._editingViewModel._clearAddingPoints(); // 公開メソッドがないので内部メソッドを呼ぶ（要検討）
-         // console.log("Add operation cancelled by ESC.");
-      } else if (mode === 'edit' && (this._viewModel.getSelectedFeature() || this._viewModel.getSelectedVertices().length > 0)) {
-        // 選択解除
-        this._viewModel.clearSelection();
-         // console.log("Selection cleared by ESC.");
-      } else if (this._isMeasuringDistance) {
-          // 測定キャンセル
-          this.clearMeasurements();
-          this.setMeasuringDistance(false);
-          // console.log("Measurement cancelled by ESC.");
-      } else {
-        // 表示モードに戻る
-        this._editingViewModel.setMode('view');
-         // console.log("Mode set to 'view' by ESC.");
-      }
-    }
-
-    if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) { // 修飾キーなし
+       if (mode === 'add' && this._editingViewModel.getAddingPoints().length > 0) {
+         this._handleCancelClick(); // キャンセル処理を呼び出す
+         console.log("Add operation cancelled by ESC.");
+       } else if (mode === 'edit' && (this._viewModel.getSelectedFeature() || this._viewModel.getSelectedVertices().length > 0)) {
+         // 選択解除
+         this._viewModel.clearSelection();
+         console.log("Selection cleared by ESC.");
+       } else if (this._isMeasuringDistance) {
+           // 測定キャンセル
+           this.clearMeasurements();
+           this.setMeasuringDistance(false);
+           console.log("Measurement cancelled by ESC.");
+       } else {
+         // 表示モードに戻る
+         this._editingViewModel.setMode('view');
+         console.log("Mode set to 'view' by ESC.");
+       }
+    } else if (event.key === 'Enter') { // Enterキーで確定
+        if (mode === 'add' && this._editingViewModel.getAddingPoints().length > 0) {
+            event.preventDefault();
+            this._handleConfirmClick();
+            console.log("Add operation confirmed by Enter.");
+        }
+    } else if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) { // 修飾キーなし
        event.preventDefault();
       const selectedFeature = this._viewModel.getSelectedFeature();
       const selectedVertices = this._viewModel.getSelectedVertices();
@@ -900,9 +962,7 @@ _onWheel(event) {
               this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature); // ViewModel経由でアンドゥ対応
           }
       }
-    }
-
-    if (event.ctrlKey || event.metaKey) {
+    } else if (event.ctrlKey || event.metaKey) { // アンドゥ/リドゥ
       if (event.key === 'z') {
         event.preventDefault();
         if (event.shiftKey) {
@@ -1130,4 +1190,220 @@ _onWheel(event) {
     this._renderer.toggleGrid(show);
     this._render(); // グリッドの状態が変わったので再描画
   }
+
+  /**
+   * アクションボタン（確定/キャンセル）を作成
+   * @private
+   */
+  _createActionButtons() {
+      this._actionButtonsContainer.innerHTML = ''; // 既存ボタンをクリア
+
+      const confirmButton = document.createElement('button');
+      confirmButton.textContent = '確定 (Enter)';
+      confirmButton.style.marginRight = '10px';
+      confirmButton.onclick = this._handleConfirmClick.bind(this);
+
+      const cancelButton = document.createElement('button');
+      cancelButton.textContent = 'キャンセル (Esc)';
+      cancelButton.onclick = this._handleCancelClick.bind(this);
+
+      this._actionButtonsContainer.appendChild(confirmButton);
+      this._actionButtonsContainer.appendChild(cancelButton);
+  }
+
+  /**
+   * アクションボタンの表示/非表示を更新
+   * @private
+   */
+  _updateActionButtonsVisibility() {
+      const mode = this._editingViewModel.getMode();
+      const points = this._editingViewModel.getAddingPoints();
+      const tool = this._editingViewModel.getTool();
+      let show = false;
+
+      if (mode === 'add' && points.length > 0) {
+          // ツールに応じて表示条件を設定
+          if (tool === 'point' && points.length === 1) {
+              show = true;
+          } else if (tool === 'line' && points.length >= 2) {
+              show = true;
+          } else if (tool === 'polygon' && points.length >= 3) {
+              show = true;
+          }
+      }
+
+      this._actionButtonsContainer.style.display = show ? 'block' : 'none';
+  }
+
+  /**
+   * 確定ボタンクリックのハンドラ
+   * @private
+   */
+  _handleConfirmClick() {
+      const points = this._editingViewModel.getAddingPoints();
+      const tool = this._editingViewModel.getTool();
+
+      // ツールごとの最小頂点数をチェック
+      let isValid = false;
+      if (tool === 'point' && points.length === 1) isValid = true;
+      if (tool === 'line' && points.length >= 2) isValid = true;
+      if (tool === 'polygon' && points.length >= 3) isValid = true;
+
+      if (isValid) {
+          this._showPropertyInputDialog();
+      } else {
+          alert(`${tool === 'point' ? '点' : tool === 'line' ? '線' : '面'}を作成するには、頂点が足りません。`);
+      }
+  }
+
+  /**
+   * キャンセルボタンクリックのハンドラ
+   * @private
+   */
+  _handleCancelClick() {
+      // EditingViewModel の内部メソッドを直接呼ぶのは避けるべきだが、暫定対応
+      this._editingViewModel._clearAddingPoints();
+      // 他のキャンセル処理（例：プロパティダイアログを閉じる）
+      const existingDialog = this._mapElement.querySelector('.property-input-dialog');
+      if (existingDialog) existingDialog.remove();
+  }
+
+  /**
+   * プロパティ入力ダイアログを表示
+   * @private
+   */
+  _showPropertyInputDialog() {
+    // 既存のダイアログがあれば削除
+    const existingDialog = this._mapElement.querySelector('.property-input-dialog');
+    if (existingDialog) existingDialog.remove();
+
+    const dialog = document.createElement('div');
+    dialog.className = 'property-input-dialog';
+    dialog.style.position = 'absolute';
+    dialog.style.top = '50%';
+    dialog.style.left = '50%';
+    dialog.style.transform = 'translate(-50%, -50%)';
+    dialog.style.zIndex = '30';
+    dialog.style.background = 'white';
+    dialog.style.padding = '20px';
+    dialog.style.border = '1px solid #ccc';
+    dialog.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
+
+    const form = document.createElement('form');
+    form.onsubmit = (e) => { e.preventDefault(); confirmButton.click(); }; // Enterで確定
+
+    // 名前入力
+    const nameLabel = document.createElement('label');
+    nameLabel.textContent = '名前: ';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text'; nameInput.name = 'name'; nameInput.required = true;
+    const nameRow = document.createElement('div'); nameRow.style.marginBottom='10px';
+    nameRow.appendChild(nameLabel); nameRow.appendChild(nameInput);
+    form.appendChild(nameRow);
+
+    // 説明入力
+    const descLabel = document.createElement('label');
+    descLabel.textContent = '説明: ';
+    const descInput = document.createElement('textarea');
+    descInput.name = 'description';
+    const descRow = document.createElement('div'); descRow.style.marginBottom='10px';
+    descRow.appendChild(descLabel); descRow.appendChild(descInput);
+    form.appendChild(descRow);
+
+    // カテゴリ選択
+    const categoryLabel = document.createElement('label');
+    categoryLabel.textContent = 'カテゴリ: ';
+    const categorySelect = document.createElement('select');
+    categorySelect.name = 'category';
+    // サイドバーと同じカテゴリ取得ロジックを使うべきだが、ここでは簡易的に
+    const categories = this._getFeatureCategories(); // 仮のカテゴリ取得関数
+    categories.forEach(cat => {
+        const option = document.createElement('option');
+        option.value = cat.id; option.textContent = cat.name;
+        categorySelect.appendChild(option);
+    });
+    const categoryRow = document.createElement('div'); categoryRow.style.marginBottom='10px';
+    categoryRow.appendChild(categoryLabel); categoryRow.appendChild(categorySelect);
+    form.appendChild(categoryRow);
+
+    // ボタン
+    const buttonRow = document.createElement('div'); buttonRow.style.textAlign = 'right';
+    const confirmButton = document.createElement('button'); confirmButton.type = 'button'; confirmButton.textContent = '確定';
+    const cancelButton = document.createElement('button'); cancelButton.type = 'button'; cancelButton.textContent = 'キャンセル';
+    cancelButton.dataset.action = 'cancel'; // キャンセルボタン識別用
+    cancelButton.style.marginLeft = '10px';
+    buttonRow.appendChild(confirmButton); buttonRow.appendChild(cancelButton);
+    form.appendChild(buttonRow);
+
+    dialog.appendChild(form);
+    this._mapElement.appendChild(dialog);
+    nameInput.focus();
+
+    confirmButton.onclick = () => {
+        const properties = {
+            name: nameInput.value.trim() || '名称未設定',
+            description: descInput.value.trim(),
+            category: categorySelect.value || 'default' // デフォルトカテゴリ
+        };
+        // TODO: 現在選択中のレイヤーIDを取得する
+        const currentLayerId = this._viewModel.getWorld().layers[0]?.id || 'layer-base'; // 仮
+        this._confirmAddFeatureWithProperties(properties, currentLayerId);
+        dialog.remove();
+    };
+    cancelButton.onclick = () => {
+        dialog.remove();
+        // キャンセルしたので追加中の点もクリアする
+        this._handleCancelClick();
+    };
+  }
+
+  /**
+   * 入力されたプロパティで地物追加を確定
+   * @param {Object} properties - UIから入力されたプロパティ
+   * @param {string} layerId - レイヤーID
+   * @private
+   */
+  async _confirmAddFeatureWithProperties(properties, layerId) {
+    try {
+        // 正しいTimePointインスタンスを使う
+        const correctTimePoint = this._viewModel.getCurrentTime();
+
+        // Propertyインスタンスの生成 (TimePointを使う)
+        const domainProperty = new Property(
+            correctTimePoint, // TimePointインスタンスを使用
+            properties.name,
+            properties.description,
+            { category: properties.category }, // 属性はオブジェクトで
+            null, // startTime
+            null  // endTime
+        );
+
+        // EditingViewModelのメソッドを呼び出す
+        await this._editingViewModel.confirmAddFeature(domainProperty, layerId); // Propertyインスタンスを渡す
+
+        console.log('地物の追加が確定しました。');
+        // 成功した場合、ViewModelの変更通知によって自動的にUIが更新されるはず
+        // (追加中の線が消え、確定された地物が描画される)
+
+    } catch (error) {
+        console.error('地物の追加確定に失敗:', error);
+        alert(`エラー: ${error.message}`);
+        // 必要であれば、エラー発生時に追加中の点を保持するなどの処理を追加
+    }
+  }
+
+  /**
+   * （仮）カテゴリ取得関数
+   * @private
+   */
+  _getFeatureCategories() {
+      // 本来はConfigManagerやViewModelから取得すべき
+      return [
+          { id: 'default', name: 'デフォルト' },
+          { id: 'city', name: '都市' },
+          { id: 'road', name: '道路' },
+          { id: 'kingdom', name: '王国' },
+      ];
+  }
+
 }
