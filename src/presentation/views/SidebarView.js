@@ -1,4 +1,5 @@
 import { TimePoint } from '../../domain/value-objects/TimePoint.js';
+import { Property } from '../../domain/value-objects/Property.js';
 
 /**
  * サイドバー表示
