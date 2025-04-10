@@ -18,9 +18,7 @@ export class Feature {
     // vertexIdsとpropertiesは変更可能だが、内部要素は不変
     Object.freeze(this._vertexIds);
     Object.freeze(this._properties);
-    
-    // このオブジェクト自体は変更不可
-    Object.freeze(this);
+
   }
 
   /**

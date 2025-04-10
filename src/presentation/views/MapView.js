@@ -1359,7 +1359,7 @@ _onWheel(event) {
 
   /**
    * 入力されたプロパティで地物追加を確定
-   * @param {Object} properties - UIから入力されたプロパティ
+   * @param {Object} properties - UIから入力されたプロパティ { name, description, category }
    * @param {string} layerId - レイヤーID
    * @private
    */
@@ -1379,7 +1379,8 @@ _onWheel(event) {
         );
 
         // EditingViewModelのメソッドを呼び出す
-        await this._editingViewModel.confirmAddFeature(domainProperty, layerId); // Propertyインスタンスを渡す
+        // プロパティを配列で渡す
+        await this._editingViewModel.confirmAddFeature([domainProperty], layerId);
 
         console.log('地物の追加が確定しました。');
         // 成功した場合、ViewModelの変更通知によって自動的にUIが更新されるはず
