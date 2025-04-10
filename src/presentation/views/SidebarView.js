@@ -1,3 +1,5 @@
+import { TimePoint } from '../../domain/value-objects/TimePoint.js';
+
 /**
  * サイドバー表示
  */
@@ -883,52 +885,64 @@ export class SidebarView {
   async _saveFeatureProperties(featureId, form) {
     // フォームデータの収集
     const formData = new FormData(form);
-    
+
     // 基本プロパティの取得
     const name = formData.get('name');
     const description = formData.get('description');
     const category = formData.get('category');
-    
+
     // 時間範囲の取得
     const startYear = formData.get('startYear') ? Number(formData.get('startYear')) : null;
     const endYear = formData.get('endYear') ? Number(formData.get('endYear')) : null;
-    
-    // 現在の地物を取得
+
+    // 現在の地物と時間点を取得
     const selectedFeature = this._mapViewModel.getSelectedFeature();
+    if (!selectedFeature) {
+        console.error("プロパティ保存時に地物が選択されていません。");
+        return;
+    }
     const currentTime = this._mapViewModel.getCurrentTime();
-    const currentProperty = selectedFeature.getPropertyAt(currentTime);
-    
-    // 古いプロパティを保存（アンドゥ用）
+
+    // 古いプロパティ配列を保存（アンドゥ用）
     const oldProperties = [...selectedFeature.properties];
-    
-    // 新しいプロパティを作成
-    // （実際の実装では、TimePoint及びPropertyクラスのインスタンスを正しく作成する必要があります）
-    const newProperty = {
-      timePoint: { year: currentTime.year, month: currentTime.month, day: currentTime.day },
-      name,
-      description,
-      attributes: { category },
-      startTime: startYear ? { year: startYear } : null,
-      endTime: endYear ? { year: endYear } : null
-    };
-    
+
+    // TimePoint インスタンスを生成
+    const currentTp = new TimePoint(currentTime.year, currentTime.month, currentTime.day);
+    const startTp = startYear !== null ? new TimePoint(startYear) : null;
+    const endTp = endYear !== null ? new TimePoint(endYear) : null;
+
+    // 新しい Property インスタンスを作成
+    const newProperty = new Property(
+        currentTp,
+        name || '名称未設定', // 名前が空の場合のデフォルト値
+        description || '',   // 説明が空の場合のデフォルト値
+        { category: category || 'default' }, // カテゴリ属性、空の場合のデフォルト値
+        startTp,
+        endTp
+    );
+
     // 既存のプロパティを更新または新しいプロパティを追加
     let newProperties;
-    if (currentProperty) {
-      newProperties = selectedFeature.properties.map(prop => {
-        if (prop === currentProperty) {
-          return newProperty;
-        }
-        return prop;
-      });
+    const existingPropIndex = oldProperties.findIndex(prop => prop.timePoint.equals(currentTp));
+
+    if (existingPropIndex !== -1) {
+        // 現在の時点に既にプロパティが存在する場合は置き換え
+        newProperties = [...oldProperties];
+        newProperties[existingPropIndex] = newProperty;
     } else {
-      newProperties = [...selectedFeature.properties, newProperty];
+        // 新しい時点のプロパティとして追加し、時間でソート
+        newProperties = [...oldProperties, newProperty];
+        newProperties.sort((a, b) => {
+            if (a.timePoint.isBefore(b.timePoint)) return -1;
+            if (b.timePoint.isBefore(a.timePoint)) return 1;
+            return 0;
+        });
     }
-    
+
     try {
       // 地物を更新
       await this._mapViewModel.updateFeatureProperties(featureId, newProperties);
-      
+
       alert('プロパティを保存しました');
     } catch (error) {
       console.error('プロパティの保存に失敗しました', error);
