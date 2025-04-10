@@ -164,7 +164,7 @@ export class EditingViewModel {
           
           feature = await this._editFeatureUseCase.addFeature(
             'point',
-            [properties],
+            properties,
             { vertices: this._addingPoints },
             layerId
           );
@@ -177,7 +177,7 @@ export class EditingViewModel {
           
           feature = await this._editFeatureUseCase.addFeature(
             'line',
-            [properties],
+            properties,
             { vertices: this._addingPoints },
             layerId
           );
@@ -190,7 +190,7 @@ export class EditingViewModel {
           
           feature = await this._editFeatureUseCase.addFeature(
             'polygon',
-            [properties],
+            properties,
             { 
               vertices: this._addingPoints,
               holesVertexIds: [],
