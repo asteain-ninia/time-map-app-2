@@ -1,4 +1,5 @@
 import { Coordinate } from '../value-objects/Coordinate';
+import { Vertex } from '../entities/Vertex'; // Vertexも使う可能性があるのでインポートしておく
 
 /**
  * 幾何学計算を提供するドメインサービス
@@ -19,6 +20,20 @@ export class GeometryService {
   }
 
   /**
+   * 2点間の距離の二乗を計算 (平方根の計算を省略)
+   * @param {number} x1 - 点1のX座標
+   * @param {number} y1 - 点1のY座標
+   * @param {number} x2 - 点2のX座標
+   * @param {number} y2 - 点2のY座標
+   * @returns {number} 2点間の距離の二乗
+   */
+  calculateDistanceSq(x1, y1, x2, y2) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      return dx * dx + dy * dy;
+  }
+
+  /**
    * 2点間の直線距離を計算（キロメートル単位）
    * @param {number} x1 - 点1のX座標
    * @param {number} y1 - 点1のY座標
@@ -30,28 +45,28 @@ export class GeometryService {
   calculateLinearDistanceInKm(x1, y1, x2, y2, equatorLength) {
     // 正距円筒図法に基づく距離計算
     // X座標は経度、Y座標は緯度に対応
-    
+
     // 経度1度あたりの距離
     const degreeLengthAtEquator = equatorLength / 360;
-    
+
     // 緯度1度あたりの距離（一定）
     const latitudeDegreeLength = equatorLength / 360;
-    
+
     // 実際の経度の差（横方向）
     const dx = Math.abs(x2 - x1);
-    
+
     // 実際の緯度の差（縦方向）
     const dy = Math.abs(y2 - y1);
-    
+
     // 横方向の距離計算（緯度による経度距離の補正）
     // 緯度の平均値を使用して余弦補正を適用
     const avgLat = (y1 + y2) / 2;
     const cosLat = Math.cos(avgLat * Math.PI / 180);
     const xDistance = dx * degreeLengthAtEquator * cosLat;
-    
+
     // 縦方向の距離計算
     const yDistance = dy * latitudeDegreeLength;
-    
+
     // 直線距離の計算
     return Math.sqrt(xDistance * xDistance + yDistance * yDistance);
   }
@@ -69,12 +84,12 @@ export class GeometryService {
     // 緯度経度をラジアンに変換
     const dLat = this._toRadians(lat2 - lat1);
     const dLon = this._toRadians(lon2 - lon1);
-    
-    const a = 
+
+    const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this._toRadians(lat1)) * Math.cos(this._toRadians(lat2)) * 
+      Math.cos(this._toRadians(lat1)) * Math.cos(this._toRadians(lat2)) *
       Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    
+
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return earthRadius * c;
   }
@@ -91,17 +106,17 @@ export class GeometryService {
 
   /**
    * 多角形の面積を計算
-   * @param {Vertex[]} vertices - 頂点の配列
+   * @param {Vertex[] | Coordinate[]} vertices - 頂点の配列
    * @returns {number} 多角形の面積
    */
   calculatePolygonArea(vertices) {
     if (vertices.length < 3) return 0;
-    
+
     let area = 0;
     for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
       area += (vertices[j].x + vertices[i].x) * (vertices[j].y - vertices[i].y);
     }
-    
+
     return Math.abs(area / 2);
   }
 
@@ -113,13 +128,13 @@ export class GeometryService {
    */
   calculatePolygonAreaInKm2(vertices, equatorLength) {
     if (vertices.length < 3) return 0;
-    
+
     // 基本的な面積を計算
     const areaInPixels = this.calculatePolygonArea(vertices);
-    
+
     // 緯度1度あたりの距離（km）
     const latDegreeLength = equatorLength / 360;
-    
+
     // 面積の計算（緯度による経度の長さの変化を考慮）
     // 簡易計算として平均緯度を使用
     let avgLat = 0;
@@ -127,13 +142,13 @@ export class GeometryService {
       avgLat += vertex.y;
     }
     avgLat /= vertices.length;
-    
+
     // 緯度による距離の補正係数（余弦）
     const cosLat = Math.cos(avgLat * Math.PI / 180);
-    
+
     // 1平方ピクセルあたりの面積（km²）
     const pixelAreaInKm2 = (latDegreeLength * latDegreeLength) * cosLat;
-    
+
     return areaInPixels * pixelAreaInKm2;
   }
 
@@ -150,45 +165,45 @@ export class GeometryService {
     const dy1 = p2.y - p1.y;
     const dx2 = q2.x - q1.x;
     const dy2 = q2.y - q1.y;
-    
+
     const denominator = (dy2 * dx1 - dx2 * dy1);
     if (denominator === 0) return false; // 平行
-    
+
     const ua = ((dx2 * (p1.y - q1.y)) - (dy2 * (p1.x - q1.x))) / denominator;
     const ub = ((dx1 * (p1.y - q1.y)) - (dy1 * (p1.x - q1.x))) / denominator;
-    
+
     return (ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1);
   }
 
   /**
    * 点が多角形内部にあるかをチェック
    * @param {Coordinate} point - チェックする点
-   * @param {Coordinate[]} polygonVertices - 多角形の頂点配列
+   * @param {Coordinate[] | Vertex[]} polygonVertices - 多角形の頂点配列
    * @returns {boolean} 点が多角形内部にあればtrue
    */
   isPointInPolygon(point, polygonVertices) {
     if (polygonVertices.length < 3) return false;
-    
+
     let inside = false;
     for (let i = 0, j = polygonVertices.length - 1; i < polygonVertices.length; j = i++) {
       const xi = polygonVertices[i].x;
       const yi = polygonVertices[i].y;
       const xj = polygonVertices[j].x;
       const yj = polygonVertices[j].y;
-      
-      const intersect = ((yi > point.y) !== (yj > point.y)) && 
+
+      const intersect = ((yi > point.y) !== (yj > point.y)) &&
                         (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
-      
+
       if (intersect) inside = !inside;
     }
-    
+
     return inside;
   }
 
   /**
    * 多角形と多角形が重なるかどうかをチェック
-   * @param {Coordinate[]} polygon1Vertices - 多角形1の頂点配列
-   * @param {Coordinate[]} polygon2Vertices - 多角形2の頂点配列
+   * @param {Coordinate[] | Vertex[]} polygon1Vertices - 多角形1の頂点配列
+   * @param {Coordinate[] | Vertex[]} polygon2Vertices - 多角形2の頂点配列
    * @returns {boolean} 多角形が重なればtrue
    */
   doPolygonsOverlap(polygon1Vertices, polygon2Vertices) {
@@ -196,23 +211,23 @@ export class GeometryService {
     for (let i = 0, j = polygon1Vertices.length - 1; i < polygon1Vertices.length; j = i++) {
       const p1 = polygon1Vertices[j];
       const p2 = polygon1Vertices[i];
-      
+
       for (let k = 0, l = polygon2Vertices.length - 1; k < polygon2Vertices.length; l = k++) {
         const q1 = polygon2Vertices[l];
         const q2 = polygon2Vertices[k];
-        
+
         if (this.doLineSegmentsIntersect(p1, p2, q1, q2)) {
           return true;
         }
       }
     }
-    
+
     // 2. 一方が他方に完全に含まれているかチェック
     if (this.isPointInPolygon(polygon1Vertices[0], polygon2Vertices) ||
         this.isPointInPolygon(polygon2Vertices[0], polygon1Vertices)) {
       return true;
     }
-    
+
     return false;
   }
 
@@ -228,28 +243,50 @@ export class GeometryService {
       x: edgeEnd.x - edgeStart.x,
       y: edgeEnd.y - edgeStart.y
     };
-    
+
     const pointVector = {
       x: point.x - edgeStart.x,
       y: point.y - edgeStart.y
     };
-    
+
     // エッジベクトルへの射影
-    const edgeLength = Math.sqrt(
-      edgeVector.x * edgeVector.x + edgeVector.y * edgeVector.y
-    );
-    
-    if (edgeLength === 0) return new Coordinate(edgeStart.x, edgeStart.y);
-    
-    const dotProduct = 
+    const edgeLengthSq = edgeVector.x * edgeVector.x + edgeVector.y * edgeVector.y;
+
+    if (edgeLengthSq === 0) return new Coordinate(edgeStart.x, edgeStart.y);
+
+    const dotProduct =
       pointVector.x * edgeVector.x + pointVector.y * edgeVector.y;
-    
-    const projectionRatio = Math.max(0, Math.min(1, dotProduct / (edgeLength * edgeLength)));
-    
+
+    const projectionRatio = Math.max(0, Math.min(1, dotProduct / edgeLengthSq));
+
     // 投影点の座標を計算
     return new Coordinate(
       edgeStart.x + projectionRatio * edgeVector.x,
       edgeStart.y + projectionRatio * edgeVector.y
     );
+  }
+
+  /**
+   * 点と線分間の最短距離の二乗を計算
+   * @param {Coordinate} p - 点
+   * @param {Coordinate} a - 線分の始点
+   * @param {Coordinate} b - 線分の終点
+   * @returns {number} 最短距離の二乗
+   */
+  distancePointSegmentSq(p, a, b) {
+    const l2 = this.calculateDistanceSq(a.x, a.y, b.x, b.y);
+    if (l2 === 0.0) return this.calculateDistanceSq(p.x, p.y, a.x, a.y);
+
+    // 点pから線分abへの射影パラメータtを計算
+    let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+    // tを[0, 1]の範囲にクランプする
+    t = Math.max(0, Math.min(1, t));
+
+    // 線分上の最近接点 (projection) を計算
+    const projectionX = a.x + t * (b.x - a.x);
+    const projectionY = a.y + t * (b.y - a.y);
+
+    // 点pと最近接点との距離の二乗を返す
+    return this.calculateDistanceSq(p.x, p.y, projectionX, projectionY);
   }
 }
