@@ -279,9 +279,10 @@ _renderGrid(viewport) {
   // 線の太さ（ズームに応じて細くする）
   const strokeWidth = 1 / zoom;
 
-  // ラベルのフォントサイズ（ズームに応じて調整、ただし最小・最大値を設ける）
-  const baseFontSize = 10;
-  const fontSize = Math.max(5, Math.min(16, baseFontSize / Math.sqrt(zoom)));
+  // ラベルのフォントサイズ（画面上でのサイズが一定になるように）
+  const baseFontSize = 10; // 基準フォントサイズ
+  // fontSize を 1/zoom でスケールし、最小・最大値を設定
+  const fontSize = Math.max(5 / zoom, Math.min(16 / zoom, baseFontSize / zoom));
 
   // 緯線（横線）を描画
   for (let lat = latMin; lat <= latMax; lat += gridInterval) {
@@ -304,7 +305,7 @@ _renderGrid(viewport) {
     text.setAttribute("x", left + 2 * strokeWidth); // 左端からのオフセット
     // ラベルを線の少し「上」(SVG座標ではYが小さい方)に表示
     text.setAttribute("y", svgY - 2 * strokeWidth);
-    text.setAttribute("font-size", fontSize);
+    text.setAttribute("font-size", fontSize); // ズームに応じたフォントサイズ
     text.setAttribute("fill", this._options.gridColor);
     text.setAttribute("text-anchor", "start"); // 左揃え
     // ベースラインを文字の上に合わせる (hanging)
@@ -344,11 +345,12 @@ _renderGrid(viewport) {
 
       // 経度ラベル（画面上端に表示）
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      text.setAttribute("x", lng + 2 * strokeWidth); // 線からのオフセット
-      text.setAttribute("y", svgTopY + fontSize); // SVG座標の上端からのオフセット
-      text.setAttribute("font-size", fontSize);
+      text.setAttribute("x", lng); // オフセット削除、中央揃えのため
+      // Y座標を fontSize に応じて調整 (hanging baseline なので、y座標がテキストの上端)
+      text.setAttribute("y", svgTopY + 2 * strokeWidth);
+      text.setAttribute("font-size", fontSize); //  ズームに応じたフォントサイズ
       text.setAttribute("fill", this._options.gridColor);
-      text.setAttribute("text-anchor", "start");
+      text.setAttribute("text-anchor", "middle"); //  中央揃え
       text.setAttribute("dominant-baseline", "hanging"); // 上揃え
       text.setAttribute("pointer-events", "none");
 
@@ -391,7 +393,8 @@ _renderGrid(viewport) {
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     circle.setAttribute("cx", svgX);
     circle.setAttribute("cy", svgY);
-    circle.setAttribute("r", style.radius / Math.sqrt(viewport.zoom));// ズームに応じてサイズ調整
+    // 半径を 1/zoom でスケール
+    circle.setAttribute("r", style.radius / viewport.zoom);
     circle.setAttribute("fill", style.fill);
     circle.setAttribute("stroke", style.stroke);
     circle.setAttribute("stroke-width", style.strokeWidth / viewport.zoom); // ズームに応じて線幅調整
@@ -401,8 +404,10 @@ _renderGrid(viewport) {
     // ラベルを描画（オプション）
     if (property.name && style.showLabel) {
        const baseFontSize = style.fontSize || 10;
-       const fontSize = Math.max(5, Math.min(16, baseFontSize / Math.sqrt(viewport.zoom)));
-       const radius = style.radius / Math.sqrt(viewport.zoom);
+       // フォントサイズを 1/zoom でスケール
+       const fontSize = Math.max(5 / viewport.zoom, Math.min(16 / viewport.zoom, baseFontSize / viewport.zoom));
+       // 半径も 1/zoom でスケール
+       const radius = style.radius / viewport.zoom;
        // ラベルをポイントの「上」(SVG座標でYが小さい方)に表示
        const textOffsetY = radius + 2 / viewport.zoom;// ポイントからのオフセット
 
@@ -412,7 +417,7 @@ _renderGrid(viewport) {
       text.setAttribute("text-anchor", "middle");
       // ベースラインを下に(alphabetic) -> これで上に表示されるはず
       text.setAttribute("dominant-baseline", "alphabetic");
-      text.setAttribute("font-size", fontSize);
+      text.setAttribute("font-size", fontSize); // ズームに応じたフォントサイズ
       text.setAttribute("fill", style.textColor);
        text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
       text.textContent = property.name;
@@ -487,7 +492,8 @@ _renderGrid(viewport) {
        const svgY = -this._toScreenY(midY, viewport); // Y座標反転
 
        const baseFontSize = style.fontSize || 10;
-       const fontSize = Math.max(5, Math.min(16, baseFontSize / Math.sqrt(viewport.zoom)));
+       // フォントサイズを 1/zoom でスケール
+       const fontSize = Math.max(5 / viewport.zoom, Math.min(16 / viewport.zoom, baseFontSize / viewport.zoom));
        // 線の上に表示するためのオフセット(SVG座標ではYを減らす)
        const textOffsetY = 5 / viewport.zoom;
 
@@ -496,7 +502,7 @@ _renderGrid(viewport) {
       text.setAttribute("y", svgY - textOffsetY);
       text.setAttribute("text-anchor", "middle");
       text.setAttribute("dominant-baseline", "alphabetic");
-      text.setAttribute("font-size", fontSize);
+      text.setAttribute("font-size", fontSize); // ズームに応じたフォントサイズ
       text.setAttribute("fill", style.textColor);
        text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
       text.textContent = property.name;
@@ -602,14 +608,15 @@ _renderGrid(viewport) {
         const svgY = -this._toScreenY(centroidY, viewport); // Y座標反転
 
          const baseFontSize = style.fontSize || 12;
-         const fontSize = Math.max(6, Math.min(20, baseFontSize / Math.sqrt(viewport.zoom)));
+         // フォントサイズを 1/zoom でスケール
+         const fontSize = Math.max(6 / viewport.zoom, Math.min(20 / viewport.zoom, baseFontSize / viewport.zoom));
 
         const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
         text.setAttribute("x", svgX);
         text.setAttribute("y", svgY); // Y座標反転
         text.setAttribute("text-anchor", "middle");
         text.setAttribute("dominant-baseline", "middle");
-        text.setAttribute("font-size", fontSize);
+        text.setAttribute("font-size", fontSize); // ズームに応じたフォントサイズ
         text.setAttribute("fill", style.textColor);
          text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
         text.textContent = property.name;
@@ -784,7 +791,7 @@ toWorldY(svgY, viewport) {
     const categoryStyles = {
       road: {
         stroke: "#996633",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値 (必要なら調整)
         strokeDasharray: "",
         textColor: "#000000",
         fontSize: 10,
@@ -792,7 +799,7 @@ toWorldY(svgY, viewport) {
       },
       railway: {
         stroke: "#333333",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値
         strokeDasharray: "5,5",
         textColor: "#000000",
         fontSize: 10,
@@ -800,7 +807,7 @@ toWorldY(svgY, viewport) {
       },
       river: {
         stroke: "#3388ff",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値
         strokeDasharray: "",
         textColor: "#000000",
         fontSize: 10,
@@ -808,7 +815,7 @@ toWorldY(svgY, viewport) {
       },
       trade_route: {
         stroke: "#ff8800",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値
         strokeDasharray: "10,2",
         textColor: "#000000",
         fontSize: 10,
@@ -816,7 +823,7 @@ toWorldY(svgY, viewport) {
       },
       border: {
         stroke: "#ff0000",
-        strokeWidth: 3,
+        strokeWidth: 3, // 国境は少し太めに
         strokeDasharray: "",
         textColor: "#000000",
         fontSize: 10,
@@ -825,7 +832,7 @@ toWorldY(svgY, viewport) {
       // デフォルトスタイル
       default: {
         stroke: "#3388ff",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値
         strokeDasharray: "",
         textColor: "#000000",
         fontSize: 10,
@@ -849,7 +856,7 @@ toWorldY(svgY, viewport) {
       kingdom: {
         fill: "#ff8888",
         stroke: "#ff0000",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値
         fillOpacity: 0.6,
         textColor: "#000000",
         fontSize: 14,
@@ -858,7 +865,7 @@ toWorldY(svgY, viewport) {
       empire: {
         fill: "#8888ff",
         stroke: "#0000ff",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値
         fillOpacity: 0.6,
         textColor: "#000000",
         fontSize: 16,
@@ -867,7 +874,7 @@ toWorldY(svgY, viewport) {
       province: {
         fill: "#88ff88",
         stroke: "#008800",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値
         fillOpacity: 0.6,
         textColor: "#000000",
         fontSize: 12,
@@ -876,7 +883,7 @@ toWorldY(svgY, viewport) {
       ocean: {
         fill: "#3388ff",
         stroke: "#3388ff",
-        strokeWidth: 1,
+        strokeWidth: 1, // 海洋は細めに
         fillOpacity: 0.4,
         textColor: "#000000",
         fontSize: 14,
@@ -885,7 +892,7 @@ toWorldY(svgY, viewport) {
       lake: {
         fill: "#3388ff",
         stroke: "#3388ff",
-        strokeWidth: 1,
+        strokeWidth: 1, // 湖も細めに
         fillOpacity: 0.6,
         textColor: "#000000",
         fontSize: 12,
@@ -895,7 +902,7 @@ toWorldY(svgY, viewport) {
       default: {
         fill: "#ffcc88",
         stroke: "#ff8800",
-        strokeWidth: 2,
+        strokeWidth: 2, // 線幅の基準値
         fillOpacity: 0.6,
         textColor: "#000000",
         fontSize: 12,
@@ -922,7 +929,8 @@ toWorldY(svgY, viewport) {
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     circle.setAttribute("cx", svgX);
     circle.setAttribute("cy", svgY);
-    circle.setAttribute("r", (style.radius || 5) / Math.sqrt(viewport.zoom));
+    // 半径を 1/zoom でスケール
+    circle.setAttribute("r", (style.radius || 5) / viewport.zoom);
     circle.setAttribute("fill", style.fill || "#ff0000");
     circle.setAttribute("stroke", style.stroke || "#000000");
     circle.setAttribute("stroke-width", (style.strokeWidth || 1) / viewport.zoom);
@@ -982,14 +990,15 @@ toWorldY(svgY, viewport) {
     const svgY = -this._toScreenY(y, viewport); // Y座標反転
 
     const baseFontSize = style.fontSize || 12;
-    const fontSize = Math.max(6, Math.min(18, baseFontSize / Math.sqrt(viewport.zoom)));
+    // フォントサイズを 1/zoom でスケール
+    const fontSize = Math.max(6 / viewport.zoom, Math.min(18 / viewport.zoom, baseFontSize / viewport.zoom));
 
     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
     text.setAttribute("x", svgX);
     text.setAttribute("y", svgY); // Y座標は反転済み
     text.setAttribute("text-anchor", style.textAnchor || "middle");
     text.setAttribute("dominant-baseline", style.dominantBaseline || "middle"); // スタイルで指定可能に
-    text.setAttribute("font-size", fontSize);
+    text.setAttribute("font-size", fontSize); // ズームに応じたフォントサイズ
     text.setAttribute("fill", style.textColor || "#000000");
     text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
     text.textContent = content;
