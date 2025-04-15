@@ -496,7 +496,7 @@ _svgToWorld(svgPoint) {
     // _renderer を使って要素を描画し、'temp-drawing' クラスなどを付与する
   }
 
-  /**
+/**
  * 距離測定の描画
  * @private
  */
@@ -638,28 +638,53 @@ _onMouseDown(event) {
       break;
 
     case 'edit':
-      // console.log('編集モードでオブジェクト選択/ドラッグ開始');
-      // まず頂点選択を試みる
       const clickedVertex = this._findClosestVertex(worldPoint);
+      const addToSelection = event.shiftKey; // Shiftキーの状態
+
       if (clickedVertex) {
-           // console.log("Vertex clicked:", clickedVertex.id);
-           // Shiftキーでの複数選択に対応
-           const addToSelection = event.shiftKey;
-           this._viewModel.selectVertex(clickedVertex.id, addToSelection);
-           this._draggedVertexId = clickedVertex.id; // ドラッグ対象の頂点としてマーク
+        // ★ 頂点が見つかった場合 ★
+        // 1. 頂点を選択 (ViewModelのメソッドを呼ぶ)
+        this._viewModel.selectVertex(clickedVertex.id, addToSelection);
+        this._draggedVertexId = clickedVertex.id; // ドラッグ対象
+
+        // 2. 頂点が属する地物を特定
+        const features = this._viewModel.getFeatures(); // 現在表示中の地物から検索
+        const ownerFeature = features.find(f =>
+            (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
+            (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
+            (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id))) // MultiPolygon対応
+        );
+
+        // 3. 地物を直接ViewModelに設定 (selectFeatureを呼ばない)
+        if (ownerFeature) {
+            // Shiftキーが押されていない、または現在の選択地物と異なる場合は、新しい地物を選択
+            if (!addToSelection || this._viewModel.getSelectedFeature()?.id !== ownerFeature.id) {
+                this._viewModel._selectedFeature = ownerFeature; // 直接設定
+                this._viewModel._notifyObservers('selectedFeature'); // 通知
+            }
+            // Shiftキーが押されていて、かつ同じ地物が既に選択されている場合は何もしない（頂点選択のみ追加される）
+        } else {
+            // 頂点に対応する地物が見つからない場合
+             if (!addToSelection) { // Shift押下時以外は地物選択をクリア
+                 this._viewModel._selectedFeature = null; // 直接設定
+                 this._viewModel._notifyObservers('selectedFeature'); // 通知
+             }
+        }
+
       } else {
-           // 頂点が見つからなければ地物選択を試みる
-           const clickedFeature = this._findClosestFeature(worldPoint);
-           if (clickedFeature) {
-                // console.log("Feature clicked:", clickedFeature.id);
-                this._viewModel.selectFeature(clickedFeature.id);
-                // TODO: 地物全体のドラッグ開始処理 (必要であれば)
-           } else {
-                // console.log("Click missed, clearing selection.");
-                this._viewModel.clearSelection(); // 何もヒットしなかったら選択解除
-           }
+        // ★ 頂点が見つからなかった場合 ★
+        const clickedFeature = this._findClosestFeature(worldPoint);
+        if (clickedFeature) {
+            // 地物を選択 (ViewModelのメソッドを呼ぶ -> これで頂点選択はクリアされる)
+            this._viewModel.selectFeature(clickedFeature.id);
+        } else {
+          // 何もヒットしなかったら両方の選択を解除
+          if (!addToSelection) {
+              this._viewModel.clearSelection();
+          }
+        }
       }
-      break;
+      break; // case 'edit' の終了
 
     default:
       // console.log('不明なモード:', mode);
@@ -933,13 +958,35 @@ _onWheel(event) {
       } else if (mode === 'edit') {
            const clickedVertex = this._findClosestVertex(worldPoint);
            if (clickedVertex) {
-               this._viewModel.selectVertex(clickedVertex.id); // 単一選択
-               this._draggedVertexId = clickedVertex.id;
+                // ★ 頂点が見つかった場合 ★
+                // 1. 頂点を選択 (ViewModelのメソッドを呼ぶ)
+                this._viewModel.selectVertex(clickedVertex.id); // 単一選択
+                this._draggedVertexId = clickedVertex.id; // ドラッグ対象
+
+                // 2. 頂点が属する地物を特定
+                const features = this._viewModel.getFeatures();
+                const ownerFeature = features.find(f =>
+                    (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
+                    (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
+                    (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id)))
+                );
+
+                // 3. 地物を直接ViewModelに設定
+                if (ownerFeature) {
+                    this._viewModel._selectedFeature = ownerFeature;
+                    this._viewModel._notifyObservers('selectedFeature');
+                } else {
+                    this._viewModel._selectedFeature = null;
+                    this._viewModel._notifyObservers('selectedFeature');
+                }
            } else {
+               // ★ 頂点が見つからなかった場合 ★
                const clickedFeature = this._findClosestFeature(worldPoint);
                if (clickedFeature) {
+                   // 地物を選択 (ViewModelのメソッドを呼ぶ -> これで頂点選択はクリアされる)
                    this._viewModel.selectFeature(clickedFeature.id);
                } else {
+                   // 何もヒットしなかったら両方の選択を解除
                    this._viewModel.clearSelection();
                }
            }
@@ -1218,7 +1265,32 @@ _onWheel(event) {
               ?.map(id => world.vertices.find(v => v.id === id))
               .filter(Boolean);
 
-          if (!featureVertices || featureVertices.length === 0) continue;
+          if (!featureVertices || featureVertices.length === 0) {
+              // MultiPolygon の場合、subPolygons から頂点を取得する
+              if (feature instanceof DomainPolygon && feature.isMultiPolygon && feature.subPolygons) {
+                  // 最初のサブポリゴンを代表として使う（簡易的な処理）
+                  const firstSubVertices = feature.subPolygons[0]?.vertexIds
+                      ?.map(id => world.vertices.find(v => v.id === id))
+                      .filter(Boolean);
+                  if (!firstSubVertices || firstSubVertices.length === 0) continue;
+                  // MultiPolygon の距離判定は複雑なので、ここでは最初のサブポリゴンで代用
+                   // ポリゴン内部にあれば距離0とする
+                   if (this._viewModel._geometryService.isPointInPolygon(worldPoint, firstSubVertices)) {
+                       distanceSq = 0; // 内部なら最優先
+                   } else {
+                       // 外部の場合、境界線との最短距離を計算
+                       const polygonVertices = [...firstSubVertices, firstSubVertices[0]]; // 閉じたパス
+                       for (let i = 0; i < polygonVertices.length - 1; i++) {
+                           const segmentDistSq = this._viewModel._geometryService.distancePointSegmentSq(
+                               worldPoint, polygonVertices[i], polygonVertices[i + 1]
+                           );
+                           distanceSq = Math.min(distanceSq, segmentDistSq);
+                       }
+                   }
+              } else {
+                continue; // 通常の地物で頂点がない場合はスキップ
+              }
+          }
 
 
           if (feature instanceof DomainPoint) {
@@ -1238,8 +1310,8 @@ _onWheel(event) {
                    }
                }
           } else if (feature instanceof DomainPolygon) {
-                // TODO: MultiPolygon対応
-                if (featureVertices.length >= 3) {
+                // isMultiPolygon は上で処理済み、そうでなければ通常のポリゴン
+                if (!feature.isMultiPolygon && featureVertices.length >= 3) {
                      // ポリゴン内部にあれば距離0とする
                      if (this._viewModel._geometryService.isPointInPolygon(worldPoint, featureVertices)) {
                          distanceSq = 0; // 内部なら最優先
@@ -1276,13 +1348,36 @@ _onWheel(event) {
       // まず頂点選択を試みる
       const clickedVertex = this._findClosestVertex(worldPoint);
       if (clickedVertex) {
-           this._viewModel.selectVertex(clickedVertex.id, addToSelection);
-           this._draggedVertexId = clickedVertex.id; // ドラッグ対象の頂点としてマーク
+           // ★ 頂点が見つかった場合 ★
+            // 1. 頂点を選択 (ViewModelのメソッドを呼ぶ)
+            this._viewModel.selectVertex(clickedVertex.id, addToSelection);
+            this._draggedVertexId = clickedVertex.id; // ドラッグ対象
+
+            // 2. 頂点が属する地物を特定
+            const features = this._viewModel.getFeatures();
+            const ownerFeature = features.find(f =>
+                (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
+                (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
+                (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id)))
+            );
+
+            // 3. 地物を直接ViewModelに設定
+            if (ownerFeature) {
+                if (!addToSelection || this._viewModel.getSelectedFeature()?.id !== ownerFeature.id) {
+                    this._viewModel._selectedFeature = ownerFeature;
+                    this._viewModel._notifyObservers('selectedFeature');
+                }
+            } else {
+                 if (!addToSelection) {
+                     this._viewModel._selectedFeature = null;
+                     this._viewModel._notifyObservers('selectedFeature');
+                 }
+            }
       } else {
-           // 頂点が見つからなければ地物選択を試みる
+           // ★ 頂点が見つからなかった場合 ★
            const clickedFeature = this._findClosestFeature(worldPoint);
            if (clickedFeature) {
-                // 地物選択時は常に単一選択とする（複数選択は未対応）
+                // 地物を選択 (ViewModelのメソッドを呼ぶ -> これで頂点選択はクリアされる)
                 this._viewModel.selectFeature(clickedFeature.id);
            } else if (!addToSelection) { // 追加選択でない場合のみクリア
                 this._viewModel.clearSelection(); // 何もヒットしなかったら選択解除
