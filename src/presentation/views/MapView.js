@@ -307,7 +307,7 @@ _svgToWorld(svgPoint) {
     }
 
     const viewport = this._viewportManager.getViewport();
-    const currentTime = this._viewModel._navigateTimeUseCase.getCurrentTime();
+    const currentTime = this._viewModel.getCurrentTime(); // 描画時点の現在時間を取得
 
     // レンダラーでマップを描画
     this._renderer.render(world, viewport, currentTime);
@@ -316,7 +316,7 @@ _svgToWorld(svgPoint) {
     this._clearSelectionHighlights();
 
     // 選択要素のハイライト
-    this._renderSelection();
+    this._renderSelection(); // currentTime を引数に追加
 
     // 追加中の地物の描画
     this._renderAddingFeature();
@@ -349,10 +349,12 @@ _svgToWorld(svgPoint) {
     const selectedVertices = this._viewModel.getSelectedVertices();
     const viewport = this._viewportManager.getViewport();
     const world = this._viewModel.getWorld();
+    const currentTime = this._viewModel.getCurrentTime(); // 現在時間を取得
     if (!world) return;
 
     // 選択された地物のハイライト
-    if (selectedFeature) {
+    // 地物が現在の時間で存在する場合のみ描画
+    if (selectedFeature && selectedFeature.existsAt(currentTime)) {
         let featureVertices = [];
         if (selectedFeature.vertexIds && selectedFeature.vertexIds.length > 0) {
             featureVertices = selectedFeature.vertexIds
@@ -388,14 +390,19 @@ _svgToWorld(svgPoint) {
     }
 
     // 選択された頂点のハイライト
+    // 頂点自体は常に存在する前提だが、念のため
     selectedVertices.forEach(vertex => {
-      const elem = this._renderer.drawPoint(vertex.x, vertex.y, {
-        radius: 6,
-        fill: '#00ffff', // Cyan fill
-        stroke: '#0000ff', // Blue stroke
-        strokeWidth: 1,
-      }, viewport);
-       if (elem) this._selectionElements.push(elem);
+        // 頂点が属する（可能性のある）地物が存在するかを簡易的にチェックする
+        // （より厳密には、この頂点が選択地物の一部であるかを MapViewModel 側で保証すべき）
+        // if (!selectedFeature || selectedFeature.existsAt(currentTime)) { // 地物が選択されていないか、存在する場合
+            const elem = this._renderer.drawPoint(vertex.x, vertex.y, {
+                radius: 6,
+                fill: '#00ffff', // Cyan fill
+                stroke: '#0000ff', // Blue stroke
+                strokeWidth: 1,
+            }, viewport);
+            if (elem) this._selectionElements.push(elem);
+        // }
     });
 
      // 作成した要素にクラス付与

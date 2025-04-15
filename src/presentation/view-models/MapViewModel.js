@@ -22,7 +22,7 @@ export class MapViewModel {
     this._manageLayersUseCase = manageLayersUseCase;
     this._geometryService = geometryService;
     this._eventBus = eventBus;
-    
+
     // マップの状態
     this._world = null;
     this._features = [];
@@ -30,10 +30,10 @@ export class MapViewModel {
     this._selectedVertices = [];
     this._hoveredFeature = null;
     this._hoveredVertex = null;
-    
+
     // 観測者の登録
     this._observers = [];
-    
+
     // イベントリスナーの設定
     this._setupEventListeners();
   }
@@ -47,10 +47,10 @@ export class MapViewModel {
       // 世界データを取得（リポジトリは外部から注入される）
       const worldRepository = this._editFeatureUseCase._worldRepository;
       this._world = await worldRepository.getWorld();
-      
+
       // 現在の時間点に対応する地物をフィルタリング
       await this._loadFeaturesForCurrentTime();
-      
+
       this._notifyObservers('world');
     } catch (error) {
       console.error('世界データのロードに失敗しました', error);
@@ -65,14 +65,21 @@ export class MapViewModel {
    */
   async _loadFeaturesForCurrentTime() {
     if (!this._world) return;
-    
+
     const currentTime = this._navigateTimeUseCase.getCurrentTime();
-    
+
     // 現在の時間点で存在する地物をフィルタリング
-    this._features = this._world.features.filter(feature => 
+    this._features = this._world.features.filter(feature =>
       feature.existsAt(currentTime)
     );
-    
+
+    // 選択中の地物が現在の時間で存在しない場合は選択を解除
+    if (this._selectedFeature && !this._selectedFeature.existsAt(currentTime)) {
+      this.clearSelection();
+    }
+    // 選択中の頂点が現在の時間で存在しない地物に属する場合も解除すべきだが、
+    // 地物選択解除で頂点選択もクリアされるため、これでカバーされる
+
     this._notifyObservers('features');
   }
 
@@ -83,16 +90,16 @@ export class MapViewModel {
   _setupEventListeners() {
     // 時間変更イベントの購読
     this._eventBus.subscribe('TimeChanged', this._onTimeChanged.bind(this));
-    
+
     // 地物追加イベントの購読
     this._eventBus.subscribe('FeatureAdded', this._onFeatureAdded.bind(this));
-    
+
     // 地物更新イベントの購読
     this._eventBus.subscribe('FeatureUpdated', this._onFeatureUpdated.bind(this));
-    
+
     // 地物削除イベントの購読
     this._eventBus.subscribe('FeatureDeleted', this._onFeatureDeleted.bind(this));
-    
+
     // レイヤー表示変更イベントの購読
     this._eventBus.subscribe('LayerVisibilityChanged', this._onLayerVisibilityChanged.bind(this));
   }
@@ -103,6 +110,7 @@ export class MapViewModel {
    * @private
    */
   _onTimeChanged(event) {
+    // _loadFeaturesForCurrentTime内で選択解除処理を行うため、ここでの追加処理は不要
     this._loadFeaturesForCurrentTime();
   }
 
@@ -113,12 +121,12 @@ export class MapViewModel {
    */
   _onFeatureAdded(event) {
     if (!this._world) return;
-    
+
     // 世界データを更新
     if (!this._world.features.some(f => f.id === event.feature.id)) {
       this._world.features.push(event.feature);
     }
-    
+
     // 現在の時間点に対応する地物をリロード
     this._loadFeaturesForCurrentTime();
   }
@@ -130,13 +138,13 @@ export class MapViewModel {
    */
   _onFeatureUpdated(event) {
     if (!this._world) return;
-    
+
     // 世界データを更新
     const index = this._world.features.findIndex(f => f.id === event.feature.id);
     if (index !== -1) {
       this._world.features[index] = event.feature;
     }
-    
+
     // 現在の時間点に対応する地物をリロード
     this._loadFeaturesForCurrentTime();
   }
@@ -148,20 +156,18 @@ export class MapViewModel {
    */
   _onFeatureDeleted(event) {
     if (!this._world) return;
-    
+
     // 世界データを更新
     const index = this._world.features.findIndex(f => f.id === event.featureId);
     if (index !== -1) {
       this._world.features.splice(index, 1);
     }
-    
+
     // 選択中の地物が削除された場合、選択を解除
     if (this._selectedFeature && this._selectedFeature.id === event.featureId) {
-      this._selectedFeature = null;
-      this._selectedVertices = [];
-      this._notifyObservers('selectedFeature');
+      this.clearSelection(); // clearSelection を呼ぶことで、両方の選択解除と通知が行われる
     }
-    
+
     // 現在の時間点に対応する地物をリロード
     this._loadFeaturesForCurrentTime();
   }
@@ -173,13 +179,13 @@ export class MapViewModel {
    */
   _onLayerVisibilityChanged(event) {
     if (!this._world) return;
-    
+
     // レイヤーデータを更新
     const index = this._world.layers.findIndex(l => l.id === event.layerId);
     if (index !== -1) {
       this._world.layers[index] = event.layer;
     }
-    
+
     this._notifyObservers('layers');
   }
 
@@ -189,12 +195,13 @@ export class MapViewModel {
    */
   selectFeature(featureId) {
     if (!this._world) return;
-    
+
     const feature = this._features.find(f => f.id === featureId);
     this._selectedFeature = feature || null;
-    this._selectedVertices = [];
-    
+    this._selectedVertices = []; // 地物選択時は頂点選択をクリア
+
     this._notifyObservers('selectedFeature');
+    this._notifyObservers('selectedVertices'); // 頂点選択のクリアも通知
   }
 
   /**
@@ -204,12 +211,12 @@ export class MapViewModel {
    */
   selectVertex(vertexId, addToSelection = false) {
     if (!this._world) return;
-    
+
     const vertex = this._world.vertices.find(v => v.id === vertexId);
-    
+
     if (vertex) {
       // 選択済みの地物があり、その地物が選択しようとする頂点を使用していない場合、地物の選択を解除
-      if (this._selectedFeature && 
+      if (this._selectedFeature &&
           !this._selectedFeature.vertexIds.includes(vertexId) &&
           !(this._selectedFeature.holesVertexIds?.some(hole => hole.includes(vertexId)))) {
         this._selectedFeature = null;
@@ -232,7 +239,7 @@ export class MapViewModel {
       // 選択解除
       this._selectedVertices = [];
     }
-    
+
     this._notifyObservers('selectedVertices');
   }
 
@@ -240,11 +247,18 @@ export class MapViewModel {
    * 選択を解除
    */
   clearSelection() {
+    const changedFeature = this._selectedFeature !== null;
+    const changedVertices = this._selectedVertices.length > 0;
+
     this._selectedFeature = null;
     this._selectedVertices = [];
-    
-    this._notifyObservers('selectedFeature');
-    this._notifyObservers('selectedVertices');
+
+    if (changedFeature) {
+        this._notifyObservers('selectedFeature');
+    }
+    if (changedVertices) {
+        this._notifyObservers('selectedVertices');
+    }
   }
 
   /**
@@ -253,7 +267,7 @@ export class MapViewModel {
    */
   hoverFeature(featureId) {
     if (!this._world) return;
-    
+
     const feature = this._features.find(f => f.id === featureId);
     if (this._hoveredFeature !== feature) {
       this._hoveredFeature = feature || null;
@@ -267,7 +281,7 @@ export class MapViewModel {
    */
   hoverVertex(vertexId) {
     if (!this._world) return;
-    
+
     const vertex = this._world.vertices.find(v => v.id === vertexId);
     if (this._hoveredVertex !== vertex) {
       this._hoveredVertex = vertex || null;
@@ -284,40 +298,40 @@ export class MapViewModel {
   async moveVertex(vertexId, newPosition) {
     try {
       const result = await this._editFeatureUseCase.moveVertex(vertexId, newPosition);
-      
+
       // 世界データを更新
       if (this._world) {
         const vertexIndex = this._world.vertices.findIndex(v => v.id === vertexId);
         if (vertexIndex !== -1) {
           this._world.vertices[vertexIndex] = result.vertex;
         }
-        
-        // 影響を受けた地物を更新
-        for (const feature of result.affectedFeatures) {
-          const featureIndex = this._world.features.findIndex(f => f.id === feature.id);
-          if (featureIndex !== -1) {
-            this._world.features[featureIndex] = feature;
-          }
+
+        // 影響を受けた地物を更新 (ここで更新しないと、Undo時に古い Feature データが残る)
+        // EditFeatureUseCase.moveVertex が返す affectedFeatures は古い参照の可能性があるため、
+        // WorldRepository から最新の状態を取得し直すのがより安全
+        const updatedWorld = await this._editFeatureUseCase._worldRepository.getWorld();
+        this._world = updatedWorld;
+
+        // 選択された頂点も更新 (新しい参照で)
+        const updatedSelectedVertices = this._selectedVertices.map(v =>
+          v.id === vertexId ? updatedWorld.vertices.find(uv => uv.id === vertexId) : v
+        ).filter(Boolean); // 見つからなかった場合は除外
+        if (JSON.stringify(this._selectedVertices) !== JSON.stringify(updatedSelectedVertices)) {
+            this._selectedVertices = updatedSelectedVertices;
+            this._notifyObservers('selectedVertices');
+        }
+
+        // ホバー中の頂点も更新
+        if (this._hoveredVertex && this._hoveredVertex.id === vertexId) {
+            this._hoveredVertex = updatedWorld.vertices.find(uv => uv.id === vertexId) || null;
+            this._notifyObservers('hoveredVertex');
         }
       }
-      
-      // 選択された頂点も更新
-      if (this._selectedVertices.some(v => v.id === vertexId)) {
-        this._selectedVertices = this._selectedVertices.map(v => 
-          v.id === vertexId ? result.vertex : v
-        );
-        this._notifyObservers('selectedVertices');
-      }
-      
-      // ホバー中の頂点も更新
-      if (this._hoveredVertex && this._hoveredVertex.id === vertexId) {
-        this._hoveredVertex = result.vertex;
-        this._notifyObservers('hoveredVertex');
-      }
-      
-      // 地物をリロード
+
+
+      // 地物をリロード (移動によって existAt の結果が変わる可能性は低いが念のため)
       await this._loadFeaturesForCurrentTime();
-      
+
       return result;
     } catch (error) {
       console.error('頂点の移動に失敗しました', error);
@@ -334,7 +348,7 @@ export class MapViewModel {
   async updateFeatureProperties(featureId, properties) {
     try {
       const feature = await this._editFeatureUseCase.updateFeature(featureId, { properties });
-      
+
       // 世界データを更新
       if (this._world) {
         const index = this._world.features.findIndex(f => f.id === featureId);
@@ -342,16 +356,16 @@ export class MapViewModel {
           this._world.features[index] = feature;
         }
       }
-      
+
       // 選択中の地物が更新された場合、選択も更新
       if (this._selectedFeature && this._selectedFeature.id === featureId) {
         this._selectedFeature = feature;
         this._notifyObservers('selectedFeature');
       }
-      
-      // 地物をリロード
+
+      // 地物をリロード (プロパティ更新で存在期間が変わる可能性があるため)
       await this._loadFeaturesForCurrentTime();
-      
+
       return feature;
     } catch (error) {
       console.error('地物プロパティの更新に失敗しました', error);
@@ -372,10 +386,10 @@ export class MapViewModel {
       const feature = await this._editFeatureUseCase.addFeature(
         featureType, properties, geometry, layerId
       );
-      
+
       // イベントを発行
       this._eventBus.publish('FeatureAdded', { feature });
-      
+
       return feature;
     } catch (error) {
       console.error('地物の追加に失敗しました', error);
@@ -391,7 +405,7 @@ export class MapViewModel {
   async deleteFeature(featureId) {
     try {
       await this._editFeatureUseCase.deleteFeature(featureId);
-      
+
       // イベントを発行
       this._eventBus.publish('FeatureDeleted', { featureId });
     } catch (error) {
@@ -411,11 +425,11 @@ export class MapViewModel {
     const linearDistance = this._geometryService.calculateLinearDistanceInKm(
       point1.x, point1.y, point2.x, point2.y, equatorLength
     );
-    
+
     const greatCircleDistance = this._geometryService.calculateGreatCircleDistance(
       point1.x, point1.y, point2.x, point2.y
     );
-    
+
     return {
       linear: linearDistance,
       greatCircle: greatCircleDistance
@@ -430,11 +444,11 @@ export class MapViewModel {
    */
   calculatePolygonArea(vertexIds, equatorLength) {
     if (!this._world || !vertexIds || vertexIds.length < 3) return 0;
-    
+
     const vertices = vertexIds
       .map(id => this._world.vertices.find(v => v.id === id))
       .filter(v => v);
-    
+
     return this._geometryService.calculatePolygonAreaInKm2(vertices, equatorLength);
   }
 
