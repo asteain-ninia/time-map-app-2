@@ -208,6 +208,14 @@ export class MapViewModel {
     const vertex = this._world.vertices.find(v => v.id === vertexId);
     
     if (vertex) {
+      // 選択済みの地物があり、その地物が選択しようとする頂点を使用していない場合、地物の選択を解除
+      if (this._selectedFeature && 
+          !this._selectedFeature.vertexIds.includes(vertexId) &&
+          !(this._selectedFeature.holesVertexIds?.some(hole => hole.includes(vertexId)))) {
+        this._selectedFeature = null;
+        this._notifyObservers('selectedFeature');
+      }
+
       if (addToSelection) {
         // 既に選択されている場合は選択解除、そうでなければ追加
         const index = this._selectedVertices.findIndex(v => v.id === vertexId);
