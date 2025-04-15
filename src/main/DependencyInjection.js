@@ -87,8 +87,8 @@ export class DependencyInjection {
       minZoom: 0.1,
       maxZoom: 10,
       zoom: 0.5, // 初期ズームを小さめに設定
-      x: 180, // 初期中心位置を調整
-      y: 90 // 初期中心位置を調整
+      x: 0, // 初期中心位置を調整
+      y: 0 // 初期中心位置を調整
     });
   }
 
