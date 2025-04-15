@@ -608,6 +608,13 @@ _renderDistanceMeasurement() {
    * @private
    */
 _onMouseDown(event) {
+  // イベント発生源がダイアログ/フォーム上なら処理中断
+  const targetElement = event.target;
+  if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+    // ダイアログやフォーム内のクリックは、MapView側の操作としない
+    return;
+  }
+
   // 右クリックは無視（コンテキストメニュー用）
     if (event.button === 2) return; // 右クリックは無視
 
@@ -711,6 +718,13 @@ _onMouseDown(event) {
    * @private
    */
 _onMouseMove(event) {
+  // イベント発生源がダイアログ/フォーム上なら処理中断
+  const targetElement = event.target;
+  if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+    // ダイアログやフォーム内のマウス移動は無視
+    return;
+  }
+
   // ページ全体の座標を取得
   const pageX = event.clientX;
   const pageY = event.clientY;
@@ -759,6 +773,13 @@ _onMouseMove(event) {
    * @private
    */
 _onMouseUp(event) {
+  // イベント発生源がダイアログ/フォーム上なら処理中断
+  const targetElement = event.target;
+  if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+    // ダイアログやフォーム内のマウスアップは無視
+    return;
+  }
+
   const mode = this._editingViewModel.getMode();
   // console.log('マウスアップ - モード:', mode);
 
@@ -816,6 +837,7 @@ _onMouseUp(event) {
    * @private
    */
   _onMouseLeave(event) {
+    // イベント発生源がダイアログ内なら無視するなどの処理は不要（オーバーレイから離れた時点で発生するため）
     if (this._isMouseDown) {
       const mode = this._editingViewModel.getMode();
 
@@ -849,6 +871,14 @@ _onMouseUp(event) {
    * @private
    */
 _onWheel(event) {
+  // イベント発生源がダイアログ/フォーム上なら処理中断
+  const targetElement = event.target;
+  if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+    // ダイアログやフォーム上のホイール操作は無視（ただし、スクロールが必要な場合は別途考慮）
+    // ここでは地図のズームをさせない
+    return;
+  }
+
   event.preventDefault();
 
   const delta = -event.deltaY;
@@ -872,6 +902,13 @@ _onWheel(event) {
    * @private
    */
   _onDoubleClick(event) {
+    // イベント発生源がダイアログ/フォーム上なら処理中断
+    const targetElement = event.target;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+      // ダイアログやフォーム上のダブルクリックは無視
+      return;
+    }
+  
     // ページ全体の座標を取得
     const pageX = event.clientX;
     const pageY = event.clientY;
@@ -903,6 +940,13 @@ _onWheel(event) {
    * @private
    */
   _onContextMenu(event) {
+    // イベント発生源がダイアログ/フォーム上なら処理中断
+    const targetElement = event.target;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+      // ダイアログやフォーム上ではデフォルトのコンテキストメニューを許可
+      return;
+    }
+  
     event.preventDefault();
 
     // ページ全体の座標を取得
@@ -939,6 +983,12 @@ _onWheel(event) {
    * @private
    */
   _onTouchStart(event) {
+    // イベント発生源がダイアログ/フォーム上なら処理中断
+    const targetElement = event.target;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+      return;
+    }
+
     event.preventDefault();
 
     if (event.touches.length === 1) {
@@ -1014,6 +1064,12 @@ _onWheel(event) {
    * @private
    */
   _onTouchMove(event) {
+    // イベント発生源がダイアログ/フォーム上なら処理中断
+    const targetElement = event.target;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+      return;
+    }
+  
     event.preventDefault();
 
     if (event.touches.length === 1) {
@@ -1060,6 +1116,12 @@ _onWheel(event) {
    * @private
    */
   _onTouchEnd(event) {
+    // イベント発生源がダイアログ/フォーム上なら処理中断
+    const targetElement = event.target;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
+      return;
+    }
+  
     if (this._isMouseDown) {
         const mode = this._editingViewModel.getMode();
         // 最後のタッチ座標を取得
@@ -1100,34 +1162,40 @@ _onWheel(event) {
    * @private
    */
   _onKeyDown(event) {
-    // 対象が入力要素の場合は無視
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) {
-      // ただし、プロパティ入力ダイアログ表示中のEnterは確定として扱いたい
-       const propertyDialog = this._mapElement.querySelector('.property-input-dialog');
-       if (propertyDialog && event.key === 'Enter') {
-           // プロパティ入力ダイアログ内のEnterキーはフォーム送信に任せる（または特定のボタンをクリック）
-           event.stopPropagation(); // MapView全体でのEnter処理を抑制
-           const confirmButton = propertyDialog.querySelector('button:not([data-action="cancel"])');
+    // 対象が入力要素の場合は無視 (ただし、プロパティダイアログは特別扱い)
+    const targetElement = event.target;
+    const isInInputDialog = targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form');
+
+    if (isInInputDialog) {
+        if (event.key === 'Enter') {
+            // プロパティ入力ダイアログ内のEnterキーはフォーム送信に任せる
+            event.stopPropagation(); // MapView全体でのEnter処理を抑制
+            const dialog = targetElement.closest('.property-input-dialog, .layer-input-form');
+            const confirmButton = dialog?.querySelector('button:not([data-action="cancel"])');
             if (confirmButton) confirmButton.click();
-           return;
-       } else if (propertyDialog && event.key === 'Escape') {
+            return;
+        } else if (event.key === 'Escape') {
             event.preventDefault();
             event.stopPropagation();
-            const cancelButton = propertyDialog.querySelector('button[data-action="cancel"]');
-            if (cancelButton) cancelButton.click();
-            else propertyDialog.remove(); // キャンセルボタンがなければダイアログを閉じる
-           return;
-       } else if(propertyDialog) {
-           // プロパティダイアログ表示中は他のキー操作を無効化
-           event.stopPropagation();
-           return;
-       }
-       else if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement){
-            // それ以外の入力要素の場合
+            const dialog = targetElement.closest('.property-input-dialog, .layer-input-form');
+            const cancelButton = dialog?.querySelector('button[data-action="cancel"]');
+            if (cancelButton) {
+              cancelButton.click();
+            } else if (dialog) {
+              dialog.remove(); // キャンセルボタンがなければダイアログを閉じる
+              this._handleCancelClick(); // 追加モードならキャンセル処理
+            }
             return;
-       }
+        } else {
+            // ダイアログ内の他のキー入力はそのまま許可
+            return;
+        }
+    } else if (targetElement instanceof HTMLInputElement || targetElement instanceof HTMLTextAreaElement || targetElement instanceof HTMLSelectElement) {
+        // 地図外の他の入力要素の場合も無視
+        return;
     }
 
+    // --- 地図操作に関するキーボードショートカット ---
     const mode = this._editingViewModel.getMode();
 
     // ESCキーで選択解除または編集キャンセル
