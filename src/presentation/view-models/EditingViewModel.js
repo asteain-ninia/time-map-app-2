@@ -13,9 +13,10 @@ export class EditingViewModel {
 
     // 編集の状態
     this._mode = 'view'; // 'view', 'add', 'edit'
-    this._tool = null; // 'point', 'line', 'polygon'
-    this._addingPoints = []; // 追加中の点の配列
-    this._isAddingHole = false;
+    this._tool = null; // 'point', 'line', 'polygon', 'select', 'add-hole', ...
+    this._addingPoints = []; // 追加中の点の配列 (地物追加または穴追加用)
+    // this._isAddingHole = false; // _tool === 'add-hole' で代替
+    this._targetPolygonIdForHole = null; // 穴追加対象のポリゴンID
     this._temporaryElements = []; // 一時的な表示要素 (MapViewで描画)
 
     // アンドゥ・リドゥの状態
@@ -33,9 +34,9 @@ export class EditingViewModel {
    */
   setMode(mode) {
     if (this._mode !== mode) {
-      // 追加作業中のデータをクリア
-      if (this._mode === 'add' && this._addingPoints.length > 0) {
-        this._clearAddingPoints();
+      // 追加/穴追加作業中のデータをクリア
+      if ((this._mode === 'add' || this._tool === 'add-hole') && this._addingPoints.length > 0) {
+        this._clearAddingState();
       }
       // 編集モード終了時に一時要素クリア
       if (mode !== 'edit') {
@@ -43,7 +44,7 @@ export class EditingViewModel {
       }
 
       this._mode = mode;
-      this._tool = null;
+      this._tool = null; // モード変更時はツールもリセット
 
       this._notifyObservers('mode');
     }
@@ -51,13 +52,13 @@ export class EditingViewModel {
 
   /**
    * 編集ツールを設定
-   * @param {string} tool - ツール ('point', 'line', 'polygon', 'select', ...)
+   * @param {string} tool - ツール ('point', 'line', 'polygon', 'select', 'add-hole', ...)
    */
   setTool(tool) {
     if (this._tool !== tool) {
-      // 追加作業中のデータをクリア
-      if (this._mode === 'add' && this._addingPoints.length > 0) {
-        this._clearAddingPoints();
+      // 追加/穴追加作業中のデータをクリア
+       if ((this._mode === 'add' || this._tool === 'add-hole') && this._addingPoints.length > 0) {
+        this._clearAddingState();
       }
        // ツール変更時に一時要素クリア
        this.clearTemporaryElements();
@@ -85,53 +86,76 @@ export class EditingViewModel {
   }
 
   /**
-   * 穴追加モードを設定
-   * @param {boolean} isAddingHole - 穴追加モードかどうか
+   * 穴追加モードを開始 (ツール設定時に内部的に行う)
+   * @param {string} polygonId - 穴を追加するポリゴンのID
+   * @private internal use by MapView or controller
    */
-  setAddingHole(isAddingHole) {
-    if (this._isAddingHole !== isAddingHole) {
-      this._isAddingHole = isAddingHole;
-
-      if (!isAddingHole) {
-        this._clearAddingPoints();
+  startAddingHole(polygonId) {
+      if (this._tool === 'add-hole') {
+          this._targetPolygonIdForHole = polygonId;
+          this._clearAddingPoints(); // 既存の点をクリア
+          this._notifyObservers('addingHoleTarget');
+      } else {
+          console.warn("startAddingHole called when tool is not 'add-hole'.");
       }
+  }
 
-      this._notifyObservers('addingHole');
+  /**
+   * 穴追加対象のポリゴンIDを取得
+   * @returns {string|null} 対象ポリゴンID
+   */
+  getTargetPolygonIdForHole() {
+      return this._targetPolygonIdForHole;
+  }
+
+
+  /**
+   * 穴追加モードかどうかを取得 (便宜上残すが、基本は getTool() === 'add-hole' で判断)
+   * @returns {boolean} 穴追加モードならtrue
+   */
+  isAddingHole() {
+    // return this._isAddingHole;
+     return this.getTool() === 'add-hole';
+  }
+
+  /**
+   * 点を追加（地物追加または穴追加モード用）
+   * @param {Object} point - 追加する点 { x, y }
+   */
+  addPoint(point) {
+    // 'add' モードまたは 'edit' モードの 'add-hole' ツールの場合に追加
+    if ((this._mode === 'add' && this._tool) || (this._mode === 'edit' && this._tool === 'add-hole')) {
+        this._addingPoints.push(point);
+        this._notifyObservers('addingPoints');
+    } else {
+        console.warn("Cannot add point in current mode/tool:", this._mode, this._tool);
     }
   }
 
   /**
-   * 穴追加モードを取得
-   * @returns {boolean} 穴追加モードならtrue
-   */
-  isAddingHole() {
-    return this._isAddingHole;
-  }
-
-  /**
-   * 点を追加（オブジェクト追加モード用）
-   * @param {Object} point - 追加する点 { x, y }
-   */
-  addPoint(point) {
-    if (this._mode !== 'add' || !this._tool) return;
-
-    this._addingPoints.push(point);
-
-    this._notifyObservers('addingPoints');
-  }
-
-  /**
-   * 最後の点を削除（オブジェクト追加モード用）
+   * 最後の点を削除（地物追加または穴追加モード用）
    */
   removeLastPoint() {
-    if (this._addingPoints.length > 0) {
+    if (((this._mode === 'add' && this._tool) || (this._mode === 'edit' && this._tool === 'add-hole')) && this._addingPoints.length > 0) {
       this._addingPoints.pop();
       this._notifyObservers('addingPoints');
     }
   }
 
   /**
-   * 追加中の点をクリア
+   * 追加中の状態をクリア (点とターゲットID)
+   * @private
+   */
+  _clearAddingState() {
+    this._addingPoints = [];
+    this._targetPolygonIdForHole = null; // ターゲットもクリア
+    this._notifyObservers('addingPoints');
+    this._notifyObservers('addingHoleTarget');
+  }
+
+
+  /**
+   * 追加中の点をクリア (外部から呼び出す場合は clearAddingState を使うべき)
    * @private
    */
   _clearAddingPoints() {
@@ -211,17 +235,17 @@ export class EditingViewModel {
       }
 
       // 操作履歴に追加
-      // 注意: `feature` オブジェクト全体を履歴に含めるとメモリ使用量が増える可能性がある。
-      //       アンドゥに必要な最小限の情報（例：ID、追加前の状態など）を保存する方が良い場合がある。
       this._addToHistory({
         type: 'add',
         featureId: feature.id,
         featureType: this._tool,
-        featureData: feature // アンドゥ用に完全なデータを保持（要検討）
+        featureData: feature
       });
 
-      // 追加点をクリア
-      this._clearAddingPoints();
+      // 追加状態をクリア
+      this._clearAddingState();
+      // モードもビューに戻す（オプション）
+      // this.setMode('view');
 
       // イベントを発行
       this._eventBus.publish('FeatureAdded', { feature });
@@ -229,8 +253,38 @@ export class EditingViewModel {
       return feature;
     } catch (error) {
       console.error('地物の追加に失敗しました', error);
+      this._clearAddingState(); // エラー時もクリア
       throw error;
     }
+  }
+
+  /**
+   * 穴の追加を確定
+   * @returns {Promise<Object|null>} 更新されたポリゴン、または失敗時にnull
+   */
+  async confirmAddHole() {
+      if (this._mode !== 'edit' || this._tool !== 'add-hole' || !this._targetPolygonIdForHole || this._addingPoints.length < 3) {
+          console.error('穴の追加確定の条件を満たしていません。');
+          this._clearAddingState(); // 状態をクリア
+          this.setTool('select'); // ツールをデフォルトに戻す
+          return null;
+      }
+
+      const polygonId = this._targetPolygonIdForHole;
+      const holePoints = [...this._addingPoints]; // コピーを作成
+
+      try {
+          const updatedPolygon = await this.addHoleToPolygon(polygonId, holePoints);
+          // addHoleToPolygon 内で状態クリアと履歴追加が行われる
+          this.setTool('select'); // 成功したらツールをデフォルトに戻す
+          return updatedPolygon;
+      } catch (error) {
+          console.error('穴の追加確定に失敗しました', error);
+          alert(`穴の追加に失敗しました: ${error.message}`);
+          this._clearAddingState(); // エラー時も状態をクリア
+          this.setTool('select'); // ツールをデフォルトに戻す
+          return null;
+      }
   }
 
   /**
@@ -332,12 +386,13 @@ export class EditingViewModel {
    * @returns {Promise<Object>} 更新されたポリゴン
    */
   async addHoleToPolygon(polygonId, holePoints) {
+    // console.log(`addHoleToPolygon called: polygonId=${polygonId}, points=`, holePoints);
     try {
       if (holePoints.length < 3) {
         throw new Error('穴は少なくとも3つの点が必要です');
       }
 
-      // ポリゴンを取得
+      // ポリゴンを取得 (EditFeatureUseCase経由の方が一貫性があるかもしれないが、現状は直接アクセス)
       const worldRepository = this._editFeatureUseCase._worldRepository;
       const world = await worldRepository.getWorld();
 
@@ -358,35 +413,40 @@ export class EditingViewModel {
           newHoleVertexIds.push(vertexId);
       }
       // 作成した頂点をワールドデータに追加
+      // EditFeatureUseCase.updateFeature 内で _processGeometry を呼ぶので、ここでは追加しない方が良い？
+      // いや、updateFeature は既存頂点の更新が主なので、ここで追加しておく方が良い。
       world.vertices.push(...tempVertices);
 
+
       // 穴を追加
-      const newHolesVertexIds = [...oldHolesVertexIds, newHoleVertexIds];
+      const newHolesVertexIdsWithNewOne = [...oldHolesVertexIds, newHoleVertexIds];
 
       // ポリゴンを更新 (更新対象の geometry を渡す)
       const updatedPolygon = await this._editFeatureUseCase.updateFeature(
         polygonId,
-        { geometry: { holesVertexIds: newHolesVertexIds } } // geometry オブジェクトで渡す
+        { geometry: { holesVertexIds: newHolesVertexIdsWithNewOne } } // geometry オブジェクトで渡す
       );
+      // console.log("Polygon updated with new hole:", updatedPolygon);
 
       // 操作履歴に追加
       this._addToHistory({
         type: 'addHole',
         polygonId,
-        oldHolesVertexIds,
-        newHolesVertexIds: newHoleVertexIds, // 追加された穴の頂点ID
+        oldHolesVertexIds, // 更新前の穴全体
+        newHolesVertexIds: updatedPolygon.holesVertexIds, // 更新後の穴全体
         addedVertices: tempVertices // 追加された頂点の情報
       });
 
       // イベントを発行
       this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
 
-      // 穴追加モードを終了
-      this.setAddingHole(false);
+      // 穴追加状態をクリア (confirmAddHoleから呼ばれる場合は不要かもしれないが念のため)
+      this._clearAddingState();
 
       return updatedPolygon;
     } catch (error) {
       console.error('穴の追加に失敗しました', error);
+      this._clearAddingState(); // エラー時もクリア
       throw error;
     }
   }
@@ -492,13 +552,21 @@ export class EditingViewModel {
     switch (operation.type) {
       case 'add':
         // 削除された地物を復元 (addFeature を直接呼ぶのではなく、データ復元が必要)
-        const worldRepository = this._editFeatureUseCase._worldRepository;
-        const world = await worldRepository.getWorld();
-        // 頂点も復元する必要があるかもしれない
-        if (operation.featureData && !world.features.some(f => f.id === operation.featureId)) {
-            world.features.push(operation.featureData); // 保存しておいたデータを追加
-            // TODO: 頂点データも復元する必要があるか確認
-            await worldRepository.saveWorld(world);
+        const worldRepositoryAdd = this._editFeatureUseCase._worldRepository;
+        const worldAdd = await worldRepositoryAdd.getWorld();
+        // 頂点も復元する必要がある
+        let verticesToAdd = [];
+        if (operation.featureData?.vertexIds) {
+            verticesToAdd = operation.featureData.vertexIds
+                .map(vid => operation.featureData._originalVertices?.find(ov => ov.id === vid)) // Undo/Redo用に頂点データを保存しておく必要がある
+                .filter(Boolean);
+        }
+        if (operation.featureData && !worldAdd.features.some(f => f.id === operation.featureId)) {
+            worldAdd.features.push(operation.featureData); // 保存しておいたデータを追加
+            if (verticesToAdd.length > 0) {
+                 worldAdd.vertices.push(...verticesToAdd);
+            }
+            await worldRepositoryAdd.saveWorld(worldAdd);
             this._eventBus.publish('FeatureAdded', { feature: operation.featureData });
         } else {
              console.warn("Redo add: Feature already exists or data missing.", operation.featureId);
@@ -508,6 +576,7 @@ export class EditingViewModel {
       case 'delete':
          // 地物を再度削除
          await this._editFeatureUseCase.deleteFeature(operation.featureId);
+         // TODO: 削除された頂点も記録しておき、Redo時に削除、Undo時に復元する
          this._eventBus.publish('FeatureDeleted', { featureId: operation.featureId });
         break;
 
@@ -522,31 +591,31 @@ export class EditingViewModel {
 
       case 'updateProperties':
         // プロパティを新しい状態に再度更新
-        const updatedFeature = await this._editFeatureUseCase.updateFeature(
+        const updatedFeatureProps = await this._editFeatureUseCase.updateFeature(
           operation.featureId,
           { properties: operation.newProperties } // Redoなので newProperties を使う
         );
-         this._eventBus.publish('FeatureUpdated', { feature: updatedFeature });
+         this._eventBus.publish('FeatureUpdated', { feature: updatedFeatureProps });
         break;
 
       case 'addHole':
         // 穴を再度追加
-        const updatedPolygon = await this._editFeatureUseCase.updateFeature(
+        const updatedPolygonHole = await this._editFeatureUseCase.updateFeature(
           operation.polygonId,
-          { geometry: { holesVertexIds: operation.newHolesVertexIds } } // Redoなので newHolesVertexIds を使う
+          { geometry: { holesVertexIds: operation.newHolesVertexIds } } // Redoなので newHolesVertexIds を使う (更新後の全体)
         );
          // 穴追加時に作成された頂点も復元する必要がある
-         const repo = this._editFeatureUseCase._worldRepository;
-         const w = await repo.getWorld();
+         const repoHoleAdd = this._editFeatureUseCase._worldRepository;
+         const worldHoleAdd = await repoHoleAdd.getWorld();
          if (operation.addedVertices) {
              operation.addedVertices.forEach(v => {
-                 if (!w.vertices.some(wv => wv.id === v.id)) {
-                     w.vertices.push(v);
+                 if (!worldHoleAdd.vertices.some(wv => wv.id === v.id)) {
+                     worldHoleAdd.vertices.push(v);
                  }
              });
-             await repo.saveWorld(w);
+             await repoHoleAdd.saveWorld(worldHoleAdd);
          }
-         this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
+         this._eventBus.publish('FeatureUpdated', { feature: updatedPolygonHole });
         break;
 
       default:
@@ -566,19 +635,28 @@ export class EditingViewModel {
     switch (operation.type) {
       case 'add':
         // 追加された地物を削除
+        // TODO: 追加された頂点も記録しておき、Undo時に削除する
         await this._editFeatureUseCase.deleteFeature(operation.featureId);
         this._eventBus.publish('FeatureDeleted', { featureId: operation.featureId });
         break;
 
       case 'delete':
         // 削除された地物を復元 (addFeature を直接呼ぶのではなく、データ復元が必要)
-        const worldRepository = this._editFeatureUseCase._worldRepository;
-        const world = await worldRepository.getWorld();
-         // 頂点も復元する必要があるかもしれない
-        if (operation.featureData && !world.features.some(f => f.id === operation.featureId)) {
-            world.features.push(operation.featureData); // 保存しておいたデータを追加
-            // TODO: 頂点データも復元する必要があるか確認
-            await worldRepository.saveWorld(world);
+        const worldRepositoryDel = this._editFeatureUseCase._worldRepository;
+        const worldDel = await worldRepositoryDel.getWorld();
+         // 頂点も復元する必要がある
+        let verticesToRestore = [];
+        if (operation.featureData?.vertexIds) {
+            verticesToRestore = operation.featureData.vertexIds
+                .map(vid => operation.featureData._originalVertices?.find(ov => ov.id === vid)) // Undo/Redo用に頂点データを保存しておく必要がある
+                .filter(Boolean);
+        }
+        if (operation.featureData && !worldDel.features.some(f => f.id === operation.featureId)) {
+            worldDel.features.push(operation.featureData); // 保存しておいたデータを追加
+            if (verticesToRestore.length > 0) {
+                 worldDel.vertices.push(...verticesToRestore);
+            }
+            await worldRepositoryDel.saveWorld(worldDel);
             this._eventBus.publish('FeatureAdded', { feature: operation.featureData });
         } else {
              console.warn("Undo delete: Feature already exists or data missing.", operation.featureId);
@@ -596,32 +674,32 @@ export class EditingViewModel {
 
       case 'updateProperties':
         // プロパティを元の状態に戻す
-        const feature = await this._editFeatureUseCase.updateFeature(
+        const featureProps = await this._editFeatureUseCase.updateFeature(
           operation.featureId,
           { properties: operation.oldProperties } // Undoなので oldProperties を使う
         );
-        this._eventBus.publish('FeatureUpdated', { feature });
+        this._eventBus.publish('FeatureUpdated', { feature: featureProps });
         break;
 
       case 'addHole':
          // 追加された穴を削除（＝元の状態に戻す）
-         const updatedPolygon = await this._editFeatureUseCase.updateFeature(
+         const updatedPolygonUndoHole = await this._editFeatureUseCase.updateFeature(
            operation.polygonId,
-           { geometry: { holesVertexIds: operation.oldHolesVertexIds } } // Undoなので oldHolesVertexIds を使う
+           { geometry: { holesVertexIds: operation.oldHolesVertexIds } } // Undoなので oldHolesVertexIds を使う (更新前の全体)
          );
           // 穴追加時に作成された頂点も削除
-          const repo = this._editFeatureUseCase._worldRepository;
-          const w = await repo.getWorld();
+          const repoHoleDel = this._editFeatureUseCase._worldRepository;
+          const worldHoleDel = await repoHoleDel.getWorld();
           if (operation.addedVertices) {
               operation.addedVertices.forEach(v => {
-                  const index = w.vertices.findIndex(wv => wv.id === v.id);
+                  const index = worldHoleDel.vertices.findIndex(wv => wv.id === v.id);
                   if (index !== -1) {
-                      w.vertices.splice(index, 1);
+                      worldHoleDel.vertices.splice(index, 1);
                   }
               });
-              await repo.saveWorld(w);
+              await repoHoleDel.saveWorld(worldHoleDel);
           }
-          this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
+          this._eventBus.publish('FeatureUpdated', { feature: updatedPolygonUndoHole });
         break;
 
       default:
@@ -675,7 +753,11 @@ export class EditingViewModel {
   _notifyObservers(type) {
     const data = this._getStateForType(type);
     for (const observer of this._observers) {
-      observer(type, data);
+      try { // 念のため try-catch
+          observer(type, data);
+      } catch (error) {
+          console.error("Error in observer:", error);
+      }
     }
   }
 
@@ -693,8 +775,10 @@ export class EditingViewModel {
         return this._tool;
       case 'addingPoints':
         return this._addingPoints;
-      case 'addingHole':
-        return this._isAddingHole;
+      // case 'addingHole': // isAddingHole() or getTool() で代替
+      //   return this.isAddingHole();
+      case 'addingHoleTarget':
+        return this._targetPolygonIdForHole;
       case 'temporaryElements':
         return this._temporaryElements;
       case 'history':

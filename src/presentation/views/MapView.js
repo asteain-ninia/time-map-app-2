@@ -41,8 +41,7 @@ export class MapView {
     this._isMouseDown = false;
     this._isDragging = false;
     this._dragStartPosition = { x: 0, y: 0 }; // ドラッグ開始時のワールド座標
-    // _lastMousePosition はページ全体の座標を保持するように変更
-    this._lastMousePosition = { x: 0, y: 0 };
+    this._lastMousePosition = { x: 0, y: 0 }; // ページ座標
     this._draggedVertexId = null; // ドラッグ中の頂点ID
 
     // クリック許容範囲（ワールド座標での距離の二乗）
@@ -112,34 +111,22 @@ export class MapView {
     this._updateClickTolerance();
 
     // 初期ズームレベルを計算して設定
-    // MapView のコンテナサイズが確定してから実行する
-    // requestAnimationFrame を使って次の描画フレームで実行を試みる
     requestAnimationFrame(() => {
       const rect = this._mapElement.getBoundingClientRect();
       if (rect.width > 0) {
         const worldWidth = this._viewportManager.getViewport().worldWidth || 360;
         const initialZoom = rect.width / worldWidth;
         console.log(`初期ズーム計算: width=${rect.width}, worldWidth=${worldWidth}, initialZoom=${initialZoom}`);
-        // ViewportManagerのzoomも更新する
         this._viewportManager.updateViewport({ zoom: initialZoom });
       } else {
          console.warn("MapView コンテナ幅が 0 のため、初期ズームを計算できませんでした。");
       }
-      // ビューモデルとの連携をここで開始するか、タイミングを調整
       this._viewModel.addObserver(this._onViewModelChanged.bind(this));
       this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
-
-      // ビューポートの変更監視
       this._viewportManager.addListener(this._onViewportChanged.bind(this));
-
-      // イベントリスナーの設定
       this._setupEventListeners();
-
-      // 初回描画
       this._render();
     });
-
-
   }
 
 /**
@@ -149,7 +136,7 @@ export class MapView {
  * @returns {DOMPoint | null} SVG座標 (DOMPoint, Y軸下向き正) または null
  * @private
  */
-_getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
+_getSVGPoint(pageX, pageY) {
     if (!this._renderer || !this._renderer._svg || !this._svgPoint) {
         console.error("SVG要素またはSVGPointが利用できません。");
         return null;
@@ -162,8 +149,7 @@ _getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
             console.error("SVG要素のCTMが取得できませんでした。");
             return null;
         }
-        // CTMの逆行列を使ってページ座標をSVG座標に変換
-        return this._svgPoint.matrixTransform(ctm.inverse()); // SVG座標(Y軸下向き正)を返す
+        return this._svgPoint.matrixTransform(ctm.inverse());
     } catch (e) {
         console.error("SVG座標への変換中にエラーが発生しました:", e);
         return null;
@@ -177,7 +163,7 @@ _getSVGPoint(pageX, pageY) { // 引数をページ座標に変更
  */
 _svgToWorld(svgPoint) {
     if (!svgPoint) return null;
-    return { x: svgPoint.x, y: -svgPoint.y }; // Y座標を反転
+    return { x: svgPoint.x, y: -svgPoint.y };
 }
 
 
@@ -187,8 +173,6 @@ _svgToWorld(svgPoint) {
    */
   _setupEventListeners() {
     console.log('イベントリスナーを設定します');
-
-    // オーバーレイにマウスイベントを設定（_mapElementの代わりに）
     this._mapOverlay.addEventListener('mousedown', this._onMouseDown.bind(this));
     this._mapOverlay.addEventListener('mousemove', this._onMouseMove.bind(this));
     this._mapOverlay.addEventListener('mouseup', this._onMouseUp.bind(this));
@@ -196,17 +180,11 @@ _svgToWorld(svgPoint) {
     this._mapOverlay.addEventListener('wheel', this._onWheel.bind(this), { passive: false });
     this._mapOverlay.addEventListener('dblclick', this._onDoubleClick.bind(this));
     this._mapOverlay.addEventListener('contextmenu', this._onContextMenu.bind(this));
-
-    // タッチイベント
     this._mapOverlay.addEventListener('touchstart', this._onTouchStart.bind(this), { passive: false });
     this._mapOverlay.addEventListener('touchmove', this._onTouchMove.bind(this), { passive: false });
     this._mapOverlay.addEventListener('touchend', this._onTouchEnd.bind(this));
-
-    // キーボードイベント
     window.addEventListener('keydown', this._onKeyDown.bind(this));
     window.addEventListener('keyup', this._onKeyUp.bind(this));
-
-    // ウィンドウリサイズ
     window.addEventListener('resize', this._onResize.bind(this));
   }
 
@@ -217,7 +195,6 @@ _svgToWorld(svgPoint) {
    * @private
    */
   _onViewModelChanged(type, data) {
-    // タイプに応じた処理
     switch (type) {
       case 'world':
       case 'features':
@@ -226,10 +203,8 @@ _svgToWorld(svgPoint) {
       case 'hoveredFeature':
       case 'hoveredVertex':
       case 'layers':
-        // 再描画
         this._render();
         break;
-
       default:
         break;
     }
@@ -242,26 +217,22 @@ _svgToWorld(svgPoint) {
    * @private
    */
   _onEditingViewModelChanged(type, data) {
-    // タイプに応じた処理
     switch (type) {
       case 'mode':
       case 'tool':
-        this._updateActionButtonsVisibility(); // ボタン表示状態を更新
-        this._render(); // 再描画
-         // モードやツールが変わったら選択をクリア
+        this._updateActionButtonsVisibility();
+        this._render();
          this._viewModel.clearSelection();
-         // 編集モードでなければドラッグ中の頂点IDもクリア
          if (this._editingViewModel.getMode() !== 'edit') {
              this._draggedVertexId = null;
          }
         break;
       case 'addingPoints':
-      case 'addingHole':
+      case 'addingHoleTarget': // 穴追加対象変更時も再描画
       case 'temporaryElements':
-        // 再描画
         this._render();
         break;
-       case 'history': // 履歴変更時にも再描画（アンドゥ・リドゥの結果を反映）
+       case 'history':
          this._render();
          break;
       default:
@@ -275,9 +246,7 @@ _svgToWorld(svgPoint) {
    * @private
    */
   _onViewportChanged(viewport) {
-    // クリック許容範囲を更新
     this._updateClickTolerance();
-    // 再描画
     this._render();
   }
 
@@ -287,7 +256,6 @@ _svgToWorld(svgPoint) {
      */
     _updateClickTolerance() {
         const viewport = this._viewportManager.getViewport();
-        // スクリーン座標でのピクセル許容範囲を、現在のズームレベルでワールド座標の距離に変換
         const worldDistance = this._clickTolerancePixels / viewport.zoom;
         this._clickToleranceSq = worldDistance * worldDistance;
     }
@@ -300,34 +268,20 @@ _svgToWorld(svgPoint) {
     const world = this._viewModel.getWorld();
     if (!world) return;
 
-    // レンダラーに SVGPoint がない場合はここで作成
     if (this._renderer && this._renderer._svg && !this._svgPoint) {
         this._svgPoint = this._renderer._svg.createSVGPoint();
         console.log("SVGPointを遅延作成しました。");
     }
 
     const viewport = this._viewportManager.getViewport();
-    const currentTime = this._viewModel.getCurrentTime(); // 描画時点の現在時間を取得
+    const currentTime = this._viewModel.getCurrentTime();
 
-    // レンダラーでマップを描画
     this._renderer.render(world, viewport, currentTime);
-
-    // 既存の選択要素の描画物をクリア
     this._clearSelectionHighlights();
-
-    // 選択要素のハイライト
-    this._renderSelection(); // currentTime を引数に追加
-
-    // 追加中の地物の描画
-    this._renderAddingFeature();
-
-    // 一時的な表示要素の描画
+    this._renderSelection();
+    this._renderAddingFeature(); // 地物追加または穴追加のプレビュー
     this._renderTemporaryElements();
-
-    // 距離測定の描画
     this._renderDistanceMeasurement();
-
-    // アクションボタンの表示更新
     this._updateActionButtonsVisibility();
   }
 
@@ -349,11 +303,10 @@ _svgToWorld(svgPoint) {
     const selectedVertices = this._viewModel.getSelectedVertices();
     const viewport = this._viewportManager.getViewport();
     const world = this._viewModel.getWorld();
-    const currentTime = this._viewModel.getCurrentTime(); // 現在時間を取得
+    const currentTime = this._viewModel.getCurrentTime();
     if (!world) return;
 
     // 選択された地物のハイライト
-    // 地物が現在の時間で存在する場合のみ描画
     if (selectedFeature && selectedFeature.existsAt(currentTime)) {
         let featureVertices = [];
         if (selectedFeature.vertexIds && selectedFeature.vertexIds.length > 0) {
@@ -363,132 +316,106 @@ _svgToWorld(svgPoint) {
         }
 
         const style = {
-            stroke: '#00ffff', // Cyan
-            strokeWidth: 4, // 太めに
-            fill: 'none',
-            strokeDasharray: '4,4'
+            stroke: '#00ffff', strokeWidth: 4, fill: 'none', strokeDasharray: '4,4'
         };
 
         if (selectedFeature instanceof DomainPoint && featureVertices.length === 1) {
             const elem = this._renderer.drawPoint(featureVertices[0].x, featureVertices[0].y, {
-                 radius: 8, // 少し大きめに
-                 stroke: '#00ffff',
-                 strokeWidth: 2,
-                 fill: 'none',
-                 'stroke-dasharray': '2,2' // 破線円
+                 radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'
             }, viewport);
              if (elem) this._selectionElements.push(elem);
         } else if (selectedFeature instanceof DomainLine && featureVertices.length >= 2) {
             const elem = this._renderer.drawLine(featureVertices, style, viewport);
              if (elem) this._selectionElements.push(elem);
-        } else if (selectedFeature instanceof DomainPolygon && featureVertices.length >= 3) {
-            const elem = this._renderer.drawLine([...featureVertices, featureVertices[0]], style, viewport); // 閉じた線で描画
-             if (elem) this._selectionElements.push(elem);
-             // TODO: 穴のハイライト
-             // TODO: MultiPolygonのハイライト
+        } else if (selectedFeature instanceof DomainPolygon) {
+             // 通常ポリゴンまたはMultiPolygonの外周を描画
+            if (featureVertices.length >= 3) {
+                const elem = this._renderer.drawLine([...featureVertices, featureVertices[0]], style, viewport);
+                if (elem) this._selectionElements.push(elem);
+            }
+            // MultiPolygonのサブポリゴンも描画
+            if (selectedFeature.isMultiPolygon && selectedFeature.subPolygons) {
+                selectedFeature.subPolygons.forEach(sub => {
+                    const subVertices = sub.vertexIds?.map(id => world.vertices.find(v => v.id === id)).filter(Boolean);
+                    if (subVertices && subVertices.length >= 3) {
+                        const subElem = this._renderer.drawLine([...subVertices, subVertices[0]], style, viewport);
+                        if (subElem) this._selectionElements.push(subElem);
+                    }
+                });
+            }
+            // TODO: 穴のハイライト
         }
     }
 
     // 選択された頂点のハイライト
-    // 頂点自体は常に存在する前提だが、念のため
     selectedVertices.forEach(vertex => {
-        // 頂点が属する（可能性のある）地物が存在するかを簡易的にチェックする
-        // （より厳密には、この頂点が選択地物の一部であるかを MapViewModel 側で保証すべき）
-        // if (!selectedFeature || selectedFeature.existsAt(currentTime)) { // 地物が選択されていないか、存在する場合
-            const elem = this._renderer.drawPoint(vertex.x, vertex.y, {
-                radius: 6,
-                fill: '#00ffff', // Cyan fill
-                stroke: '#0000ff', // Blue stroke
-                strokeWidth: 1,
-            }, viewport);
-            if (elem) this._selectionElements.push(elem);
-        // }
+        const elem = this._renderer.drawPoint(vertex.x, vertex.y, {
+            radius: 6, fill: '#00ffff', stroke: '#0000ff', strokeWidth: 1,
+        }, viewport);
+        if (elem) this._selectionElements.push(elem);
     });
 
-     // 作成した要素にクラス付与
      this._selectionElements.forEach(el => el.classList.add('temp-drawing', 'selection-highlight'));
   }
 
   /**
-   * 追加中の地物の描画
+   * 追加中の地物または穴の描画
    * @private
    */
   _renderAddingFeature() {
-     // 既存の一時要素を削除
+     // 既存の一時要素を削除 (プレフィックスで識別)
      this._clearTemporaryDrawings('adding-');
 
-    if (this._editingViewModel.getMode() !== 'add') return;
+    const mode = this._editingViewModel.getMode();
+    const tool = this._editingViewModel.getTool();
+
+    // 'add' モードまたは 'edit' モードの 'add-hole' ツールの場合のみ描画
+    if (!((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole'))) {
+        return;
+    }
 
     const addingPoints = this._editingViewModel.getAddingPoints();
     if (addingPoints.length === 0) return;
 
-    const tool = this._editingViewModel.getTool();
     const viewport = this._viewportManager.getViewport();
     let tempElements = []; // この描画で作成した一時要素
+    const isAddingHole = tool === 'add-hole';
 
-    // ツールタイプに応じた描画 (ワールド座標を渡す)
-    switch (tool) {
-      case 'point':
-        // 点の描画
+    // スタイル設定
+    const pointStyle = { fill: '#ffffff', radius: 4, stroke: '#000000', strokeWidth: 1 };
+    const lineStyle = isAddingHole
+        ? { stroke: '#ff00ff', strokeWidth: 3, strokeDasharray: '5,5' } // 穴追加時の線スタイル
+        : tool === 'line'
+            ? { stroke: '#0000ff', strokeWidth: 3, strokeDasharray: '5,5' } // 線追加時の線スタイル
+            : tool === 'polygon'
+                ? { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' } // 面追加時の線スタイル
+                : {}; // 点追加時は線なし
+
+    // ツールタイプに応じた描画
+    if (tool === 'point') {
         if (addingPoints.length === 1) {
-          const elem = this._renderer.drawPoint(
-            addingPoints[0].x,
-            addingPoints[0].y,
-            { fill: '#ff0000', radius: 6, stroke: '#ffffff', strokeWidth: 2 },
-            viewport
-          );
-           if (elem) tempElements.push(elem);
+            const elem = this._renderer.drawPoint(addingPoints[0].x, addingPoints[0].y,
+                { fill: '#ff0000', radius: 6, stroke: '#ffffff', strokeWidth: 2 }, viewport);
+            if (elem) tempElements.push(elem);
         }
-        break;
-
-      case 'line':
-        // 線の描画
+    } else if (tool === 'line' || tool === 'polygon' || tool === 'add-hole') {
+        // 線またはポリゴン（穴）のプレビュー線を描画
         if (addingPoints.length >= 2) {
-           const elem = this._renderer.drawLine(
-            addingPoints,
-            { stroke: '#0000ff', strokeWidth: 3, strokeDasharray: '5,5' },
-            viewport
-          );
-           if (elem) tempElements.push(elem);
+            // ポリゴンまたは穴の場合は閉じる線も描画 (3点以上の場合)
+            const pointsToDraw = (tool === 'polygon' || tool === 'add-hole') && addingPoints.length >= 3
+                ? [...addingPoints, addingPoints[0]]
+                : addingPoints;
+            const elem = this._renderer.drawLine(pointsToDraw, lineStyle, viewport);
+            if (elem) tempElements.push(elem);
         }
-        break;
-
-      case 'polygon':
-        // 多角形の描画
-        if (addingPoints.length >= 3) {
-          // 線の描画（閉じる）
-          const polygonPoints = [...addingPoints, addingPoints[0]];
-           const elem = this._renderer.drawLine(
-            polygonPoints,
-            { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' },
-            viewport
-          );
-           if (elem) tempElements.push(elem);
-        } else if (addingPoints.length >= 2) {
-          // 線の描画（開いた状態）
-           const elem = this._renderer.drawLine(
-            addingPoints,
-            { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' },
-            viewport
-          );
-           if (elem) tempElements.push(elem);
-        }
-        break;
-
-      default:
-        break;
     }
 
-    // 各頂点の描画 (ワールド座標を渡す)
+    // 各頂点の描画
     for (const point of addingPoints) {
-       const elem = this._renderer.drawPoint(
-        point.x,
-        point.y,
-        { fill: '#ffffff', radius: 4, stroke: '#000000', strokeWidth: 1 },
-        viewport
-      );
+       const elem = this._renderer.drawPoint(point.x, point.y, pointStyle, viewport);
        if (elem) tempElements.push(elem);
     }
+
      // 作成した一時要素にマーカーを付ける
      tempElements.forEach(el => el.classList.add('temp-drawing', 'adding-feature'));
   }
@@ -498,9 +425,29 @@ _svgToWorld(svgPoint) {
    * @private
    */
   _renderTemporaryElements() {
+     // 既存の一時要素を削除 (プレフィックスで識別)
+     this._clearTemporaryDrawings('temp-'); // 汎用的な一時要素
+
     const elements = this._editingViewModel.getTemporaryElements();
-    // TODO: 一時的な表示要素の描画処理
-    // _renderer を使って要素を描画し、'temp-drawing' クラスなどを付与する
+    const viewport = this._viewportManager.getViewport();
+    let tempElements = []; // この描画で作成した一時要素
+
+    elements.forEach(element => {
+        let elem = null;
+        if (element.type === 'point') {
+            elem = this._renderer.drawPoint(element.x, element.y, element.style, viewport);
+        } else if (element.type === 'line') {
+            elem = this._renderer.drawLine(element.points, element.style, viewport);
+        } else if (element.type === 'text') {
+             elem = this._renderer.drawText(element.x, element.y, element.content, element.style, viewport);
+        }
+        if (elem) {
+             elem.classList.add('temp-drawing', 'temp-element'); // クラス付与
+             tempElements.push(elem);
+        }
+    });
+    // 注意: EditingViewModelの _temporaryElements はMapView側でクリアされないため、
+    // EditingViewModel 側で適切に管理・クリアする必要がある。
   }
 
 /**
@@ -508,98 +455,64 @@ _svgToWorld(svgPoint) {
  * @private
  */
 _renderDistanceMeasurement() {
-    // 既存の測定要素を削除
     this._clearTemporaryDrawings('measure-');
-
     if (!this._isMeasuringDistance || this._measurePoints.length === 0) return;
 
     const viewport = this._viewportManager.getViewport();
-    let tempElements = []; // この描画で作成した一時要素
+    let tempElements = [];
 
-    // 測定点の描画 (ワールド座標を渡す)
     this._measurePoints.forEach((point, index) => {
-        const pointElem = this._renderer.drawPoint(
-            point.x,
-            point.y,
-            { fill: '#ffff00', radius: 4, stroke: '#000000', strokeWidth: 1 },
-            viewport
-        );
+        const pointElem = this._renderer.drawPoint(point.x, point.y,
+            { fill: '#ffff00', radius: 4, stroke: '#000000', strokeWidth: 1 }, viewport);
         if (pointElem) tempElements.push(pointElem);
 
-        // 点ラベル (A, B, C...) (ワールド座標を渡す)
-        const labelElem = this._renderer.drawText(
-            point.x,
-            point.y + 10 / Math.sqrt(viewport.zoom), // ラベルの位置調整 (ワールド座標で上方向)
-            String.fromCharCode(65 + index), // A, B, C...
-            { fontSize: 10, textColor: '#000000', textAnchor: 'middle', dominantBaseline: 'hanging'}, // 修正: ベースライン
-            viewport
-        );
+        const labelElem = this._renderer.drawText(point.x, point.y + 10 / viewport.zoom, // Yオフセット修正
+            String.fromCharCode(65 + index),
+            { fontSize: 10, textColor: '#000000', textAnchor: 'middle', dominantBaseline: 'hanging'}, viewport);
         if(labelElem) tempElements.push(labelElem);
     });
 
-
-    // 測定線の描画 (ワールド座標を渡す)
     if (this._measurePoints.length >= 2) {
-        const lineElem = this._renderer.drawLine(
-            this._measurePoints,
-            { stroke: '#ffff00', strokeWidth: 2, strokeDasharray: '5,5' },
-            viewport
-        );
+        const lineElem = this._renderer.drawLine(this._measurePoints,
+            { stroke: '#ffff00', strokeWidth: 2, strokeDasharray: '5,5' }, viewport);
         if (lineElem) tempElements.push(lineElem);
 
-        // 距離の計算
         const equatorLength = this._configManager.get('map.equatorLength', 40000);
-
         const distances = [];
+        let totalLinear = 0;
+        let totalGreatCircle = 0;
+
         for (let i = 1; i < this._measurePoints.length; i++) {
             const p1 = this._measurePoints[i - 1];
             const p2 = this._measurePoints[i];
-
             const distance = this._viewModel.calculateDistance(p1, p2, equatorLength);
             distances.push(distance);
+            totalLinear += distance.linear;
+            totalGreatCircle += distance.greatCircle;
 
-            // 各区間の距離表示 (ワールド座標を渡す)
             const midX = (p1.x + p2.x) / 2;
             const midY = (p1.y + p2.y) / 2;
-            const segmentLabelElem = this._renderer.drawText(
-                midX,
-                midY - 10 / Math.sqrt(viewport.zoom), // 線からのオフセット (ワールド座標で下方向)
-                `${distance.linear.toFixed(1)}km`, // 簡易表示
-                { fontSize: 9, textColor: '#333300', textAnchor: 'middle', dominantBaseline: 'alphabetic'}, // 修正: ベースライン
-                viewport
-            );
+            const segmentLabelElem = this._renderer.drawText(midX, midY - 10 / viewport.zoom, // Yオフセット修正
+                `${distance.linear.toFixed(1)}km`,
+                { fontSize: 9, textColor: '#333300', textAnchor: 'middle', dominantBaseline: 'alphabetic'}, viewport);
             if(segmentLabelElem) tempElements.push(segmentLabelElem);
         }
 
-        // 総距離
-        const totalLinear = distances.reduce((sum, d) => sum + d.linear, 0);
-        const totalGreatCircle = distances.reduce((sum, d) => sum + d.greatCircle, 0);
-
-        // 距離表示 (ワールド座標を渡す)
         const lastPoint = this._measurePoints[this._measurePoints.length - 1];
-        const textYOffset = 15 / Math.sqrt(viewport.zoom);
+        const textYOffset = 15 / viewport.zoom; // Yオフセット修正
 
-        const totalLinearElem = this._renderer.drawText(
-            lastPoint.x + 10 / Math.sqrt(viewport.zoom),
-            lastPoint.y + textYOffset * 2, // Yオフセット (ワールド座標で上)
+        const totalLinearElem = this._renderer.drawText(lastPoint.x + 10 / viewport.zoom, lastPoint.y + textYOffset * 2, // Yオフセット修正
             `直線計: ${totalLinear.toFixed(1)} km`,
-            { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging'}, // 左上揃え
-            viewport
-        );
+            { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging'}, viewport);
         if(totalLinearElem) tempElements.push(totalLinearElem);
 
-        const totalGreatCircleElem = this._renderer.drawText(
-            lastPoint.x + 10 / Math.sqrt(viewport.zoom),
-            lastPoint.y + textYOffset, // Yオフセット (ワールド座標で上)
+        const totalGreatCircleElem = this._renderer.drawText(lastPoint.x + 10 / viewport.zoom, lastPoint.y + textYOffset, // Yオフセット修正
             `大円計: ${totalGreatCircle.toFixed(1)} km`,
-            { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging'}, // 左上揃え
-            viewport
-        );
+            { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging'}, viewport);
         if(totalGreatCircleElem) tempElements.push(totalGreatCircleElem);
     }
-     // 作成した一時要素にマーカーを付ける
      tempElements.forEach(el => el.classList.add('temp-drawing', 'measure-element'));
-     this._measureElements = tempElements; // 描画要素を保持
+     this._measureElements = tempElements;
 }
 
   /**
@@ -608,107 +521,101 @@ _renderDistanceMeasurement() {
    * @private
    */
 _onMouseDown(event) {
-  // イベント発生源がダイアログ/フォーム上なら処理中断
   const targetElement = event.target;
   if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
-    // ダイアログやフォーム内のクリックは、MapView側の操作としない
     return;
   }
 
-  // 右クリックは無視（コンテキストメニュー用）
-    if (event.button === 2) return; // 右クリックは無視
+    if (event.button === 2) return;
 
-  // ページ全体の座標を取得
   const pageX = event.clientX;
   const pageY = event.clientY;
   const svgPointRaw = this._getSVGPoint(pageX, pageY);
-  const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
+  const worldPoint = this._svgToWorld(svgPointRaw);
 
   if (!worldPoint) {
       console.error("ワールド座標を取得できませんでした。");
       return;
   }
 
-  // console.log('マウスダウン - Page:', pageX, pageY, 'World:', worldPoint.x, worldPoint.y);
-
   this._isMouseDown = true;
-  this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標
-  this._dragStartPosition = worldPoint; // ★ ドラッグ開始時のワールド座標を保存
-  this._draggedVertexId = null; // ドラッグ対象の頂点IDをリセット
+  this._lastMousePosition = { x: pageX, y: pageY };
+  this._dragStartPosition = worldPoint;
+  this._draggedVertexId = null;
 
-  // 編集モードに応じた処理
   const mode = this._editingViewModel.getMode();
-  // console.log('現在の編集モード:', mode);
+  const tool = this._editingViewModel.getTool();
 
   switch (mode) {
     case 'view':
-      // console.log('ビューモードでドラッグ開始');
       this._viewportManager.startDrag(pageX, pageY);
       break;
 
     case 'add':
-      // console.log('追加モードで点を追加');
-      this._handleAddPoint(worldPoint); // ワールド座標を渡す
+      this._handleAddPoint(worldPoint);
       break;
 
     case 'edit':
-      const clickedVertex = this._findClosestVertex(worldPoint);
-      const addToSelection = event.shiftKey; // Shiftキーの状態
-
-      if (clickedVertex) {
-        // ★ 頂点が見つかった場合 ★
-        // 1. 頂点を選択 (ViewModelのメソッドを呼ぶ)
-        this._viewModel.selectVertex(clickedVertex.id, addToSelection);
-        this._draggedVertexId = clickedVertex.id; // ドラッグ対象
-
-        // 2. 頂点が属する地物を特定
-        const features = this._viewModel.getFeatures(); // 現在表示中の地物から検索
-        const ownerFeature = features.find(f =>
-            (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
-            (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
-            (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id))) // MultiPolygon対応
-        );
-
-        // 3. 地物を直接ViewModelに設定 (selectFeatureを呼ばない)
-        if (ownerFeature) {
-            // Shiftキーが押されていない、または現在の選択地物と異なる場合は、新しい地物を選択
-            if (!addToSelection || this._viewModel.getSelectedFeature()?.id !== ownerFeature.id) {
-                this._viewModel._selectedFeature = ownerFeature; // 直接設定
-                this._viewModel._notifyObservers('selectedFeature'); // 通知
-            }
-            // Shiftキーが押されていて、かつ同じ地物が既に選択されている場合は何もしない（頂点選択のみ追加される）
-        } else {
-            // 頂点に対応する地物が見つからない場合
-             if (!addToSelection) { // Shift押下時以外は地物選択をクリア
-                 this._viewModel._selectedFeature = null; // 直接設定
-                 this._viewModel._notifyObservers('selectedFeature'); // 通知
+      if (tool === 'add-hole') {
+        // 穴追加モードの場合
+        if (!this._editingViewModel.getTargetPolygonIdForHole()) {
+             // 最初のクリック: 穴を追加するポリゴンを選択
+             const clickedFeature = this._findClosestFeature(worldPoint);
+             if (clickedFeature instanceof DomainPolygon) {
+                 this._editingViewModel.startAddingHole(clickedFeature.id);
+                 this._viewModel.selectFeature(clickedFeature.id); // 対象ポリゴンを選択状態にする
+                 console.log(`Hole adding started for polygon: ${clickedFeature.id}`);
+             } else {
+                 alert("穴を追加するポリゴンを選択してください。");
              }
-        }
-
-      } else {
-        // ★ 頂点が見つからなかった場合 ★
-        const clickedFeature = this._findClosestFeature(worldPoint);
-        if (clickedFeature) {
-            // 地物を選択 (ViewModelのメソッドを呼ぶ -> これで頂点選択はクリアされる)
-            this._viewModel.selectFeature(clickedFeature.id);
         } else {
-          // 何もヒットしなかったら両方の選択を解除
-          if (!addToSelection) {
-              this._viewModel.clearSelection();
+             // 2回目以降のクリック: 穴の頂点を追加
+             this._handleAddPoint(worldPoint);
+        }
+      } else {
+        // 通常の編集モード (選択/移動など)
+        const clickedVertex = this._findClosestVertex(worldPoint);
+        const addToSelection = event.shiftKey;
+
+        if (clickedVertex) {
+          this._viewModel.selectVertex(clickedVertex.id, addToSelection);
+          this._draggedVertexId = clickedVertex.id;
+          const features = this._viewModel.getFeatures();
+          const ownerFeature = features.find(f =>
+              (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
+              (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
+              (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id)))
+          );
+          if (ownerFeature) {
+              if (!addToSelection || this._viewModel.getSelectedFeature()?.id !== ownerFeature.id) {
+                  this._viewModel._selectedFeature = ownerFeature;
+                  this._viewModel._notifyObservers('selectedFeature');
+              }
+          } else {
+               if (!addToSelection) {
+                   this._viewModel._selectedFeature = null;
+                   this._viewModel._notifyObservers('selectedFeature');
+               }
+          }
+        } else {
+          const clickedFeature = this._findClosestFeature(worldPoint);
+          if (clickedFeature) {
+              this._viewModel.selectFeature(clickedFeature.id);
+          } else {
+            if (!addToSelection) {
+                this._viewModel.clearSelection();
+            }
           }
         }
       }
       break; // case 'edit' の終了
 
     default:
-      // console.log('不明なモード:', mode);
       break;
   }
 
-  // 距離測定モード
   if (this._isMeasuringDistance) {
-    // console.log('距離測定点を追加');
-    this._handleAddMeasurePoint(worldPoint); // ワールド座標を渡す
+    this._handleAddMeasurePoint(worldPoint);
   }
 }
 
@@ -718,53 +625,43 @@ _onMouseDown(event) {
    * @private
    */
 _onMouseMove(event) {
-  // イベント発生源がダイアログ/フォーム上なら処理中断
   const targetElement = event.target;
   if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
-    // ダイアログやフォーム内のマウス移動は無視
     return;
   }
 
-  // ページ全体の座標を取得
   const pageX = event.clientX;
   const pageY = event.clientY;
   const svgPointRaw = this._getSVGPoint(pageX, pageY);
-  const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
+  const worldPoint = this._svgToWorld(svgPointRaw);
 
   if (!worldPoint) return;
 
   if (this._isMouseDown) {
-    // マウスドラッグ
     if (!this._isDragging) {
-      // ドラッグ開始判定
       const dx = pageX - this._lastMousePosition.x;
       const dy = pageY - this._lastMousePosition.y;
       const dragThreshold = 5;
-
       if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
         this._isDragging = true;
-        // console.log('ドラッグ開始判定: ドラッグ開始');
       }
     }
 
     if (this._isDragging) {
-      // ドラッグ処理
       const mode = this._editingViewModel.getMode();
-      // console.log('ドラッグ中 - モード:', mode);
+      const tool = this._editingViewModel.getTool();
 
       if (mode === 'view') {
         this._viewportManager.drag(pageX, pageY);
-      } else if (mode === 'edit') {
-        // console.log('編集モードでオブジェクト移動');
-        this._handleDragObject(worldPoint); // ワールド座標でドラッグ
+      } else if (mode === 'edit' && tool !== 'add-hole') { // 穴追加中は頂点ドラッグしない
+        this._handleDragObject(worldPoint);
       }
     }
   } else {
-    // マウスホバー処理 (ドラッグしていない場合)
-     this._handleMouseHover(worldPoint); // ワールド座標でホバー
+     this._handleMouseHover(worldPoint);
   }
 
-  this._lastMousePosition = { x: pageX, y: pageY }; // ページ座標を更新
+  this._lastMousePosition = { x: pageX, y: pageY };
 }
 
   /**
@@ -773,31 +670,25 @@ _onMouseMove(event) {
    * @private
    */
 _onMouseUp(event) {
-  // イベント発生源がダイアログ/フォーム上なら処理中断
   const targetElement = event.target;
   if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
-    // ダイアログやフォーム内のマウスアップは無視
     return;
   }
 
   const mode = this._editingViewModel.getMode();
-  // console.log('マウスアップ - モード:', mode);
+  const tool = this._editingViewModel.getTool();
 
-  // ページ全体の座標を取得
   const pageX = event.clientX;
   const pageY = event.clientY;
   const svgPointRaw = this._getSVGPoint(pageX, pageY);
-  const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
+  const worldPoint = this._svgToWorld(svgPointRaw);
 
-  // worldPoint が null の場合は処理中断
   if (!worldPoint && this._isMouseDown) {
       console.warn("MouseUp: Failed to get world coordinates.");
-      // ドラッグ中だった場合の終了処理は行う
       if (this._isDragging) {
           if (mode === 'view') {
               this._viewportManager.endDrag();
           }
-          // 編集モードのドラッグ終了は座標が必要なため、ここでは実行しない
       }
       this._isMouseDown = false;
       this._isDragging = false;
@@ -808,27 +699,23 @@ _onMouseUp(event) {
 
   if (this._isMouseDown && this._isDragging) {
     // ドラッグ終了
-    // console.log('ドラッグ終了処理');
-
     if (mode === 'view') {
-      // console.log('ビューモードでドラッグ終了');
       this._viewportManager.endDrag();
-    } else if (mode === 'edit' && this._draggedVertexId) { // ドラッグ対象の頂点がある場合のみ
-       // console.log('編集モードでドラッグ終了');
-       this._handleDragEnd(worldPoint); // ワールド座標でドラッグ終了
+    } else if (mode === 'edit' && tool !== 'add-hole' && this._draggedVertexId) { // 穴追加中はドラッグしない
+       this._handleDragEnd(worldPoint);
     }
-  } else if (this._isMouseDown && !this._isDragging && worldPoint) { // クリック（ドラッグなし）かつ worldPoint が有効な場合
-    // console.log('クリック処理（ドラッグなし）');
+  } else if (this._isMouseDown && !this._isDragging && worldPoint) {
+    // クリック（ドラッグなし）
     if (mode === 'view') {
-      this._handleClick(worldPoint); // ワールド座標でクリック
+      this._handleClick(worldPoint);
     }
-    // 'add' モードのクリックは onMouseDown で処理
-    // 'edit' モードのクリック（選択）も onMouseDown で処理
+    // 'add' と 'edit' モードのクリックは onMouseDown で処理済み
+    // (穴追加の2回目以降のクリックも onMouseDown で _handleAddPoint が呼ばれる)
   }
 
   this._isMouseDown = false;
   this._isDragging = false;
-  this._draggedVertexId = null; // マウスアップ時にリセット
+  this._draggedVertexId = null;
 }
 
   /**
@@ -837,32 +724,27 @@ _onMouseUp(event) {
    * @private
    */
   _onMouseLeave(event) {
-    // イベント発生源がダイアログ内なら無視するなどの処理は不要（オーバーレイから離れた時点で発生するため）
     if (this._isMouseDown) {
       const mode = this._editingViewModel.getMode();
+      const tool = this._editingViewModel.getTool();
 
       if (mode === 'view' && this._isDragging) {
         this._viewportManager.endDrag();
-         // console.log("Mouse leave during view drag, drag ended.");
-      } else if (mode === 'edit' && this._isDragging && this._draggedVertexId) {
-          // 編集モードでのドラッグ中に離れた場合、最後の位置で確定
+      } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && this._draggedVertexId) {
           const svgPointRaw = this._getSVGPoint(this._lastMousePosition.x, this._lastMousePosition.y);
           const worldPoint = this._svgToWorld(svgPointRaw);
           if (worldPoint) {
               this._handleDragEnd(worldPoint);
-              // console.log("Mouse leave during edit drag, drag ended at last position.");
           }
       }
 
       this._isMouseDown = false;
       this._isDragging = false;
-      this._draggedVertexId = null; // ドラッグ対象もリセット
-       // console.log("Mouse leave during drag, drag ended.");
+      this._draggedVertexId = null;
     }
-     // ホバー状態などもリセット
      this._viewModel.hoverFeature(null);
      this._viewModel.hoverVertex(null);
-     this._render(); // ホバー解除を反映
+     this._render();
   }
 
   /**
@@ -871,11 +753,8 @@ _onMouseUp(event) {
    * @private
    */
 _onWheel(event) {
-  // イベント発生源がダイアログ/フォーム上なら処理中断
   const targetElement = event.target;
   if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
-    // ダイアログやフォーム上のホイール操作は無視（ただし、スクロールが必要な場合は別途考慮）
-    // ここでは地図のズームをさせない
     return;
   }
 
@@ -887,13 +766,11 @@ _onWheel(event) {
   const pageX = event.clientX;
   const pageY = event.clientY;
   const svgPointRaw = this._getSVGPoint(pageX, pageY);
-  const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
+  const worldPoint = this._svgToWorld(svgPointRaw);
 
   if (!worldPoint) return;
 
-  // console.log('ホイール位置 - Page:', pageX, pageY, 'World:', worldPoint.x, worldPoint.y);
-
-  this._viewportManager.zoomAt(worldPoint.x, worldPoint.y, zoomFactor); // ワールド座標でズーム
+  this._viewportManager.zoomAt(worldPoint.x, worldPoint.y, zoomFactor);
   }
 
   /**
@@ -902,34 +779,36 @@ _onWheel(event) {
    * @private
    */
   _onDoubleClick(event) {
-    // イベント発生源がダイアログ/フォーム上なら処理中断
     const targetElement = event.target;
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
-      // ダイアログやフォーム上のダブルクリックは無視
       return;
     }
-  
-    // ページ全体の座標を取得
+
     const pageX = event.clientX;
     const pageY = event.clientY;
     const svgPointRaw = this._getSVGPoint(pageX, pageY);
-    const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
+    const worldPoint = this._svgToWorld(svgPointRaw);
 
     if (!worldPoint) return;
 
-    // 追加モードでのダブルクリックは確定処理とする
-    if (this._editingViewModel.getMode() === 'add') {
-      // 確定前に最後のクリック位置を追加
-       this._handleAddPoint(worldPoint);
-       // 確定処理
-      this._handleConfirmClick();
-    } else if (this._editingViewModel.getMode() === 'view') {
+    const mode = this._editingViewModel.getMode();
+    const tool = this._editingViewModel.getTool();
+
+    if (mode === 'add' && tool) {
+      // 地物追加モードでのダブルクリックは確定処理
+       this._handleAddPoint(worldPoint); // 最後の点を追加
+       this._handleConfirmClick(); // 確定処理
+    } else if (mode === 'edit' && tool === 'add-hole') {
+        // 穴追加モードでのダブルクリックも確定処理
+        this._handleAddPoint(worldPoint); // 最後の点を追加
+        this._handleConfirmClick(); // 確定処理 (内部で confirmAddHole を呼ぶ)
+    } else if (mode === 'view') {
       // 通常のダブルクリック（ビューポートリセット）
       console.log('ダブルクリック - World:', worldPoint.x, worldPoint.y);
       this._viewportManager.updateViewport({
         x: worldPoint.x,
-        y: worldPoint.y, // ワールド座標のYをセット
-        zoom: 1 // Zoomを1にリセット
+        y: worldPoint.y,
+        zoom: 1
       });
     }
   }
@@ -940,40 +819,37 @@ _onWheel(event) {
    * @private
    */
   _onContextMenu(event) {
-    // イベント発生源がダイアログ/フォーム上なら処理中断
     const targetElement = event.target;
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
-      // ダイアログやフォーム上ではデフォルトのコンテキストメニューを許可
       return;
     }
-  
+
     event.preventDefault();
 
-    // ページ全体の座標を取得
     const pageX = event.clientX;
     const pageY = event.clientY;
     const svgPointRaw = this._getSVGPoint(pageX, pageY);
-    const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
+    const worldPoint = this._svgToWorld(svgPointRaw);
 
     if (!worldPoint) return;
 
-    // console.log("Context menu at World:", worldPoint.x, worldPoint.y);
-    // TODO: コンテキストメニュー処理 (ワールド座標を使用)
-    //       編集モードの場合、右クリック位置のオブジェクトを選択してからメニュー表示
-     if (this._editingViewModel.getMode() === 'edit') {
-         const clickedVertex = this._findClosestVertex(worldPoint);
-         if (clickedVertex) {
-             this._viewModel.selectVertex(clickedVertex.id); // 単一選択
-         } else {
-             const clickedFeature = this._findClosestFeature(worldPoint);
-             if (clickedFeature) {
-                 this._viewModel.selectFeature(clickedFeature.id);
-             } else {
-                 this._viewModel.clearSelection();
-             }
-         }
-         // TODO: 選択状態に基づいてコンテキストメニューを表示
+    const mode = this._editingViewModel.getMode();
+    const tool = this._editingViewModel.getTool();
+
+    if (mode === 'add' || tool === 'add-hole') {
+        // 地物追加中または穴追加中の右クリックはキャンセル扱い
+        this._handleCancelClick();
+        console.log("Add/Hole operation cancelled by right-click.");
+    } else if (mode === 'edit') {
+         // 編集モードでの右クリック: コンテキストメニュー
+         this._selectObjectAt(worldPoint); // 右クリック位置のオブジェクトを選択
+         // TODO: 選択状態に基づいてコンテキストメニューを表示する実装
          alert(`Context menu triggered at ${worldPoint.x.toFixed(2)}, ${worldPoint.y.toFixed(2)}`);
+     } else if (this._isMeasuringDistance) {
+         // 測定中の右クリックはキャンセル
+         this.clearMeasurements();
+         this.setMeasuringDistance(false);
+         console.log("Measurement cancelled by right-click.");
      }
   }
 
@@ -983,79 +859,54 @@ _onWheel(event) {
    * @private
    */
   _onTouchStart(event) {
-    // イベント発生源がダイアログ/フォーム上なら処理中断
     const targetElement = event.target;
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
       return;
     }
-
     event.preventDefault();
 
     if (event.touches.length === 1) {
-      // 単一タッチ
       const touch = event.touches[0];
-      // ページ全体の座標を取得
       const pageX = touch.clientX;
       const pageY = touch.clientY;
       const svgPointRaw = this._getSVGPoint(pageX, pageY);
-      const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
+      const worldPoint = this._svgToWorld(svgPointRaw);
 
       if (!worldPoint) return;
 
       this._isMouseDown = true;
       this._lastMousePosition = { x: pageX, y: pageY };
-      this._dragStartPosition = worldPoint; // ★ ドラッグ開始ワールド座標
-      this._draggedVertexId = null; // リセット
+      this._dragStartPosition = worldPoint;
+      this._draggedVertexId = null;
 
       const mode = this._editingViewModel.getMode();
+      const tool = this._editingViewModel.getTool();
+
       if (mode === 'view') {
         this._viewportManager.startDrag(pageX, pageY);
-      } else if (mode === 'add') {
+      } else if (mode === 'add' && tool) {
           this._handleAddPoint(worldPoint);
       } else if (mode === 'edit') {
-           const clickedVertex = this._findClosestVertex(worldPoint);
-           if (clickedVertex) {
-                // ★ 頂点が見つかった場合 ★
-                // 1. 頂点を選択 (ViewModelのメソッドを呼ぶ)
-                this._viewModel.selectVertex(clickedVertex.id); // 単一選択
-                this._draggedVertexId = clickedVertex.id; // ドラッグ対象
-
-                // 2. 頂点が属する地物を特定
-                const features = this._viewModel.getFeatures();
-                const ownerFeature = features.find(f =>
-                    (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
-                    (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
-                    (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id)))
-                );
-
-                // 3. 地物を直接ViewModelに設定
-                if (ownerFeature) {
-                    this._viewModel._selectedFeature = ownerFeature;
-                    this._viewModel._notifyObservers('selectedFeature');
-                } else {
-                    this._viewModel._selectedFeature = null;
-                    this._viewModel._notifyObservers('selectedFeature');
-                }
-           } else {
-               // ★ 頂点が見つからなかった場合 ★
-               const clickedFeature = this._findClosestFeature(worldPoint);
-               if (clickedFeature) {
-                   // 地物を選択 (ViewModelのメソッドを呼ぶ -> これで頂点選択はクリアされる)
-                   this._viewModel.selectFeature(clickedFeature.id);
+           if (tool === 'add-hole') {
+               if (!this._editingViewModel.getTargetPolygonIdForHole()) {
+                    const clickedFeature = this._findClosestFeature(worldPoint);
+                    if (clickedFeature instanceof DomainPolygon) {
+                        this._editingViewModel.startAddingHole(clickedFeature.id);
+                        this._viewModel.selectFeature(clickedFeature.id);
+                    } else { /* alertなど */ }
                } else {
-                   // 何もヒットしなかったら両方の選択を解除
-                   this._viewModel.clearSelection();
+                    this._handleAddPoint(worldPoint);
                }
+           } else {
+               this._selectObjectAt(worldPoint); // 選択処理
            }
       }
 
       if (this._isMeasuringDistance) {
         this._handleAddMeasurePoint(worldPoint);
       }
-
-    } else if (event.touches.length === 2) {
-      // TODO: ピンチ処理準備
     }
+    // TODO: ピンチ処理
   }
 
   /**
@@ -1064,28 +915,23 @@ _onWheel(event) {
    * @private
    */
   _onTouchMove(event) {
-    // イベント発生源がダイアログ/フォーム上なら処理中断
     const targetElement = event.target;
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
       return;
     }
-  
     event.preventDefault();
 
     if (event.touches.length === 1) {
-      // 単一タッチ
       const touch = event.touches[0];
-      // ページ全体の座標を取得
       const pageX = touch.clientX;
       const pageY = touch.clientY;
       const svgPointRaw = this._getSVGPoint(pageX, pageY);
-      const worldPoint = this._svgToWorld(svgPointRaw); // ワールド座標に変換
+      const worldPoint = this._svgToWorld(svgPointRaw);
 
       if (!worldPoint) return;
 
       if (this._isMouseDown) {
         if (!this._isDragging) {
-          // ドラッグ開始判定
           const dx = pageX - this._lastMousePosition.x;
           const dy = pageY - this._lastMousePosition.y;
           const dragThreshold = 10;
@@ -1096,18 +942,17 @@ _onWheel(event) {
 
         if (this._isDragging) {
           const mode = this._editingViewModel.getMode();
+          const tool = this._editingViewModel.getTool();
           if (mode === 'view') {
             this._viewportManager.drag(pageX, pageY);
-          } else if (mode === 'edit' && this._draggedVertexId) {
-            this._handleDragObject(worldPoint); // ワールド座標でドラッグ
+          } else if (mode === 'edit' && tool !== 'add-hole' && this._draggedVertexId) {
+            this._handleDragObject(worldPoint);
           }
         }
       }
-
       this._lastMousePosition = { x: pageX, y: pageY };
-    } else if (event.touches.length === 2) {
-      // TODO: ピンチ処理
     }
+    // TODO: ピンチ処理
   }
 
   /**
@@ -1116,15 +961,14 @@ _onWheel(event) {
    * @private
    */
   _onTouchEnd(event) {
-    // イベント発生源がダイアログ/フォーム上なら処理中断
     const targetElement = event.target;
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) {
       return;
     }
-  
+
     if (this._isMouseDown) {
         const mode = this._editingViewModel.getMode();
-        // 最後のタッチ座標を取得
+        const tool = this._editingViewModel.getTool();
         const lastTouch = event.changedTouches[0];
         const pageX = lastTouch ? lastTouch.clientX : this._lastMousePosition.x;
         const pageY = lastTouch ? lastTouch.clientY : this._lastMousePosition.y;
@@ -1133,26 +977,23 @@ _onWheel(event) {
 
         if (mode === 'view' && this._isDragging) {
             this._viewportManager.endDrag();
-        } else if (mode === 'edit' && this._isDragging && this._draggedVertexId) {
+        } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && this._draggedVertexId) {
             if (worldPoint) this._handleDragEnd(worldPoint);
         } else if (!this._isDragging && worldPoint) {
              // タップ（クリック相当）
              if (mode === 'view') {
                  this._handleClick(worldPoint);
              }
-             // add/editモードのタップは onTouchStart で処理済み
-             // ダブルタップでの確定処理は別途考慮
-             // if (mode === 'add' && !this._isDragging) {
-             //    // ダブルタップ検出が必要
-             //    this._handleConfirmClick();
+             // ダブルタップ検出は別途必要
+             // if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
+             //     // ダブルタップなら確定
+             //     this._handleConfirmClick();
              // }
         }
     }
-
     this._isMouseDown = false;
     this._isDragging = false;
     this._draggedVertexId = null;
-
     // TODO: ピンチ状態リセット
   }
 
@@ -1162,14 +1003,12 @@ _onWheel(event) {
    * @private
    */
   _onKeyDown(event) {
-    // 対象が入力要素の場合は無視 (ただし、プロパティダイアログは特別扱い)
     const targetElement = event.target;
     const isInInputDialog = targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form');
 
     if (isInInputDialog) {
         if (event.key === 'Enter') {
-            // プロパティ入力ダイアログ内のEnterキーはフォーム送信に任せる
-            event.stopPropagation(); // MapView全体でのEnter処理を抑制
+            event.stopPropagation();
             const dialog = targetElement.closest('.property-input-dialog, .layer-input-form');
             const confirmButton = dialog?.querySelector('button:not([data-action="cancel"])');
             if (confirmButton) confirmButton.click();
@@ -1182,77 +1021,66 @@ _onWheel(event) {
             if (cancelButton) {
               cancelButton.click();
             } else if (dialog) {
-              dialog.remove(); // キャンセルボタンがなければダイアログを閉じる
-              this._handleCancelClick(); // 追加モードならキャンセル処理
+              dialog.remove();
+              this._handleCancelClick(); // EditingViewModelの状態もクリア
             }
             return;
         } else {
-            // ダイアログ内の他のキー入力はそのまま許可
             return;
         }
     } else if (targetElement instanceof HTMLInputElement || targetElement instanceof HTMLTextAreaElement || targetElement instanceof HTMLSelectElement) {
-        // 地図外の他の入力要素の場合も無視
         return;
     }
 
-    // --- 地図操作に関するキーボードショートカット ---
     const mode = this._editingViewModel.getMode();
+    const tool = this._editingViewModel.getTool();
 
-    // ESCキーで選択解除または編集キャンセル
     if (event.key === 'Escape') {
        event.preventDefault();
-
-       if (mode === 'add' && this._editingViewModel.getAddingPoints().length > 0) {
-         this._handleCancelClick(); // キャンセル処理を呼び出す
-         console.log("Add operation cancelled by ESC.");
+       if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
+         this._handleCancelClick(); // 追加/穴追加キャンセル
+         console.log("Add/Hole operation cancelled by ESC.");
        } else if (mode === 'edit' && (this._viewModel.getSelectedFeature() || this._viewModel.getSelectedVertices().length > 0)) {
-         // 選択解除
          this._viewModel.clearSelection();
          console.log("Selection cleared by ESC.");
        } else if (this._isMeasuringDistance) {
-           // 測定キャンセル
            this.clearMeasurements();
            this.setMeasuringDistance(false);
            console.log("Measurement cancelled by ESC.");
        } else {
-         // 表示モードに戻る
          this._editingViewModel.setMode('view');
          console.log("Mode set to 'view' by ESC.");
        }
-    } else if (event.key === 'Enter') { // Enterキーで確定
-        if (mode === 'add' && this._editingViewModel.getAddingPoints().length > 0) {
+    } else if (event.key === 'Enter') {
+        // 地物追加中 または 穴追加中のEnterキーで確定
+        if (((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) && this._editingViewModel.getAddingPoints().length > 0) {
             event.preventDefault();
             this._handleConfirmClick();
-            console.log("Add operation confirmed by Enter.");
+            console.log("Add/Hole operation confirmed by Enter.");
         }
-    } else if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) { // 修飾キーなし
+    } else if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) {
        event.preventDefault();
       const selectedFeature = this._viewModel.getSelectedFeature();
       const selectedVertices = this._viewModel.getSelectedVertices();
 
-      if (this._editingViewModel.getMode() === 'edit') { // 編集モードでのみ削除
+      if (mode === 'edit') {
           if (selectedVertices.length > 0) {
-              // TODO: 選択された頂点の削除処理を実装
               console.log("Deleting selected vertices:", selectedVertices.map(v => v.id));
-              // await this._editingViewModel.deleteVertices(selectedVertices.map(v => v.id));
+              // TODO: await this._editingViewModel.deleteVertices(selectedVertices.map(v => v.id));
           } else if (selectedFeature) {
-              // console.log("Deleting feature:", selectedFeature.id);
-              this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature); // ViewModel経由でアンドゥ対応
+              this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature);
           }
       }
-    } else if (event.ctrlKey || event.metaKey) { // アンドゥ/リドゥ
+    } else if (event.ctrlKey || event.metaKey) {
       if (event.key === 'z') {
         event.preventDefault();
         if (event.shiftKey) {
-          // console.log("Redo triggered");
           this._editingViewModel.redo();
         } else {
-          // console.log("Undo triggered");
           this._editingViewModel.undo();
         }
       } else if (event.key === 'y') {
         event.preventDefault();
-        // console.log("Redo triggered");
         this._editingViewModel.redo();
       }
     }
@@ -1264,7 +1092,7 @@ _onWheel(event) {
    * @private
    */
   _onKeyUp(event) {
-    // キー修飾子の状態更新など (必要であれば)
+    // 必要であれば実装
   }
 
   /**
@@ -1272,20 +1100,11 @@ _onWheel(event) {
    * @private
    */
   _onResize() {
-    // コンテナのサイズを取得
-    // 注意: getBoundingClientRect() は小数点を含むことがあるため、整数化が必要な場合がある
     const rect = this._container.getBoundingClientRect();
     const width = Math.floor(rect.width);
     const height = Math.floor(rect.height);
-
-    // console.log("Resize event:", width, height);
-
-    // レンダラーのリサイズ
     this._renderer.resize(width, height);
-
-    // ビューポートのリサイズ (幅と高さのみ更新)
     this._viewportManager.resize(width, height);
-    // resize は内部で updateViewport を呼び、変更があれば _onViewportChanged がトリガーされるはず
   }
 
   /**
@@ -1299,15 +1118,12 @@ _onWheel(event) {
       if (!world || !world.vertices || world.vertices.length === 0) {
           return null;
       }
-
       let closestVertex = null;
-      let minDistanceSq = this._clickToleranceSq; // クリック許容範囲の二乗
-
+      let minDistanceSq = this._clickToleranceSq;
       for (const vertex of world.vertices) {
           const distanceSq = this._viewModel._geometryService.calculateDistanceSq(
               worldPoint.x, worldPoint.y, vertex.x, vertex.y
           );
-
           if (distanceSq < minDistanceSq) {
               minDistanceSq = distanceSq;
               closestVertex = vertex;
@@ -1330,53 +1146,26 @@ _onWheel(event) {
       }
 
       let closestFeature = null;
-      let minDistanceSq = this._clickToleranceSq; // クリック許容範囲の二乗
+      let minDistanceSq = this._clickToleranceSq;
 
       for (const feature of features) {
           let distanceSq = Infinity;
-
-          // 地物の頂点を取得 (存在しない場合スキップ)
           const featureVertices = feature.vertexIds
               ?.map(id => world.vertices.find(v => v.id === id))
               .filter(Boolean);
 
-          if (!featureVertices || featureVertices.length === 0) {
-              // MultiPolygon の場合、subPolygons から頂点を取得する
-              if (feature instanceof DomainPolygon && feature.isMultiPolygon && feature.subPolygons) {
-                  // 最初のサブポリゴンを代表として使う（簡易的な処理）
-                  const firstSubVertices = feature.subPolygons[0]?.vertexIds
-                      ?.map(id => world.vertices.find(v => v.id === id))
-                      .filter(Boolean);
-                  if (!firstSubVertices || firstSubVertices.length === 0) continue;
-                  // MultiPolygon の距離判定は複雑なので、ここでは最初のサブポリゴンで代用
-                   // ポリゴン内部にあれば距離0とする
-                   if (this._viewModel._geometryService.isPointInPolygon(worldPoint, firstSubVertices)) {
-                       distanceSq = 0; // 内部なら最優先
-                   } else {
-                       // 外部の場合、境界線との最短距離を計算
-                       const polygonVertices = [...firstSubVertices, firstSubVertices[0]]; // 閉じたパス
-                       for (let i = 0; i < polygonVertices.length - 1; i++) {
-                           const segmentDistSq = this._viewModel._geometryService.distancePointSegmentSq(
-                               worldPoint, polygonVertices[i], polygonVertices[i + 1]
-                           );
-                           distanceSq = Math.min(distanceSq, segmentDistSq);
-                       }
-                   }
-              } else {
-                continue; // 通常の地物で頂点がない場合はスキップ
-              }
+          if (!featureVertices && !(feature instanceof DomainPolygon && feature.isMultiPolygon)) {
+              continue; // MultiPolygon以外で頂点がない場合はスキップ
           }
 
-
           if (feature instanceof DomainPoint) {
-               if (featureVertices.length === 1) {
+               if (featureVertices?.length === 1) {
                    distanceSq = this._viewModel._geometryService.calculateDistanceSq(
                        worldPoint.x, worldPoint.y, featureVertices[0].x, featureVertices[0].y
                    );
                }
           } else if (feature instanceof DomainLine) {
-               if (featureVertices.length >= 2) {
-                   // 線分ごとに最短距離を計算し、最小値を取得
+               if (featureVertices?.length >= 2) {
                    for (let i = 0; i < featureVertices.length - 1; i++) {
                        const segmentDistSq = this._viewModel._geometryService.distancePointSegmentSq(
                            worldPoint, featureVertices[i], featureVertices[i + 1]
@@ -1385,23 +1174,40 @@ _onWheel(event) {
                    }
                }
           } else if (feature instanceof DomainPolygon) {
-                // isMultiPolygon は上で処理済み、そうでなければ通常のポリゴン
-                if (!feature.isMultiPolygon && featureVertices.length >= 3) {
-                     // ポリゴン内部にあれば距離0とする
-                     if (this._viewModel._geometryService.isPointInPolygon(worldPoint, featureVertices)) {
-                         distanceSq = 0; // 内部なら最優先
-                     } else {
-                         // 外部の場合、境界線との最短距離を計算
-                         const polygonVertices = [...featureVertices, featureVertices[0]]; // 閉じたパス
-                         for (let i = 0; i < polygonVertices.length - 1; i++) {
-                             const segmentDistSq = this._viewModel._geometryService.distancePointSegmentSq(
-                                 worldPoint, polygonVertices[i], polygonVertices[i + 1]
-                             );
-                             distanceSq = Math.min(distanceSq, segmentDistSq);
-                         }
-                         // TODO: 穴との距離も考慮
-                     }
-                }
+              if (feature.isMultiPolygon && feature.subPolygons) {
+                  // MultiPolygon: 各サブポリゴンとの距離を計算し最小値をとる
+                  feature.subPolygons.forEach(sub => {
+                      const subVertices = sub.vertexIds?.map(id => world.vertices.find(v => v.id === id)).filter(Boolean);
+                      if (subVertices && subVertices.length >= 3) {
+                          let subDistSq = Infinity;
+                          if (this._viewModel._geometryService.isPointInPolygon(worldPoint, subVertices)) {
+                              subDistSq = 0;
+                          } else {
+                              const polygonVertices = [...subVertices, subVertices[0]];
+                              for (let i = 0; i < polygonVertices.length - 1; i++) {
+                                  subDistSq = Math.min(subDistSq, this._viewModel._geometryService.distancePointSegmentSq(
+                                      worldPoint, polygonVertices[i], polygonVertices[i + 1]
+                                  ));
+                              }
+                              // TODO: MultiPolygonの穴も考慮
+                          }
+                          distanceSq = Math.min(distanceSq, subDistSq);
+                      }
+                  });
+              } else if (featureVertices?.length >= 3) {
+                   // 通常ポリゴン
+                   if (this._viewModel._geometryService.isPointInPolygon(worldPoint, featureVertices)) {
+                       distanceSq = 0;
+                   } else {
+                       const polygonVertices = [...featureVertices, featureVertices[0]];
+                       for (let i = 0; i < polygonVertices.length - 1; i++) {
+                           distanceSq = Math.min(distanceSq, this._viewModel._geometryService.distancePointSegmentSq(
+                               worldPoint, polygonVertices[i], polygonVertices[i + 1]
+                           ));
+                       }
+                       // TODO: 通常ポリゴンの穴も考慮
+                   }
+              }
           }
 
           if (distanceSq < minDistanceSq) {
@@ -1414,29 +1220,22 @@ _onWheel(event) {
 
 
   /**
-   * オブジェクト選択処理 (旧 _handleSelectObject から改名・整理)
+   * オブジェクト選択処理
    * @param {object} worldPoint - ワールド座標 {x, y}
    * @param {boolean} [addToSelection=false] - 選択に追加するかどうか
    * @private
    */
    _selectObjectAt(worldPoint, addToSelection = false) {
-      // まず頂点選択を試みる
       const clickedVertex = this._findClosestVertex(worldPoint);
       if (clickedVertex) {
-           // ★ 頂点が見つかった場合 ★
-            // 1. 頂点を選択 (ViewModelのメソッドを呼ぶ)
             this._viewModel.selectVertex(clickedVertex.id, addToSelection);
-            this._draggedVertexId = clickedVertex.id; // ドラッグ対象
-
-            // 2. 頂点が属する地物を特定
+            this._draggedVertexId = clickedVertex.id;
             const features = this._viewModel.getFeatures();
             const ownerFeature = features.find(f =>
                 (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
                 (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
                 (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id)))
             );
-
-            // 3. 地物を直接ViewModelに設定
             if (ownerFeature) {
                 if (!addToSelection || this._viewModel.getSelectedFeature()?.id !== ownerFeature.id) {
                     this._viewModel._selectedFeature = ownerFeature;
@@ -1449,13 +1248,11 @@ _onWheel(event) {
                  }
             }
       } else {
-           // ★ 頂点が見つからなかった場合 ★
            const clickedFeature = this._findClosestFeature(worldPoint);
            if (clickedFeature) {
-                // 地物を選択 (ViewModelのメソッドを呼ぶ -> これで頂点選択はクリアされる)
                 this._viewModel.selectFeature(clickedFeature.id);
-           } else if (!addToSelection) { // 追加選択でない場合のみクリア
-                this._viewModel.clearSelection(); // 何もヒットしなかったら選択解除
+           } else if (!addToSelection) {
+                this._viewModel.clearSelection();
            }
       }
   }
@@ -1467,10 +1264,9 @@ _onWheel(event) {
    */
   _handleClick(worldPoint) {
     console.log("Click at World (view mode):", worldPoint.x, worldPoint.y);
-    // 情報表示など
     const clickedFeature = this._findClosestFeature(worldPoint);
     if (clickedFeature) {
-        this._viewModel.selectFeature(clickedFeature.id); // ビューモードでも選択できるように
+        this._viewModel.selectFeature(clickedFeature.id);
     } else {
         this._viewModel.clearSelection();
     }
@@ -1482,32 +1278,24 @@ _onWheel(event) {
    * @private
    */
   _handleDragObject(worldPoint) {
-     if (!this._draggedVertexId) return; // ドラッグ対象の頂点がなければ何もしない
-
-    // 選択されている頂点（単一のはず）を取得
+     if (!this._draggedVertexId) return;
     const selectedVertices = this._viewModel.getSelectedVertices();
     if (selectedVertices.length !== 1 || selectedVertices[0].id !== this._draggedVertexId) {
-        // 予期せぬ状態。ドラッグ対象が選択されていない。
         console.warn("Dragging vertex is not selected. Clearing drag target.");
         this._draggedVertexId = null;
         return;
     }
 
-     // ドラッグ中はリアルタイム更新せず、仮表示だけ行う
-     // MapViewModel の状態は変更せず、EditingViewModel の一時要素で表現
-     this._editingViewModel.clearTemporaryElements(); // 前の仮表示をクリア
-
+     this._editingViewModel.clearTemporaryElements();
      const vertex = selectedVertices[0];
-     // ドラッグ中の仮の頂点を描画
      this._editingViewModel.addTemporaryElement({
          type: 'point',
          x: worldPoint.x,
          y: worldPoint.y,
          style: { fill: '#ff00ff', radius: 7, stroke: '#ffffff', strokeWidth: 2 }
      });
-
-     // TODO: ドラッグ中の線や面の仮表示（必要であれば）
-     this._render(); // 再描画をトリガー
+     // TODO: ドラッグ中の線や面の仮表示
+     this._render();
   }
 
   /**
@@ -1515,51 +1303,41 @@ _onWheel(event) {
    * @param {object} worldPoint - 最終的なワールド座標 {x, y}
    * @private
    */
-  async _handleDragEnd(worldPoint) { // asyncに変更
-    this._editingViewModel.clearTemporaryElements(); // 仮表示をクリア
+  async _handleDragEnd(worldPoint) {
+    this._editingViewModel.clearTemporaryElements();
+    if (!this._draggedVertexId) return;
 
-    if (!this._draggedVertexId) return; // ドラッグ対象がなければ終了
-
-    // 選択されていた頂情報を取得 (移動前の座標が必要)
     const world = this._viewModel.getWorld();
     const originalVertex = world?.vertices.find(v => v.id === this._draggedVertexId);
-
     if (!originalVertex) {
         console.error("Failed to find original vertex for drag end.");
         this._draggedVertexId = null;
         return;
     }
 
-    // _dragStartPosition はマウスダウン時のワールド座標
     const oldPosition = { x: originalVertex.x, y: originalVertex.y };
     const newPosition = { x: worldPoint.x, y: worldPoint.y };
 
-    // 開始位置と終了位置がほぼ同じなら何もしない（誤操作防止）
     const distSq = this._viewModel._geometryService.calculateDistanceSq(
         oldPosition.x, oldPosition.y, newPosition.x, newPosition.y
     );
 
-    if (distSq < 1e-9) { // 閾値を小さく設定
+    if (distSq < 1e-9) {
         console.log("Drag ended but position didn't change significantly.");
-        this._draggedVertexId = null; // ドラッグ対象をリセット
-        this._render(); // 仮表示を消すために再描画
+        this._draggedVertexId = null;
+        this._render();
         return;
     }
 
     console.log("Drag ended for vertex:", this._draggedVertexId, "New position:", newPosition);
     try {
-        // ViewModel経由で頂点を移動（アンドゥ対応）
         await this._editingViewModel.moveVertex(this._draggedVertexId, oldPosition, newPosition);
-        // 成功したらドラッグ対象をクリア
         this._draggedVertexId = null;
-        // ViewModelの変更通知により自動で再描画されるはず
     } catch (error) {
         console.error("Failed to move vertex:", error);
-        // エラー時のUIフィードバックなど
-        this._draggedVertexId = null; // エラー時もリセット
-        this._render(); // 状態を元に戻すために再描画
+        this._draggedVertexId = null;
+        this._render();
     }
-
   }
 
   /**
@@ -1568,39 +1346,34 @@ _onWheel(event) {
    * @private
    */
   _handleMouseHover(worldPoint) {
-      // 編集モードでのみホバー処理を行う
       if (this._editingViewModel.getMode() !== 'edit') {
-          // 編集モード以外ではホバー状態をクリア
           if (this._viewModel.getHoveredVertex() || this._viewModel.getHoveredFeature()) {
               this._viewModel.hoverVertex(null);
               this._viewModel.hoverFeature(null);
-              this._render(); // ホバー解除を反映
+              this._render();
           }
-          this._mapOverlay.style.cursor = 'default'; // カーソルをデフォルトに
+          this._mapOverlay.style.cursor = 'default';
           return;
       }
 
-      // 最も近い頂点をホバー
       const hoveredVertex = this._findClosestVertex(worldPoint);
       if (hoveredVertex) {
           this._viewModel.hoverVertex(hoveredVertex.id);
-          this._viewModel.hoverFeature(null); // 地物のホバーは解除
-          this._mapOverlay.style.cursor = 'pointer'; // カーソル変更
+          this._viewModel.hoverFeature(null);
+          this._mapOverlay.style.cursor = 'pointer';
       } else {
-          // 頂点がなければ地物をホバー
           const hoveredFeature = this._findClosestFeature(worldPoint);
           if (hoveredFeature) {
               this._viewModel.hoverFeature(hoveredFeature.id);
-              this._viewModel.hoverVertex(null); // 頂点のホバーは解除
-              this._mapOverlay.style.cursor = 'pointer'; // カーソル変更
+              this._viewModel.hoverVertex(null);
+              this._mapOverlay.style.cursor = 'pointer';
           } else {
-              // 何もホバーしていなければ解除
               this._viewModel.hoverVertex(null);
               this._viewModel.hoverFeature(null);
-              this._mapOverlay.style.cursor = 'default'; // カーソルをデフォルトに
+              this._mapOverlay.style.cursor = 'default';
           }
       }
-      this._render(); // ホバー状態を反映
+      this._render();
   }
 
   /**
@@ -1610,7 +1383,6 @@ _onWheel(event) {
    */
   _handleAddPoint(worldPoint) {
     if (!worldPoint) return;
-    // console.log("Adding point at World:", worldPoint.x, worldPoint.y);
     this._editingViewModel.addPoint(worldPoint);
   }
 
@@ -1621,7 +1393,6 @@ _onWheel(event) {
    */
   _handleAddMeasurePoint(worldPoint) {
     if (!worldPoint) return;
-    // console.log("Adding measure point at World:", worldPoint.x, worldPoint.y);
     this._measurePoints.push(worldPoint);
     this._render();
   }
@@ -1633,17 +1404,14 @@ _onWheel(event) {
   setMeasuringDistance(enabled) {
     if (this._isMeasuringDistance !== enabled) {
         this._isMeasuringDistance = enabled;
-        // console.log("Measuring distance mode:", enabled);
         if (!enabled) {
-            this.clearMeasurements(); // モード解除時に測定結果をクリア
+            this.clearMeasurements();
         } else {
-            // 測定モード開始時に他のモードを解除するなど（必要であれば）
             this._editingViewModel.setMode('view');
-            this._viewModel.clearSelection(); // 選択も解除
+            this._viewModel.clearSelection();
         }
-        // カーソル形状の変更など
         this._mapOverlay.style.cursor = enabled ? 'crosshair' : 'default';
-        this._render(); // 状態が変わったので再描画
+        this._render();
     }
   }
 
@@ -1662,21 +1430,18 @@ _onWheel(event) {
     this._measurePoints = [];
     this._clearTemporaryDrawings('measure-');
     this._measureElements = [];
-     // console.log("Measurements cleared.");
-     this._render(); // クリア後に再描画
+     this._render();
   }
 
   /**
    * 特定のクラスを持つ一時的な描画要素を削除
-   * @param {string} classNamePrefix - 削除する要素のクラス名プレフィックス (e.g., 'measure-', 'adding-')
+   * @param {string} classNamePrefix - 削除する要素のクラス名プレフィックス
    * @private
    */
   _clearTemporaryDrawings(classNamePrefix) {
       if (!this._renderer || !this._renderer._mainGroup) return;
-      // クラス名プレフィックスに合致する要素を削除
       const tempElements = this._renderer._mainGroup.querySelectorAll(`.temp-drawing.${classNamePrefix}element, .temp-drawing.${classNamePrefix}feature`);
       tempElements.forEach(el => this._renderer.removeElement(el));
-      // console.log(`Cleared temporary drawings with prefix: ${classNamePrefix}`);
   }
 
   /**
@@ -1685,7 +1450,7 @@ _onWheel(event) {
    */
   toggleGrid(show) {
     this._renderer.toggleGrid(show);
-    this._render(); // グリッドの状態が変わったので再描画
+    this._render();
   }
 
   /**
@@ -1693,8 +1458,7 @@ _onWheel(event) {
    * @private
    */
   _createActionButtons() {
-      this._actionButtonsContainer.innerHTML = ''; // 既存ボタンをクリア
-
+      this._actionButtonsContainer.innerHTML = '';
       const confirmButton = document.createElement('button');
       confirmButton.textContent = '確定 (Enter)';
       confirmButton.style.marginRight = '10px';
@@ -1718,13 +1482,9 @@ _onWheel(event) {
       const tool = this._editingViewModel.getTool();
       let show = false;
 
-      if (mode === 'add' && points.length > 0) {
-          // ツールに応じて表示条件を設定
-          if (tool === 'point' && points.length === 1) {
-              show = true;
-          } else if (tool === 'line' && points.length >= 2) {
-              show = true;
-          } else if (tool === 'polygon' && points.length >= 3) {
+      if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
+          const minPoints = (tool === 'point') ? 1 : (tool === 'line') ? 2 : 3; // 穴もポリゴンと同じ3点
+          if (points.length >= minPoints) {
               show = true;
           }
       }
@@ -1737,19 +1497,23 @@ _onWheel(event) {
    * @private
    */
   _handleConfirmClick() {
-      const points = this._editingViewModel.getAddingPoints();
+      const mode = this._editingViewModel.getMode();
       const tool = this._editingViewModel.getTool();
+      const points = this._editingViewModel.getAddingPoints();
 
-      // ツールごとの最小頂点数をチェック
-      let isValid = false;
-      if (tool === 'point' && points.length === 1) isValid = true;
-      if (tool === 'line' && points.length >= 2) isValid = true;
-      if (tool === 'polygon' && points.length >= 3) isValid = true;
-
-      if (isValid) {
-          this._showPropertyInputDialog();
-      } else {
-          alert(`${tool === 'point' ? '点' : tool === 'line' ? '線' : '面'}を作成するには、頂点が足りません。`);
+      if (mode === 'add' && tool) {
+          const minPoints = (tool === 'point') ? 1 : (tool === 'line') ? 2 : 3;
+          if (points.length >= minPoints) {
+              this._showPropertyInputDialog(); // 地物追加のプロパティ入力へ
+          } else {
+              alert(`${tool === 'point' ? '点' : tool === 'line' ? '線' : '面'}を作成するには、頂点が足りません。`);
+          }
+      } else if (mode === 'edit' && tool === 'add-hole') {
+           if (points.length >= 3) {
+               this._editingViewModel.confirmAddHole(); // 穴追加を確定
+           } else {
+               alert('穴を作成するには、少なくとも3つの頂点が必要です。');
+           }
       }
   }
 
@@ -1758,76 +1522,76 @@ _onWheel(event) {
    * @private
    */
   _handleCancelClick() {
-      // EditingViewModel の内部メソッドを直接呼ぶのは避けるべきだが、暫定対応
-      this._editingViewModel._clearAddingPoints();
+      // EditingViewModel の状態をクリアするメソッドを呼び出す
+      this._editingViewModel._clearAddingState();
+
       // 他のキャンセル処理（例：プロパティダイアログを閉じる）
       const existingDialog = this._mapElement.querySelector('.property-input-dialog');
       if (existingDialog) existingDialog.remove();
+
+      // ツールをデフォルトに戻すなど
+      if (this._editingViewModel.getTool() === 'add-hole') {
+          this._editingViewModel.setTool('select');
+      }
   }
 
   /**
-   * プロパティ入力ダイアログを表示
+   * プロパティ入力ダイアログを表示 (地物追加用)
    * @private
    */
   _showPropertyInputDialog() {
-    // 既存のダイアログがあれば削除
     const existingDialog = this._mapElement.querySelector('.property-input-dialog');
     if (existingDialog) existingDialog.remove();
 
     const dialog = document.createElement('div');
     dialog.className = 'property-input-dialog';
-    dialog.style.position = 'absolute';
-    dialog.style.top = '50%';
-    dialog.style.left = '50%';
-    dialog.style.transform = 'translate(-50%, -50%)';
-    dialog.style.zIndex = '30';
-    dialog.style.background = 'white';
-    dialog.style.padding = '20px';
-    dialog.style.border = '1px solid #ccc';
-    dialog.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
+    dialog.style.cssText = `
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        z-index: 30; background: white; padding: 20px; border: 1px solid #ccc;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1); min-width: 300px;
+    `;
 
     const form = document.createElement('form');
-    form.onsubmit = (e) => { e.preventDefault(); confirmButton.click(); }; // Enterで確定
+    form.onsubmit = (e) => { e.preventDefault(); confirmButton.click(); };
 
     // 名前入力
-    const nameLabel = document.createElement('label');
-    nameLabel.textContent = '名前: ';
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text'; nameInput.name = 'name'; nameInput.required = true;
     const nameRow = document.createElement('div'); nameRow.style.marginBottom='10px';
+    const nameLabel = document.createElement('label'); nameLabel.textContent = '名前: '; nameLabel.style.display='block';
+    const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.name = 'name'; nameInput.required = true; nameInput.style.width='100%';
     nameRow.appendChild(nameLabel); nameRow.appendChild(nameInput);
     form.appendChild(nameRow);
 
     // 説明入力
-    const descLabel = document.createElement('label');
-    descLabel.textContent = '説明: ';
-    const descInput = document.createElement('textarea');
-    descInput.name = 'description';
     const descRow = document.createElement('div'); descRow.style.marginBottom='10px';
+    const descLabel = document.createElement('label'); descLabel.textContent = '説明: '; descLabel.style.display='block';
+    const descInput = document.createElement('textarea'); descInput.name = 'description'; descInput.style.width='100%'; descInput.rows = 3;
     descRow.appendChild(descLabel); descRow.appendChild(descInput);
     form.appendChild(descRow);
 
     // カテゴリ選択
-    const categoryLabel = document.createElement('label');
-    categoryLabel.textContent = 'カテゴリ: ';
-    const categorySelect = document.createElement('select');
-    categorySelect.name = 'category';
-    // サイドバーと同じカテゴリ取得ロジックを使うべきだが、ここでは簡易的に
-    const categories = this._getFeatureCategories(); // 仮のカテゴリ取得関数
+    const categoryRow = document.createElement('div'); categoryRow.style.marginBottom='10px';
+    const categoryLabel = document.createElement('label'); categoryLabel.textContent = 'カテゴリ: '; categoryLabel.style.display='block';
+    const categorySelect = document.createElement('select'); categorySelect.name = 'category'; categorySelect.style.width='100%';
+    const currentTool = this._editingViewModel.getTool();
+    let categories = [];
+    if(currentTool === 'point') categories = this._getCategoriesForFeatureType('point');
+    else if(currentTool === 'line') categories = this._getCategoriesForFeatureType('line');
+    else if(currentTool === 'polygon') categories = this._getCategoriesForFeatureType('polygon');
+    else categories = this._getCategoriesForFeatureType('unknown'); // デフォルト
+
     categories.forEach(cat => {
         const option = document.createElement('option');
         option.value = cat.id; option.textContent = cat.name;
         categorySelect.appendChild(option);
     });
-    const categoryRow = document.createElement('div'); categoryRow.style.marginBottom='10px';
     categoryRow.appendChild(categoryLabel); categoryRow.appendChild(categorySelect);
     form.appendChild(categoryRow);
 
     // ボタン
-    const buttonRow = document.createElement('div'); buttonRow.style.textAlign = 'right';
+    const buttonRow = document.createElement('div'); buttonRow.style.textAlign = 'right'; buttonRow.style.marginTop='15px';
     const confirmButton = document.createElement('button'); confirmButton.type = 'button'; confirmButton.textContent = '確定';
     const cancelButton = document.createElement('button'); cancelButton.type = 'button'; cancelButton.textContent = 'キャンセル';
-    cancelButton.dataset.action = 'cancel'; // キャンセルボタン識別用
+    cancelButton.dataset.action = 'cancel';
     cancelButton.style.marginLeft = '10px';
     buttonRow.appendChild(confirmButton); buttonRow.appendChild(cancelButton);
     form.appendChild(buttonRow);
@@ -1840,17 +1604,15 @@ _onWheel(event) {
         const properties = {
             name: nameInput.value.trim() || '名称未設定',
             description: descInput.value.trim(),
-            category: categorySelect.value || 'default' // デフォルトカテゴリ
+            category: categorySelect.value || 'default'
         };
-        // TODO: 現在選択中のレイヤーIDを取得する
         const currentLayerId = this._viewModel.getWorld()?.layers[0]?.id || 'layer-base'; // 仮
         this._confirmAddFeatureWithProperties(properties, currentLayerId);
         dialog.remove();
     };
     cancelButton.onclick = () => {
         dialog.remove();
-        // キャンセルしたので追加中の点もクリアする
-        this._handleCancelClick();
+        this._handleCancelClick(); // 追加状態をキャンセル
     };
   }
 
@@ -1862,31 +1624,19 @@ _onWheel(event) {
    */
   async _confirmAddFeatureWithProperties(properties, layerId) {
     try {
-        // 正しいTimePointインスタンスを使う
         const correctTimePoint = this._viewModel.getCurrentTime();
-
-        // Propertyインスタンスの生成 (TimePointを使う)
         const domainProperty = new Property(
-            correctTimePoint, // TimePointインスタンスを使用
+            correctTimePoint,
             properties.name,
             properties.description,
-            { category: properties.category }, // 属性はオブジェクトで
-            null, // startTime
-            null  // endTime
+            { category: properties.category },
+            null, null
         );
-
-        // EditingViewModelのメソッドを呼び出す
-        // プロパティを配列で渡す
         await this._editingViewModel.confirmAddFeature([domainProperty], layerId);
-
         console.log('地物の追加が確定しました。');
-        // 成功した場合、ViewModelの変更通知によって自動的にUIが更新されるはず
-        // (追加中の線が消え、確定された地物が描画される)
-
     } catch (error) {
         console.error('地物の追加確定に失敗:', error);
         alert(`エラー: ${error.message}`);
-        // 必要であれば、エラー発生時に追加中の点を保持するなどの処理を追加
     }
   }
 
@@ -1894,14 +1644,14 @@ _onWheel(event) {
    * （仮）カテゴリ取得関数
    * @private
    */
-  _getFeatureCategories() {
-      // 本来はConfigManagerやViewModelから取得すべき
-      return [
-          { id: 'default', name: 'デフォルト' },
-          { id: 'city', name: '都市' },
-          { id: 'road', name: '道路' },
-          { id: 'kingdom', name: '王国' },
-      ];
+  _getCategoriesForFeatureType(featureType) {
+      const baseCategories = [{ id: 'default', name: 'デフォルト' }];
+      switch (featureType) {
+          case 'point': return [...baseCategories, { id: 'city', name: '都市' }, { id: 'town', name: '町村' }, { id: 'battle', name: '戦闘' }, { id: 'ruin', name: '遺跡' }];
+          case 'line': return [...baseCategories, { id: 'road', name: '道路' }, { id: 'railway', name: '鉄道' }, { id: 'river', name: '河川' }, { id: 'trade_route', name: '交易路' }, { id: 'border', name: '国境' }];
+          case 'polygon': return [...baseCategories, { id: 'kingdom', name: '王国' }, { id: 'empire', name: '帝国' }, { id: 'province', name: '地方' }, { id: 'ocean', name: '海洋' }, { id: 'lake', name: '湖沼' }];
+          default: return baseCategories;
+      }
   }
 
 }

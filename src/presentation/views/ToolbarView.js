@@ -118,12 +118,12 @@ export class ToolbarView {
     // 追加モード用ツール
     const addTools = [
       { id: 'point', label: '点', icon: '•' },
-      { id: 'line', label: '線', icon: '〰' }, // アイコン変更
+      { id: 'line', label: '線', icon: '〰' },
       { id: 'polygon', label: '面', icon: '▢' }
     ];
     addTools.forEach(tool => {
       const button = createButton(tool, () => this._editingViewModel.setTool(tool.id));
-      button.dataset.mode = 'add'; // モード情報を付与
+      button.dataset.mode = 'add';
       toolSection.appendChild(button);
       this._toolButtons[`add-${tool.id}`] = button;
     });
@@ -137,16 +137,17 @@ export class ToolbarView {
     ];
     editTools.forEach(tool => {
       const button = createButton(tool, () => {
-        if (tool.id === 'add-hole') {
-          // 穴追加モードは EditingViewModel で管理されるべき
-          // this._editingViewModel.setAddingHole(true); // 古い可能性あり
-           this._editingViewModel.setTool(tool.id); // ツールとして設定
-           console.warn("穴追加ツールの正確な ViewModel 操作を確認してください。");
-        } else {
-          this._editingViewModel.setTool(tool.id);
+        // 'add-hole' ツール選択時にモードも 'edit' にする
+        if (this._editingViewModel.getMode() !== 'edit') {
+             this._editingViewModel.setMode('edit');
         }
+        this._editingViewModel.setTool(tool.id);
+        // if (tool.id === 'add-hole') {
+        //    // 穴追加モードの開始は MapView 側でポリゴン選択後に行う
+        //    console.log("穴追加ツール選択。次にマップ上のポリゴンをクリックしてください。");
+        // }
       });
-       button.dataset.mode = 'edit'; // モード情報を付与
+       button.dataset.mode = 'edit';
       toolSection.appendChild(button);
       this._toolButtons[`edit-${tool.id}`] = button;
     });
@@ -155,12 +156,8 @@ export class ToolbarView {
 
     // --- ユーティリティセクション ---
     const utilSection = createSection();
-
-    // 保存ボタン
     const saveButton = createButton({ label: '保存', icon: '💾' }, () => this._saveWorld());
     utilSection.appendChild(saveButton);
-
-    // 読込ボタン
     const loadButton = createButton({ label: '読込', icon: '📂' }, () => this._loadWorld());
     utilSection.appendChild(loadButton);
     this._toolbarElement.appendChild(utilSection);
@@ -168,27 +165,21 @@ export class ToolbarView {
 
     // --- 表示設定セクション ---
     const viewSection = createSection();
-
-    // 測定ボタン
     this._measureButton = createButton({ label: '距離測定', icon: '📏' }, () => {
       const isMeasuring = this._mapView.isMeasuringDistance();
       this._mapView.setMeasuringDistance(!isMeasuring);
-      this._updateMeasureButtonState(); // ボタンの状態を更新
+      this._updateMeasureButtonState();
     });
     viewSection.appendChild(this._measureButton);
-
-    // 測定クリアボタン
     const clearMeasureButton = createButton({ label: '測定クリア', icon: '🧹' }, () => {
       this._mapView.clearMeasurements();
-       this._updateMeasureButtonState(); // クリアしたら通常状態に戻す
+       this._updateMeasureButtonState();
     });
     viewSection.appendChild(clearMeasureButton);
-
-    // グリッド表示ボタン
-    this._gridButton = createButton({ label: 'グリッド', icon: '⊟' }, () => { // アイコン変更
-        this._isGridVisible = !this._isGridVisible; // 内部状態を切り替え
-        this._mapView.toggleGrid(this._isGridVisible); // MapView に通知
-        this._updateGridButtonState(); // ボタンの状態を更新
+    this._gridButton = createButton({ label: 'グリッド', icon: '⊟' }, () => {
+        this._isGridVisible = !this._isGridVisible;
+        this._mapView.toggleGrid(this._isGridVisible);
+        this._updateGridButtonState();
     });
     viewSection.appendChild(this._gridButton);
     this._toolbarElement.appendChild(viewSection);
@@ -196,12 +187,9 @@ export class ToolbarView {
 
     // --- 履歴セクション ---
     const historySection = createSection();
-
-    // アンドゥ・リドゥボタン
     const undoButton = createButton({ label: '元に戻す', icon: '↩' }, () => this._editingViewModel.undo());
     historySection.appendChild(undoButton);
     this._toolButtons['undo'] = undoButton;
-
     const redoButton = createButton({ label: 'やり直し', icon: '↪' }, () => this._editingViewModel.redo());
     historySection.appendChild(redoButton);
     this._toolButtons['redo'] = redoButton;
@@ -215,17 +203,14 @@ export class ToolbarView {
    * @private
    */
   _onEditingViewModelChanged(type, data) {
-    // タイプに応じた処理
     switch (type) {
       case 'mode':
       case 'tool':
         this._updateToolbarDisplay();
         break;
-
       case 'history':
         this._updateHistoryButtons(data);
         break;
-
       default:
         break;
     }
@@ -239,42 +224,39 @@ export class ToolbarView {
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
 
-    // モードボタンの状態を更新
     Object.keys(this._modeButtons).forEach(modeId => {
       this._modeButtons[modeId].classList.toggle('active', modeId === mode);
-      // 背景色での表現（クラスでの制御が望ましい）
       this._modeButtons[modeId].style.backgroundColor = modeId === mode ? '#c0c0c0' : '';
     });
 
-    // ツールボタンの表示/非表示と選択状態を更新
     Object.keys(this._toolButtons).forEach(buttonId => {
       const button = this._toolButtons[buttonId];
-      if (!button.dataset) return; // undo, redo ボタンは dataset がない
+      if (!button.dataset) return;
 
       const buttonMode = button.dataset.mode;
       const toolId = buttonId.startsWith('add-') ? buttonId.substring(4)
                    : buttonId.startsWith('edit-') ? buttonId.substring(5)
                    : null;
 
-      // モードに合わないツールは非表示
       const isVisible = buttonMode === mode;
       button.style.display = isVisible ? 'inline-block' : 'none';
 
       if (isVisible && toolId) {
-          // 選択状態の更新
           const isActive = toolId === tool;
           button.classList.toggle('active', isActive);
-          // 背景色での表現
           button.style.backgroundColor = isActive ? '#c0c0c0' : '';
-      } else {
+      } else if (buttonId !== 'undo' && buttonId !== 'redo') { // Undo/Redo以外
           button.classList.remove('active');
           button.style.backgroundColor = '';
       }
     });
 
-     // 履歴ボタンはモードに関わらず表示（有効/無効は _updateHistoryButtons で制御）
      if (this._toolButtons['undo']) this._toolButtons['undo'].style.display = 'inline-block';
      if (this._toolButtons['redo']) this._toolButtons['redo'].style.display = 'inline-block';
+     this._updateHistoryButtons({ // 履歴ボタンの有効状態も更新
+         canUndo: this._editingViewModel.canUndo(),
+         canRedo: this._editingViewModel.canRedo()
+     });
   }
 
   /**
@@ -315,12 +297,10 @@ export class ToolbarView {
   }
 
   _saveWorld() {
-    // 仮実装：アラートを表示
     alert('現在、自動保存のみ実装されています。明示的な保存機能は次期バージョンで実装予定です。');
   }
 
   _loadWorld() {
-    // 仮実装：アラートを表示
     alert('読込機能は次期バージョンで実装予定です。');
   }
 }
