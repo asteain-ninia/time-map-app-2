@@ -15,9 +15,9 @@ export class EditingViewModel {
     this._mode = 'view'; // 'view', 'add', 'edit'
     this._tool = null; // 'point', 'line', 'polygon', 'select', 'add-hole', ...
     this._addingPoints = []; // 追加中の点の配列 (地物追加または穴追加用)
-    // this._isAddingHole = false; // _tool === 'add-hole' で代替
     this._targetPolygonIdForHole = null; // 穴追加対象のポリゴンID
     this._temporaryElements = []; // 一時的な表示要素 (MapViewで描画)
+    this._draggingVertexInfo = null; // ドラッグ中の頂点情報 { id: string, originalPosition: {x, y}, currentPosition: {x, y} }
 
     // アンドゥ・リドゥの状態
     this._undoStack = [];
@@ -37,6 +37,10 @@ export class EditingViewModel {
       // 追加/穴追加作業中のデータをクリア
       if ((this._mode === 'add' || this._tool === 'add-hole') && this._addingPoints.length > 0) {
         this._clearAddingState();
+      }
+      // ドラッグ中の場合、ドラッグをキャンセル
+      if (this._draggingVertexInfo) {
+         this._resetDraggingState();
       }
       // 編集モード終了時に一時要素クリア
       if (mode !== 'edit') {
@@ -59,6 +63,10 @@ export class EditingViewModel {
       // 追加/穴追加作業中のデータをクリア
        if ((this._mode === 'add' || this._tool === 'add-hole') && this._addingPoints.length > 0) {
         this._clearAddingState();
+      }
+      // ドラッグ中の場合、ドラッグをキャンセル
+      if (this._draggingVertexInfo) {
+         this._resetDraggingState();
       }
        // ツール変更時に一時要素クリア
        this.clearTemporaryElements();
@@ -125,6 +133,8 @@ export class EditingViewModel {
   addPoint(point) {
     // 'add' モードまたは 'edit' モードの 'add-hole' ツールの場合に追加
     if ((this._mode === 'add' && this._tool) || (this._mode === 'edit' && this._tool === 'add-hole')) {
+        // ドラッグ中は追加しない（誤操作防止）
+        if(this._draggingVertexInfo) return;
         this._addingPoints.push(point);
         this._notifyObservers('addingPoints');
     } else {
@@ -239,7 +249,9 @@ export class EditingViewModel {
         type: 'add',
         featureId: feature.id,
         featureType: this._tool,
-        featureData: feature
+        featureData: feature,
+        // 復元に必要な頂点データを保存 (追加時の状態)
+        addedVertices: this._getVerticesByIds(feature.vertexIds)
       });
 
       // 追加状態をクリア
@@ -288,14 +300,120 @@ export class EditingViewModel {
   }
 
   /**
-   * 頂点を移動
+   * 頂点ドラッグの開始
+   * @param {string} vertexId - ドラッグする頂点のID
+   * @param {Object} originalPosition - ドラッグ開始時の位置 { x, y }
+   */
+  startVertexDrag(vertexId, originalPosition) {
+      if (this._mode !== 'edit' || this._tool === 'add-hole') {
+          console.warn("Cannot start vertex drag in current mode/tool:", this._mode, this._tool);
+          return;
+      }
+      if (!vertexId || !originalPosition) {
+          console.error("Invalid arguments for startVertexDrag");
+          return;
+      }
+      // 既にドラッグ中なら何もしない（またはエラー）
+      if (this._draggingVertexInfo) {
+          console.warn("Already dragging a vertex:", this._draggingVertexInfo.id);
+          return;
+      }
+      this._draggingVertexInfo = {
+          id: vertexId,
+          originalPosition: { ...originalPosition },
+          currentPosition: { ...originalPosition } // 初期位置は同じ
+      };
+      // console.log("Vertex drag started:", this._draggingVertexInfo);
+      this._notifyObservers('draggingVertex');
+  }
+
+  /**
+   * 頂点ドラッグ中の位置更新
+   * @param {Object} currentPosition - 現在のマウス位置（ワールド座標） { x, y }
+   */
+  updateVertexDrag(currentPosition) {
+      if (!this._draggingVertexInfo) {
+          // console.warn("updateVertexDrag called but not dragging.");
+          return;
+      }
+      if (!currentPosition) {
+          console.error("Invalid currentPosition for updateVertexDrag");
+          return;
+      }
+      // パフォーマンスのため、位置が変わった場合のみ更新＆通知する
+      if (this._draggingVertexInfo.currentPosition.x !== currentPosition.x ||
+          this._draggingVertexInfo.currentPosition.y !== currentPosition.y) {
+          this._draggingVertexInfo.currentPosition = { ...currentPosition };
+          // console.log("Vertex drag updated:", this._draggingVertexInfo);
+          this._notifyObservers('draggingVertex'); // 高頻度で通知される
+      }
+  }
+
+  /**
+   * 頂点ドラッグの終了
+   * @returns {Promise<void>}
+   */
+  async endVertexDrag() {
+      if (!this._draggingVertexInfo) {
+          console.warn("endVertexDrag called but not dragging.");
+          return;
+      }
+
+      const { id, originalPosition, currentPosition } = this._draggingVertexInfo;
+      this._resetDraggingState(); // 先に状態をリセット（再描画のため）
+
+      // 移動距離が小さい場合は実際の移動処理をスキップ（クリックと区別）
+      const dx = currentPosition.x - originalPosition.x;
+      const dy = currentPosition.y - originalPosition.y;
+      const distanceSq = dx * dx + dy * dy;
+      const toleranceSq = 1e-9; // 許容誤差
+
+      if (distanceSq > toleranceSq) {
+          // console.log("Ending vertex drag and applying move:", id, originalPosition, currentPosition);
+          try {
+              // 確定処理: EditFeatureUseCaseを呼び出す
+              await this.moveVertex(id, originalPosition, currentPosition);
+              // moveVertex内でアンドゥ履歴が追加される
+          } catch (error) {
+              console.error('頂点の移動確定に失敗しました', error);
+              // 必要であればエラー通知や状態のロールバック
+          }
+      } else {
+          // console.log("Vertex drag ended without significant movement.");
+          // 移動がなければアンドゥ履歴には追加しない
+      }
+  }
+
+  /**
+   * ドラッグ中の頂点情報を取得
+   * @returns {Object | null} ドラッグ情報、またはnull
+   */
+  getDraggingVertexInfo() {
+      return this._draggingVertexInfo;
+  }
+
+  /**
+   * ドラッグ状態をリセット
+   * @private
+   */
+  _resetDraggingState() {
+      if (this._draggingVertexInfo) {
+          this._draggingVertexInfo = null;
+          this._notifyObservers('draggingVertex'); // ドラッグ終了を通知
+      }
+  }
+
+
+  /**
+   * 頂点を移動 (内部メソッド、endVertexDragから呼ばれる)
    * @param {string} vertexId - 移動する頂点のID
    * @param {Object} oldPosition - 元の位置 { x, y }
    * @param {Object} newPosition - 新しい位置 { x, y }
    * @returns {Promise<Object>} 移動結果
+   * @private internal use by endVertexDrag
    */
   async moveVertex(vertexId, oldPosition, newPosition) {
-    // console.log(`moveVertex called: ${vertexId}, old:`, oldPosition, `new:`, newPosition);
+    // console.log(`moveVertex called (internal): ${vertexId}, old:`, oldPosition, `new:`, newPosition);
     if (!vertexId || !oldPosition || !newPosition) {
         console.error("Invalid arguments for moveVertex");
         throw new Error("Invalid arguments for moveVertex");
@@ -312,7 +430,7 @@ export class EditingViewModel {
         newPosition: newPosition  // 移動「後」の位置を保存
       });
 
-      // MapViewModel で World データが更新され、イベントは不要かもしれない
+      // MapViewModel で World データが更新されるので、イベントは不要
       // this._eventBus.publish('VertexMoved', { vertex: result.vertex, affectedFeatures: result.affectedFeatures });
 
       return result;
@@ -330,13 +448,21 @@ export class EditingViewModel {
    */
   async deleteFeature(featureId, feature) {
     try {
+       // アンドゥ用に削除される頂点の情報も取得・保存
+      const verticesToDelete = feature.vertexIds ? this._getVerticesByIds(feature.vertexIds) : [];
+      const holeVerticesToDelete = feature.holesVertexIds
+          ? feature.holesVertexIds.flat().map(id => this._getVerticesByIds([id])[0]).filter(Boolean)
+          : [];
+      // TODO: MultiPolygon の頂点も考慮
+
       await this._editFeatureUseCase.deleteFeature(featureId);
 
       // 操作履歴に追加
       this._addToHistory({
         type: 'delete',
         featureId,
-        featureData: feature // 削除された地物のデータを保持（アンドゥ用）
+        featureData: feature, // 削除された地物のデータ
+        deletedVertices: [...verticesToDelete, ...holeVerticesToDelete] // 削除された頂点のデータ
       });
 
       // イベントを発行
@@ -414,9 +540,10 @@ export class EditingViewModel {
       }
       // 作成した頂点をワールドデータに追加
       // EditFeatureUseCase.updateFeature 内で _processGeometry を呼ぶので、ここでは追加しない方が良い？
-      // いや、updateFeature は既存頂点の更新が主なので、ここで追加しておく方が良い。
-      world.vertices.push(...tempVertices);
-
+      // updateFeature は geometry.vertices がないと頂点を生成しないので、ここで追加しておく。
+      if (tempVertices.length > 0) {
+          world.vertices.push(...tempVertices);
+      }
 
       // 穴を追加
       const newHolesVertexIdsWithNewOne = [...oldHolesVertexIds, newHoleVertexIds];
@@ -456,6 +583,7 @@ export class EditingViewModel {
    * @param {Object} element - 表示要素
    */
   addTemporaryElement(element) {
+    // ドラッグ中の仮表示は ViewModel 内部で管理するため、このメソッドは不要になるかも
     this._temporaryElements.push(element);
     this._notifyObservers('temporaryElements');
   }
@@ -464,8 +592,10 @@ export class EditingViewModel {
    * 一時的な表示要素をクリア
    */
   clearTemporaryElements() {
-    this._temporaryElements = [];
-    this._notifyObservers('temporaryElements');
+    if (this._temporaryElements.length > 0) {
+        this._temporaryElements = [];
+        this._notifyObservers('temporaryElements');
+    }
   }
 
   /**
@@ -482,6 +612,8 @@ export class EditingViewModel {
    */
   async undo() {
     if (this._undoStack.length === 0) return;
+    // ドラッグ中の場合はキャンセル
+    if (this._draggingVertexInfo) this._resetDraggingState();
 
     const operation = this._undoStack.pop();
     // console.log("Undoing:", operation);
@@ -505,6 +637,8 @@ export class EditingViewModel {
    */
   async redo() {
     if (this._redoStack.length === 0) return;
+     // ドラッグ中の場合はキャンセル
+    if (this._draggingVertexInfo) this._resetDraggingState();
 
     const operation = this._redoStack.pop();
     // console.log("Redoing:", operation);
@@ -551,22 +685,21 @@ export class EditingViewModel {
     // console.log("Executing operation (redo):", operation);
     switch (operation.type) {
       case 'add':
-        // 削除された地物を復元 (addFeature を直接呼ぶのではなく、データ復元が必要)
-        const worldRepositoryAdd = this._editFeatureUseCase._worldRepository;
-        const worldAdd = await worldRepositoryAdd.getWorld();
-        // 頂点も復元する必要がある
-        let verticesToAdd = [];
-        if (operation.featureData?.vertexIds) {
-            verticesToAdd = operation.featureData.vertexIds
-                .map(vid => operation.featureData._originalVertices?.find(ov => ov.id === vid)) // Undo/Redo用に頂点データを保存しておく必要がある
-                .filter(Boolean);
+        // 地物を復元
+        const worldRepoAdd = this._editFeatureUseCase._worldRepository;
+        const worldAdd = await worldRepoAdd.getWorld();
+        // 頂点も復元
+        if (operation.addedVertices) {
+            operation.addedVertices.forEach(v => {
+                if (!worldAdd.vertices.some(wv => wv.id === v.id)) {
+                    worldAdd.vertices.push(v);
+                }
+            });
         }
+        // 地物自体を復元
         if (operation.featureData && !worldAdd.features.some(f => f.id === operation.featureId)) {
-            worldAdd.features.push(operation.featureData); // 保存しておいたデータを追加
-            if (verticesToAdd.length > 0) {
-                 worldAdd.vertices.push(...verticesToAdd);
-            }
-            await worldRepositoryAdd.saveWorld(worldAdd);
+            worldAdd.features.push(operation.featureData);
+            await worldRepoAdd.saveWorld(worldAdd);
             this._eventBus.publish('FeatureAdded', { feature: operation.featureData });
         } else {
              console.warn("Redo add: Feature already exists or data missing.", operation.featureId);
@@ -576,7 +709,24 @@ export class EditingViewModel {
       case 'delete':
          // 地物を再度削除
          await this._editFeatureUseCase.deleteFeature(operation.featureId);
-         // TODO: 削除された頂点も記録しておき、Redo時に削除、Undo時に復元する
+         // 削除された頂点も再度削除 (deleteFeature内で処理されるはずだが念のため)
+          const worldRepoDelRedo = this._editFeatureUseCase._worldRepository;
+          const worldDelRedo = await worldRepoDelRedo.getWorld();
+          let verticesChanged = false;
+          if (operation.deletedVertices) {
+              operation.deletedVertices.forEach(v => {
+                  // 他の地物で使われていないかチェック (deleteFeature内で行うべきだが念のため)
+                  const isUsed = worldDelRedo.features.some(f => f.vertexIds?.includes(v.id) || f.holesVertexIds?.flat().includes(v.id));
+                  if (!isUsed) {
+                      const index = worldDelRedo.vertices.findIndex(wv => wv.id === v.id);
+                      if (index !== -1) {
+                          worldDelRedo.vertices.splice(index, 1);
+                          verticesChanged = true;
+                      }
+                  }
+              });
+          }
+         if (verticesChanged) await worldRepoDelRedo.saveWorld(worldDelRedo);
          this._eventBus.publish('FeatureDeleted', { featureId: operation.featureId });
         break;
 
@@ -604,7 +754,7 @@ export class EditingViewModel {
           operation.polygonId,
           { geometry: { holesVertexIds: operation.newHolesVertexIds } } // Redoなので newHolesVertexIds を使う (更新後の全体)
         );
-         // 穴追加時に作成された頂点も復元する必要がある
+         // 穴追加時に作成された頂点も復元
          const repoHoleAdd = this._editFeatureUseCase._worldRepository;
          const worldHoleAdd = await repoHoleAdd.getWorld();
          if (operation.addedVertices) {
@@ -635,28 +785,44 @@ export class EditingViewModel {
     switch (operation.type) {
       case 'add':
         // 追加された地物を削除
-        // TODO: 追加された頂点も記録しておき、Undo時に削除する
         await this._editFeatureUseCase.deleteFeature(operation.featureId);
+        // 追加された頂点も削除
+        const worldRepoAddUndo = this._editFeatureUseCase._worldRepository;
+        const worldAddUndo = await worldRepoAddUndo.getWorld();
+        let verticesChangedAddUndo = false;
+        if (operation.addedVertices) {
+             operation.addedVertices.forEach(v => {
+                 const index = worldAddUndo.vertices.findIndex(wv => wv.id === v.id);
+                 if (index !== -1) {
+                     // 他の地物で使われていないかチェック (deleteFeature内で行うべきだが念のため)
+                     const isUsed = worldAddUndo.features.some(f => f.id !== operation.featureId && (f.vertexIds?.includes(v.id) || f.holesVertexIds?.flat().includes(v.id)));
+                     if (!isUsed) {
+                         worldAddUndo.vertices.splice(index, 1);
+                         verticesChangedAddUndo = true;
+                     }
+                 }
+             });
+        }
+        if (verticesChangedAddUndo) await worldRepoAddUndo.saveWorld(worldAddUndo);
         this._eventBus.publish('FeatureDeleted', { featureId: operation.featureId });
         break;
 
       case 'delete':
-        // 削除された地物を復元 (addFeature を直接呼ぶのではなく、データ復元が必要)
-        const worldRepositoryDel = this._editFeatureUseCase._worldRepository;
-        const worldDel = await worldRepositoryDel.getWorld();
-         // 頂点も復元する必要がある
-        let verticesToRestore = [];
-        if (operation.featureData?.vertexIds) {
-            verticesToRestore = operation.featureData.vertexIds
-                .map(vid => operation.featureData._originalVertices?.find(ov => ov.id === vid)) // Undo/Redo用に頂点データを保存しておく必要がある
-                .filter(Boolean);
+        // 削除された地物を復元
+        const worldRepoDelUndo = this._editFeatureUseCase._worldRepository;
+        const worldDelUndo = await worldRepoDelUndo.getWorld();
+         // 削除された頂点も復元
+        if (operation.deletedVertices) {
+            operation.deletedVertices.forEach(v => {
+                if (!worldDelUndo.vertices.some(wv => wv.id === v.id)) {
+                    worldDelUndo.vertices.push(v);
+                }
+            });
         }
-        if (operation.featureData && !worldDel.features.some(f => f.id === operation.featureId)) {
-            worldDel.features.push(operation.featureData); // 保存しておいたデータを追加
-            if (verticesToRestore.length > 0) {
-                 worldDel.vertices.push(...verticesToRestore);
-            }
-            await worldRepositoryDel.saveWorld(worldDel);
+        // 地物自体を復元
+        if (operation.featureData && !worldDelUndo.features.some(f => f.id === operation.featureId)) {
+            worldDelUndo.features.push(operation.featureData);
+            await worldRepoDelUndo.saveWorld(worldDelUndo);
             this._eventBus.publish('FeatureAdded', { feature: operation.featureData });
         } else {
              console.warn("Undo delete: Feature already exists or data missing.", operation.featureId);
@@ -690,15 +856,21 @@ export class EditingViewModel {
           // 穴追加時に作成された頂点も削除
           const repoHoleDel = this._editFeatureUseCase._worldRepository;
           const worldHoleDel = await repoHoleDel.getWorld();
+          let verticesChangedHoleUndo = false;
           if (operation.addedVertices) {
               operation.addedVertices.forEach(v => {
                   const index = worldHoleDel.vertices.findIndex(wv => wv.id === v.id);
                   if (index !== -1) {
-                      worldHoleDel.vertices.splice(index, 1);
+                     // 他の地物で使われていないかチェック
+                     const isUsed = worldHoleDel.features.some(f => f.id !== operation.polygonId && (f.vertexIds?.includes(v.id) || f.holesVertexIds?.flat().includes(v.id)));
+                     if (!isUsed) {
+                         worldHoleDel.vertices.splice(index, 1);
+                         verticesChangedHoleUndo = true;
+                     }
                   }
               });
-              await repoHoleDel.saveWorld(worldHoleDel);
           }
+          if (verticesChangedHoleUndo) await repoHoleDel.saveWorld(worldHoleDel);
           this._eventBus.publish('FeatureUpdated', { feature: updatedPolygonUndoHole });
         break;
 
@@ -707,6 +879,21 @@ export class EditingViewModel {
         // throw new Error(`未対応の操作タイプ: ${operation.type}`);
     }
   }
+
+  /**
+   * ID配列から頂点オブジェクトの配列を取得 (アンドゥ/リドゥ用)
+   * @param {string[]} vertexIds - 頂点IDの配列
+   * @returns {Vertex[]} 頂点オブジェクトの配列
+   * @private
+   */
+  _getVerticesByIds(vertexIds) {
+      const world = this._editFeatureUseCase._worldRepository._world; // 直接アクセスは良くないが…
+      if (!world || !world.vertices) return [];
+      return vertexIds
+          .map(id => world.vertices.find(v => v.id === id))
+          .filter(Boolean); // 見つからない場合は除外
+  }
+
 
   /**
    * アンドゥ可能かどうかを取得
@@ -775,12 +962,12 @@ export class EditingViewModel {
         return this._tool;
       case 'addingPoints':
         return this._addingPoints;
-      // case 'addingHole': // isAddingHole() or getTool() で代替
-      //   return this.isAddingHole();
       case 'addingHoleTarget':
         return this._targetPolygonIdForHole;
       case 'temporaryElements':
         return this._temporaryElements;
+      case 'draggingVertex': // ドラッグ状態の変更を通知
+        return this._draggingVertexInfo;
       case 'history':
         return {
           canUndo: this.canUndo(),
