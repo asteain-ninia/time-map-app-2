@@ -18,43 +18,48 @@ export class Polygon extends Feature {
    */
   constructor(id, vertexIds, properties, layerId, holesVertexIds = [], parentId = "0", childIds = [], isMultiPolygon = false, subPolygons = []) {
     super(id, vertexIds || [], properties, layerId);
-    
+
     this._holesVertexIds = holesVertexIds.map(hole => [...hole]);
     this._parentId = parentId;
     this._childIds = [...childIds];
     this._isMultiPolygon = isMultiPolygon;
     this._subPolygons = isMultiPolygon ? [...subPolygons] : [];
-    
+
     // 不変性を保証
     this._holesVertexIds.forEach(hole => Object.freeze(hole));
     Object.freeze(this._holesVertexIds);
     Object.freeze(this._childIds);
     Object.freeze(this._subPolygons);
-    
+
     // 面情報の検証
     if (vertexIds && vertexIds.length > 0) {
       // 直接頂点で定義される場合、少なくとも3つの頂点が必要
       if (vertexIds.length < 3) {
         throw new Error('Polygon must have at least three vertices');
       }
-    } else if (childIds.length === 0) {
-      // 頂点がなく、子もない場合はエラー
-      throw new Error('Polygon must either have vertices or child polygons');
+    } else if (childIds.length === 0 && !isMultiPolygon) { // MultiPolygonは頂点がなくても良い場合がある (subPolygonsで定義されるため)
+        // 頂点がなく、子もなく、MultiPolygonでもない場合はエラー
+        // ただし、MultiPolygonの場合、subPolygons があれば頂点や子はなくてもよい
+        if (!isMultiPolygon || subPolygons.length === 0) {
+             throw new Error('Polygon must either have vertices, child polygons, or be a valid MultiPolygon');
+        }
     }
-    
+
     // 穴の検証
     this._holesVertexIds.forEach(hole => {
       if (hole.length < 3) {
         throw new Error('Polygon hole must have at least three vertices');
       }
     });
-    
+
     // 飛び地の検証
     if (isMultiPolygon) {
-      if (this._subPolygons.length < 2) {
-        throw new Error('MultiPolygon must have at least two sub-polygons');
+      // MultiPolygonの場合、本体(vertexIds)とsubPolygonsの合計で2つ以上あれば良い
+      const totalPolygons = (this.hasDirectGeometry() ? 1 : 0) + this._subPolygons.length;
+      if (totalPolygons < 2) {
+           throw new Error('MultiPolygon must represent at least two distinct polygon areas');
       }
-      
+
       this._subPolygons.forEach(subPoly => {
         if (!subPoly.vertexIds || subPoly.vertexIds.length < 3) {
           throw new Error('Each sub-polygon must have at least three vertices');
@@ -116,7 +121,29 @@ export class Polygon extends Feature {
    * @returns {boolean} 直接頂点で定義されるならtrue
    */
   hasDirectGeometry() {
-    return this._vertexIds && this._vertexIds.length > 0;
+    // vertexIds が null または空配列でないことを確認
+    return Array.isArray(this._vertexIds) && this._vertexIds.length > 0;
+  }
+
+
+  /**
+   * 新しいプロパティの配列で新インスタンスを作成 (Featureクラスのメソッドをオーバーライド)
+   * @param {Property[]} properties - 新しいプロパティの配列
+   * @returns {Polygon} 新しい面情報オブジェクト
+   */
+  withProperties(properties) {
+    // Polygon固有のプロパティを含めて新しいインスタンスを生成
+    return new Polygon(
+      this._id,
+      this._vertexIds, // 元の頂点IDを引き継ぐ
+      properties,      // 新しいプロパティ配列を使用
+      this._layerId,   // 元のレイヤーIDを引き継ぐ
+      this._holesVertexIds, // 元の穴情報を引き継ぐ
+      this._parentId,       // 元の親IDを引き継ぐ
+      this._childIds,       // 元の子ID配列を引き継ぐ
+      this._isMultiPolygon, // 元のMultiPolygonフラグを引き継ぐ
+      this._subPolygons     // 元の飛び地情報を引き継ぐ
+    );
   }
 
   /**
@@ -126,9 +153,9 @@ export class Polygon extends Feature {
    */
   withHolesVertexIds(holesVertexIds) {
     return new Polygon(
-      this._id, 
-      this._vertexIds, 
-      this._properties, 
+      this._id,
+      this._vertexIds,
+      this._properties,
       this._layerId,
       holesVertexIds,
       this._parentId,
@@ -145,9 +172,9 @@ export class Polygon extends Feature {
    */
   withParentId(parentId) {
     return new Polygon(
-      this._id, 
-      this._vertexIds, 
-      this._properties, 
+      this._id,
+      this._vertexIds,
+      this._properties,
       this._layerId,
       this._holesVertexIds,
       parentId,
@@ -164,9 +191,9 @@ export class Polygon extends Feature {
    */
   withChildIds(childIds) {
     return new Polygon(
-      this._id, 
-      this._vertexIds, 
-      this._properties, 
+      this._id,
+      this._vertexIds,
+      this._properties,
       this._layerId,
       this._holesVertexIds,
       this._parentId,
@@ -202,9 +229,9 @@ export class Polygon extends Feature {
    */
   withMultiPolygonData(isMultiPolygon, subPolygons = []) {
     return new Polygon(
-      this._id, 
-      this._vertexIds, 
-      this._properties, 
+      this._id,
+      this._vertexIds,
+      this._properties,
       this._layerId,
       this._holesVertexIds,
       this._parentId,
