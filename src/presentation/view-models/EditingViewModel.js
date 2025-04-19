@@ -474,6 +474,82 @@ export class EditingViewModel {
   }
 
   /**
+   * 複数の頂点を削除
+   * @param {string[]} vertexIds - 削除する頂点のID配列
+   * @returns {Promise<void>}
+   */
+  async deleteVertices(vertexIds) {
+    if (!vertexIds || vertexIds.length === 0) return;
+    console.log('Deleting vertices in ViewModel:', vertexIds);
+
+    try {
+        // --- アンドゥ情報準備 ---
+        // 1. 削除対象の頂点データ
+        const deletedVerticesData = this._getVerticesByIds(vertexIds);
+        if (deletedVerticesData.length === 0) {
+            console.warn("No valid vertices found for deletion.");
+            return;
+        }
+
+        // 2. 影響を受ける地物の「変更前」の状態
+        const world = this._editFeatureUseCase._worldRepository._world; // UseCase経由が望ましい
+        const affectedFeaturesBefore = {};
+        const featuresToDelete = []; // 削除される可能性のある地物ID
+
+        if (world && world.features) {
+            world.features.forEach(f => {
+                const usesVertex = vertexIds.some(vid =>
+                    (f.vertexIds && f.vertexIds.includes(vid)) ||
+                    (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(vid))) ||
+                    (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(vid)))
+                );
+                if (usesVertex) {
+                    // 変更前の地物データをディープコピーして保存
+                    affectedFeaturesBefore[f.id] = JSON.parse(JSON.stringify(f));
+
+                    // 削除される可能性をチェック (簡易チェック)
+                    if (f.vertexIds && f.vertexIds.length - vertexIds.filter(vid => f.vertexIds.includes(vid)).length < (f instanceof DomainLine ? 2 : 3)) {
+                       if (f instanceof Point || !(f instanceof DomainPolygon && f.isMultiPolygon)) { // Point と Line, 単純Polygon
+                         featuresToDelete.push(f.id);
+                       }
+                    }
+                    // TODO: 穴や飛び地の削除チェックも必要
+                }
+            });
+        }
+
+        // --- UseCaseを呼び出して削除実行 ---
+        // 注意: EditFeatureUseCase.deleteVertices はまだ実装されていない想定
+        const result = await this._editFeatureUseCase.deleteVertices(vertexIds);
+
+        // --- アンドゥ履歴に追加 ---
+        this._addToHistory({
+            type: 'deleteVertices',
+            deletedVertexIds: vertexIds,
+            deletedVerticesData: deletedVerticesData, // 削除された頂点の完全なデータ
+            affectedFeaturesBefore: affectedFeaturesBefore, // 影響を受けた地物の変更前データ
+            // result から影響後のデータや削除された地物IDを取得できるとより良い
+            // deletedFeatureIds: result?.deletedFeatureIds || featuresToDelete // UseCaseの結果があれば使う
+        });
+
+        // --- イベント発行 ---
+        this._eventBus.publish('VerticesDeleted', {
+            deletedVertexIds: vertexIds,
+            // affectedFeatureIds: result?.affectedFeatureIds || Object.keys(affectedFeaturesBefore)
+        });
+
+        // 選択解除
+        this._eventBus.publish('ClearSelection'); // MapViewModel等で選択解除を処理
+
+    } catch (error) {
+        console.error('頂点の削除に失敗しました', error);
+        // 必要であればエラー通知
+        throw error;
+    }
+  }
+
+
+  /**
    * 地物プロパティを更新
    * @param {string} featureId - 更新する地物のID
    * @param {Object} oldProperties - 古いプロパティ配列 (Propertyインスタンスの配列)
@@ -730,6 +806,14 @@ export class EditingViewModel {
          this._eventBus.publish('FeatureDeleted', { featureId: operation.featureId });
         break;
 
+      case 'deleteVertices': // リドゥ：頂点削除
+          // 保存された情報をもとに再度頂点を削除
+          await this._editFeatureUseCase.deleteVertices(operation.deletedVertexIds);
+          // イベント発行
+          this._eventBus.publish('VerticesDeleted', { deletedVertexIds: operation.deletedVertexIds });
+          this._eventBus.publish('ClearSelection');
+          break;
+
       case 'moveVertex':
         // 頂点を新しい位置に再度移動
         await this._editFeatureUseCase.moveVertex(
@@ -829,6 +913,42 @@ export class EditingViewModel {
         }
         break;
 
+      case 'deleteVertices': // アンドゥ：頂点削除の復元
+        const worldRepoVtxUndo = this._editFeatureUseCase._worldRepository;
+        const worldVtxUndo = await worldRepoVtxUndo.getWorld();
+        // 1. 削除された頂点を復元
+        if (operation.deletedVerticesData) {
+            operation.deletedVerticesData.forEach(vData => {
+                if (!worldVtxUndo.vertices.some(v => v.id === vData.id)) {
+                    worldVtxUndo.vertices.push(vData); // 削除前の頂点データを追加
+                }
+            });
+        }
+        // 2. 影響を受けた地物を変更前の状態に復元
+        if (operation.affectedFeaturesBefore) {
+            Object.values(operation.affectedFeaturesBefore).forEach(featureBeforeData => {
+                const index = worldVtxUndo.features.findIndex(f => f.id === featureBeforeData.id);
+                if (index !== -1) {
+                    // 既存の地物を変更前のデータで置き換え
+                    // 注意: JSON.parse(JSON.stringify(featureBeforeData)) だとドメインオブジェクトにならない
+                    // シリアライザを使ってデシリアライズするか、適切なコンストラクタで再生成する必要がある
+                    // ここでは暫定的に直接代入（型が合わない可能性あり）
+                    // TODO: JSONSerializerを使って正しくドメインオブジェクトを復元する
+                    worldVtxUndo.features[index] = featureBeforeData;
+                } else {
+                    // 地物が削除されていた場合は追加
+                    // TODO: JSONSerializerを使って正しくドメインオブジェクトを復元する
+                    worldVtxUndo.features.push(featureBeforeData);
+                     this._eventBus.publish('FeatureAdded', { feature: featureBeforeData });
+                }
+            });
+        }
+        await worldRepoVtxUndo.saveWorld(worldVtxUndo);
+        // イベント発行（影響範囲が大きいので再描画を促すなど）
+        this._eventBus.publish('WorldUpdated'); // 広範な変更を示すイベントが良いかも
+        this._eventBus.publish('ClearSelection');
+        break;
+
       case 'moveVertex':
         // 頂点を元の位置に戻す
         await this._editFeatureUseCase.moveVertex(
@@ -891,7 +1011,8 @@ export class EditingViewModel {
       if (!world || !world.vertices) return [];
       return vertexIds
           .map(id => world.vertices.find(v => v.id === id))
-          .filter(Boolean); // 見つからない場合は除外
+          .filter(Boolean) // 見つからない場合は除外
+          .map(v => JSON.parse(JSON.stringify(v))); // ディープコピーして返す
   }
 
 

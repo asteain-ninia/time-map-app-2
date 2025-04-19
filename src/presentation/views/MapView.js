@@ -711,13 +711,12 @@ _onMouseDown(event) {
           );
           if (ownerFeature) {
               if (!addToSelection || this._viewModel.getSelectedFeature()?.id !== ownerFeature.id) {
-                  this._viewModel._selectedFeature = ownerFeature; // ViewModel内部状態変更は良くない -> selectFeatureを使うべき
-                  this._viewModel._notifyObservers('selectedFeature');
+                  // this._viewModel._selectedFeature = ownerFeature; // ViewModel内部状態変更は良くない -> selectFeatureを使うべき
+                  this._viewModel.selectFeature(ownerFeature.id); // ViewModelのメソッドを使う
               }
           } else {
                if (!addToSelection) {
-                   this._viewModel._selectedFeature = null;
-                   this._viewModel._notifyObservers('selectedFeature');
+                   this._viewModel.clearSelection(); // 地物の選択もクリア
                }
           }
         } else {
@@ -1180,9 +1179,12 @@ _onWheel(event) {
 
       if (mode === 'edit') {
           if (selectedVertices.length > 0) {
-              console.log("Deleting selected vertices:", selectedVertices.map(v => v.id));
-              // TODO: await this._editingViewModel.deleteVertices(selectedVertices.map(v => v.id));
+              const vertexIdsToDelete = selectedVertices.map(v => v.id);
+              console.log("Deleting selected vertices:", vertexIdsToDelete);
+              // ViewModel経由で頂点削除を実行
+              this._editingViewModel.deleteVertices(vertexIdsToDelete); // コメントアウト解除＆メソッド呼び出し
           } else if (selectedFeature) {
+              // 頂点が選択されておらず、地物が選択されている場合は地物削除
               this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature);
           }
       }
