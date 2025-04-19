@@ -1,3 +1,7 @@
+import { Point } from '../../domain/entities/Point.js';
+import { Line as DomainLine } from '../../domain/entities/Line.js'; // Line は他の箇所で使用されている可能性があるためエイリアス
+import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js'; // Polygon も同様にエイリアス
+
 /**
  * 編集関連の状態管理
  */

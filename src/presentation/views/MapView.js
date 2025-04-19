@@ -199,8 +199,9 @@ _svgToWorld(svgPoint) {
     switch (type) {
       case 'world':
       case 'features':
-      case 'selectedFeature':
-      case 'selectedVertices':
+      case 'selectedFeature': // ViewModel側の修正により、地物選択/頂点選択の両方で通知される可能性あり
+      case 'selectedVertices': // 同上
+      case 'highlightedFeature': // 新しい通知タイプ
       case 'hoveredFeature':
       case 'hoveredVertex':
       case 'layers':
@@ -287,7 +288,7 @@ _svgToWorld(svgPoint) {
     // --- オーバーレイ要素の描画 ---
     // 2. 選択ハイライト
     this._clearSelectionHighlights();
-    this._renderSelection();
+    this._renderSelection(); // 修正: 選択状態の描画
 
     // 3. 地物追加/穴追加プレビュー
     this._renderAddingFeature();
@@ -333,80 +334,113 @@ _svgToWorld(svgPoint) {
    * @private
    */
   _renderSelection() {
-    const selectedFeature = this._viewModel.getSelectedFeature();
-    const selectedVertices = this._viewModel.getSelectedVertices();
+    const selectedFeatureId = this._viewModel.getSelectedFeatureId();
+    const selectedVertexIds = this._viewModel.getSelectedVertexIds();
+    const highlightedFeatureId = this._viewModel.getHighlightedFeatureId(); // 暗黙ハイライト用
+
     const viewport = this._viewportManager.getViewport();
     const world = this._viewModel.getWorld();
-    const currentTime = this._viewModel.getCurrentTime();
+    const currentTime = this._viewModel.getCurrentTime(); // 現在時刻も考慮
     if (!world) return;
 
     const draggingVertexInfo = this._editingViewModel.getDraggingVertexInfo();
 
-    // 選択された地物のハイライト
-    if (selectedFeature && selectedFeature.existsAt(currentTime)) {
-        let featureVertices = [];
-        // ドラッグ中は仮の位置を使用
-        const tempVertices = draggingVertexInfo
-            ? { [draggingVertexInfo.id]: draggingVertexInfo.currentPosition }
-            : {};
-
-        const getVertexPos = (vertexId) => {
-            if (tempVertices[vertexId]) return tempVertices[vertexId];
-            const v = world.vertices.find(wv => wv.id === vertexId);
-            return v ? { x: v.x, y: v.y } : null;
-        };
-
-        if (selectedFeature.vertexIds && selectedFeature.vertexIds.length > 0) {
-            featureVertices = selectedFeature.vertexIds
-                .map(id => getVertexPos(id))
-                .filter(Boolean);
+    // 座標取得ヘルパー（ドラッグ中も考慮）
+    const getVertexPos = (vertexId) => {
+        if (draggingVertexInfo && vertexId === draggingVertexInfo.id) {
+            return draggingVertexInfo.currentPosition;
         }
+        const v = world.vertices.find(wv => wv.id === vertexId);
+        return v ? { x: v.x, y: v.y } : null;
+    };
 
-        const style = {
-            stroke: '#00ffff', strokeWidth: 4, fill: 'none', strokeDasharray: '4,4'
-        };
+    // --- 主選択された地物のハイライト ---
+    if (selectedFeatureId) {
+        const feature = this._viewModel.getFeatures().find(f => f.id === selectedFeatureId);
+        if (feature && feature.existsAt(currentTime)) {
+            const style = { stroke: '#00ffff', strokeWidth: 4, fill: 'none', strokeDasharray: '4,4' };
+            let vertices = [];
+            if (feature.vertexIds) {
+                vertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
+            }
 
-        if (selectedFeature instanceof DomainPoint && featureVertices.length === 1) {
-            const elem = this._renderer.drawPoint(featureVertices[0].x, featureVertices[0].y, {
-                 radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'
-            }, viewport);
-             if (elem) this._selectionElements.push(elem);
-        } else if (selectedFeature instanceof DomainLine && featureVertices.length >= 2) {
-            const elem = this._renderer.drawLine(featureVertices, style, viewport);
-             if (elem) this._selectionElements.push(elem);
-        } else if (selectedFeature instanceof DomainPolygon) {
-             // 通常ポリゴンまたはMultiPolygonの外周を描画
-            if (featureVertices.length >= 3) {
-                const elem = this._renderer.drawLine([...featureVertices, featureVertices[0]], style, viewport);
-                if (elem) this._selectionElements.push(elem);
+            if (feature instanceof DomainPoint && vertices.length === 1) {
+                const elem = this._renderer.drawPoint(vertices[0].x, vertices[0].y, {
+                     radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'
+                }, viewport);
+                 if (elem) this._selectionElements.push(elem);
+            } else if (feature instanceof DomainLine && vertices.length >= 2) {
+                const elem = this._renderer.drawLine(vertices, style, viewport);
+                 if (elem) this._selectionElements.push(elem);
+            } else if (feature instanceof DomainPolygon) {
+                if (vertices.length >= 3) {
+                    const elem = this._renderer.drawLine([...vertices, vertices[0]], style, viewport);
+                    if (elem) this._selectionElements.push(elem);
+                }
+                if (feature.isMultiPolygon && feature.subPolygons) {
+                    feature.subPolygons.forEach(sub => {
+                        const subVertices = sub.vertexIds?.map(id => getVertexPos(id)).filter(Boolean);
+                        if (subVertices && subVertices.length >= 3) {
+                            const subElem = this._renderer.drawLine([...subVertices, subVertices[0]], style, viewport);
+                            if (subElem) this._selectionElements.push(subElem);
+                        }
+                    });
+                }
+                // TODO: 穴のハイライト (ドラッグ対応)
             }
-            // MultiPolygonのサブポリゴンも描画
-            if (selectedFeature.isMultiPolygon && selectedFeature.subPolygons) {
-                selectedFeature.subPolygons.forEach(sub => {
-                    const subVertices = sub.vertexIds
-                        ?.map(id => getVertexPos(id))
-                        .filter(Boolean);
-                    if (subVertices && subVertices.length >= 3) {
-                        const subElem = this._renderer.drawLine([...subVertices, subVertices[0]], style, viewport);
-                        if (subElem) this._selectionElements.push(subElem);
-                    }
-                });
-            }
-            // TODO: 穴のハイライト (ドラッグ対応)
         }
     }
 
-    // 選択された頂点のハイライト (ドラッグ中の頂点は除く)
-    selectedVertices.forEach(vertex => {
-        if (draggingVertexInfo && vertex.id === draggingVertexInfo.id) return; // ドラッグ中の頂点は別で描画
-        const elem = this._renderer.drawPoint(vertex.x, vertex.y, {
-            radius: 6, fill: '#00ffff', stroke: '#0000ff', strokeWidth: 1,
-        }, viewport);
-        if (elem) this._selectionElements.push(elem);
+    // --- 暗黙的にハイライトされた地物 ---
+    if (highlightedFeatureId && highlightedFeatureId !== selectedFeatureId) { // 主選択と重複しない
+        const feature = this._viewModel.getFeatures().find(f => f.id === highlightedFeatureId);
+        if (feature && feature.existsAt(currentTime)) {
+             // 暗黙ハイライトのスタイル (主選択より控えめに)
+            const style = { stroke: '#0088aa', strokeWidth: 2, fill: 'none', strokeDasharray: '2,2' };
+            let vertices = [];
+            if (feature.vertexIds) {
+                vertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
+            }
+
+            // 地物の種類に応じて描画 (Pointは通常ハイライトしない)
+            if (feature instanceof DomainLine && vertices.length >= 2) {
+                const elem = this._renderer.drawLine(vertices, style, viewport);
+                 if (elem) this._selectionElements.push(elem);
+            } else if (feature instanceof DomainPolygon) {
+                 if (vertices.length >= 3) {
+                    const elem = this._renderer.drawLine([...vertices, vertices[0]], style, viewport);
+                    if (elem) this._selectionElements.push(elem);
+                 }
+                 if (feature.isMultiPolygon && feature.subPolygons) {
+                    feature.subPolygons.forEach(sub => {
+                        const subVertices = sub.vertexIds?.map(id => getVertexPos(id)).filter(Boolean);
+                        if (subVertices && subVertices.length >= 3) {
+                            const subElem = this._renderer.drawLine([...subVertices, subVertices[0]], style, viewport);
+                            if (subElem) this._selectionElements.push(subElem);
+                        }
+                    });
+                 }
+                 // TODO: 穴のハイライト (ドラッグ対応)
+            }
+        }
+    }
+
+    // --- 主選択された頂点のハイライト ---
+    selectedVertexIds.forEach(vertexId => {
+        if (draggingVertexInfo && vertexId === draggingVertexInfo.id) return; // ドラッグ中は別で描画
+
+        const vertexPos = getVertexPos(vertexId);
+        if (vertexPos) {
+            const elem = this._renderer.drawPoint(vertexPos.x, vertexPos.y, {
+                radius: 6, fill: '#00ffff', stroke: '#0000ff', strokeWidth: 2, // 太めの枠
+            }, viewport);
+            if (elem) this._selectionElements.push(elem);
+        }
     });
 
-     this._selectionElements.forEach(el => el.classList.add('temp-drawing', 'selection-highlight'));
+    this._selectionElements.forEach(el => el.classList.add('temp-drawing', 'selection-highlight'));
   }
+
 
   /**
    * ドラッグ中のプレビューを描画
@@ -429,7 +463,7 @@ _svgToWorld(svgPoint) {
       const affectedFeatures = world.features.filter(f =>
           (f.vertexIds && f.vertexIds.includes(draggingInfo.id)) ||
           (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(draggingInfo.id))) ||
-          (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(draggingInfo.id)))
+          (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds?.includes(draggingInfo.id)))
       );
 
       const getVertexPos = (vertexId) => {
@@ -698,37 +732,13 @@ _onMouseDown(event) {
         const addToSelection = event.shiftKey;
 
         if (clickedVertex) {
-          // 頂点が見つかった場合、ドラッグ開始
+          // 頂点が見つかった場合、ViewModel経由で選択し、ドラッグ開始
           this._viewModel.selectVertex(clickedVertex.id, addToSelection);
-          // ドラッグ開始処理を ViewModel に依頼
           this._editingViewModel.startVertexDrag(clickedVertex.id, { x: clickedVertex.x, y: clickedVertex.y });
-          // 関連する地物の選択 (ViewModel側で行うべきかもしれない)
-          const features = this._viewModel.getFeatures();
-          const ownerFeature = features.find(f =>
-              (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
-              (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
-              (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id)))
-          );
-          if (ownerFeature) {
-              if (!addToSelection || this._viewModel.getSelectedFeature()?.id !== ownerFeature.id) {
-                  // this._viewModel._selectedFeature = ownerFeature; // ViewModel内部状態変更は良くない -> selectFeatureを使うべき
-                  this._viewModel.selectFeature(ownerFeature.id); // ViewModelのメソッドを使う
-              }
-          } else {
-               if (!addToSelection) {
-                   this._viewModel.clearSelection(); // 地物の選択もクリア
-               }
-          }
+          // 関連地物の選択はViewModelが暗黙的に行うため、ここでは何もしない
         } else {
-          // 頂点が見つからない場合、地物を探す
-          const clickedFeature = this._findClosestFeature(worldPoint);
-          if (clickedFeature) {
-              this._viewModel.selectFeature(clickedFeature.id);
-          } else {
-            if (!addToSelection) {
-                this._viewModel.clearSelection();
-            }
-          }
+          // 頂点が見つからない場合、地物を探して選択
+          this._selectObjectAt(worldPoint, addToSelection); // 地物または選択解除
         }
       }
       break; // case 'edit' の終了
@@ -801,7 +811,7 @@ _onMouseUp(event) {
 
   const mode = this._editingViewModel.getMode();
   const tool = this._editingViewModel.getTool();
-  const isDraggingVertex = !!this._editingViewModel.getDraggingVertexInfo();
+  const isDraggingVertex = !!this._editingViewModel.getDraggingVertexInfo(); // ドラッグ状態を取得
 
   const pageX = event.clientX;
   const pageY = event.clientY;
@@ -818,8 +828,13 @@ _onMouseUp(event) {
     }
   }
   // クリック（ドラッグなし）処理
-  else if (this._isMouseDown && !this._isDragging && worldPoint) {
-    if (mode === 'view') {
+  else if (this._isMouseDown && !this._isDragging) { // worldPoint のチェックは不要かも
+    // ドラッグが発生しなかった場合でも、もし頂点ドラッグが開始されていたら終了処理を呼ぶ
+    if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertex) {
+        this._editingViewModel.endVertexDrag();
+    }
+    // 元々のクリック処理（ビューモードのみ）
+    else if (mode === 'view' && worldPoint) {
       this._handleClick(worldPoint);
     }
     // 'add' と 'edit' モードのクリックは onMouseDown で処理済み
@@ -1154,7 +1169,7 @@ _onWheel(event) {
        else if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
          this._handleCancelClick(); // 追加/穴追加キャンセル
          console.log("Add/Hole operation cancelled by ESC.");
-       } else if (mode === 'edit' && (this._viewModel.getSelectedFeature() || this._viewModel.getSelectedVertices().length > 0)) {
+       } else if (mode === 'edit' && (this._viewModel.getSelectedFeatureId() || this._viewModel.getSelectedVertexIds().size > 0)) { // 修正: 選択状態のチェック
          this._viewModel.clearSelection();
          console.log("Selection cleared by ESC.");
        } else if (this._isMeasuringDistance) {
@@ -1174,18 +1189,40 @@ _onWheel(event) {
         }
     } else if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) {
        event.preventDefault();
-      const selectedFeature = this._viewModel.getSelectedFeature();
-      const selectedVertices = this._viewModel.getSelectedVertices();
+      const selectedVertexIds = this._viewModel.getSelectedVertexIds(); // 修正: 頂点IDのSetを取得
+      const selectedFeatureId = this._viewModel.getSelectedFeatureId(); // 修正: 地物IDを取得
+
+      // ★★★ ログ追加 ▼▼▼
+      console.log(`[MapView._onKeyDown Delete] Mode: ${mode}`);
+      console.log(`[MapView._onKeyDown Delete] Selected Vertex IDs (before check):`, Array.from(selectedVertexIds));
+      console.log(`[MapView._onKeyDown Delete] Selected Feature ID (before check):`, selectedFeatureId);
+      // ★★★ ログ追加 ▲▲▲
 
       if (mode === 'edit') {
-          if (selectedVertices.length > 0) {
-              const vertexIdsToDelete = selectedVertices.map(v => v.id);
+          if (selectedVertexIds.size > 0) { // 修正: Setのsizeで判定
+              // ★★★ ログ追加 ▼▼▼
+              console.log(`[MapView._onKeyDown Delete] Condition TRUE: selectedVertexIds.size > 0`);
+              // ★★★ ログ追加 ▲▲▲
+              const vertexIdsToDelete = Array.from(selectedVertexIds); // 修正: Setから配列へ
               console.log("Deleting selected vertices:", vertexIdsToDelete);
-              // ViewModel経由で頂点削除を実行
-              this._editingViewModel.deleteVertices(vertexIdsToDelete); // コメントアウト解除＆メソッド呼び出し
-          } else if (selectedFeature) {
-              // 頂点が選択されておらず、地物が選択されている場合は地物削除
-              this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature);
+              this._editingViewModel.deleteVertices(vertexIdsToDelete);
+          } else if (selectedFeatureId) { // 修正: IDで判定
+              // ★★★ ログ追加 ▼▼▼
+              console.log(`[MapView._onKeyDown Delete] Condition FALSE: selectedVertexIds.size === 0, selectedFeatureId exists.`);
+              // ★★★ ログ追加 ▲▲▲
+              console.log(`[MapView] No vertices selected, deleting feature: ${selectedFeatureId}`);
+              // アンドゥ用に削除前の地物データを取得する必要がある
+              const featureToDelete = this._viewModel.getWorld()?.features.find(f => f.id === selectedFeatureId);
+              if (featureToDelete) {
+                  this._editingViewModel.deleteFeature(selectedFeatureId, featureToDelete);
+              } else {
+                   console.error(`[MapView] Feature with ID ${selectedFeatureId} not found for deletion.`);
+              }
+          } else {
+               // ★★★ ログ追加 ▼▼▼
+               console.log(`[MapView._onKeyDown Delete] Condition FALSE: selectedVertexIds.size === 0, selectedFeatureId is NULL.`);
+               // ★★★ ログ追加 ▲▲▲
+               console.log("[MapView] Delete key pressed, but nothing selected.");
           }
       }
     } else if (event.ctrlKey || event.metaKey) {
@@ -1238,12 +1275,17 @@ _onWheel(event) {
       let closestVertex = null;
       let minDistanceSq = this._clickToleranceSq;
       for (const vertex of world.vertices) {
-          const distanceSq = this._viewModel._geometryService.calculateDistanceSq(
-              worldPoint.x, worldPoint.y, vertex.x, vertex.y
-          );
-          if (distanceSq < minDistanceSq) {
-              minDistanceSq = distanceSq;
-              closestVertex = vertex;
+          // Ensure vertex has x and y properties
+          if (vertex && typeof vertex.x === 'number' && typeof vertex.y === 'number') {
+            const distanceSq = this._viewModel._geometryService.calculateDistanceSq(
+                worldPoint.x, worldPoint.y, vertex.x, vertex.y
+            );
+            if (distanceSq < minDistanceSq) {
+                minDistanceSq = distanceSq;
+                closestVertex = vertex;
+            }
+          } else {
+             // console.warn("Invalid vertex data encountered in _findClosestVertex:", vertex);
           }
       }
       return closestVertex;
@@ -1266,66 +1308,77 @@ _onWheel(event) {
       let minDistanceSq = this._clickToleranceSq;
 
       for (const feature of features) {
+           // Ensure feature is a valid object before proceeding
+           if (!feature || typeof feature !== 'object') {
+               // console.warn("Invalid feature data encountered in _findClosestFeature:", feature);
+               continue;
+           }
+
           let distanceSq = Infinity;
           const featureVertices = feature.vertexIds
               ?.map(id => world.vertices.find(v => v.id === id))
-              .filter(Boolean);
+              .filter(v => v && typeof v.x === 'number' && typeof v.y === 'number'); // Add validation
 
-          if (!featureVertices && !(feature instanceof DomainPolygon && feature.isMultiPolygon)) {
+          const isPolygon = feature.constructor?.name === 'Polygon'; // Use constructor name as fallback
+
+          if (!featureVertices && !(isPolygon && feature.isMultiPolygon)) {
               continue; // MultiPolygon以外で頂点がない場合はスキップ
           }
 
-          if (feature instanceof DomainPoint) {
+          if (feature instanceof DomainPoint || feature.constructor?.name === 'Point') {
                if (featureVertices?.length === 1) {
                    distanceSq = this._viewModel._geometryService.calculateDistanceSq(
                        worldPoint.x, worldPoint.y, featureVertices[0].x, featureVertices[0].y
                    );
                }
-          } else if (feature instanceof DomainLine) {
+          } else if (feature instanceof DomainLine || feature.constructor?.name === 'Line') {
                if (featureVertices?.length >= 2) {
                    for (let i = 0; i < featureVertices.length - 1; i++) {
-                       const segmentDistSq = this._viewModel._geometryService.distancePointSegmentSq(
-                           worldPoint, featureVertices[i], featureVertices[i + 1]
-                       );
-                       distanceSq = Math.min(distanceSq, segmentDistSq);
+                       // Ensure vertices are valid before calculation
+                       if (featureVertices[i] && featureVertices[i+1]) {
+                         const segmentDistSq = this._viewModel._geometryService.distancePointSegmentSq(
+                             worldPoint, featureVertices[i], featureVertices[i + 1]
+                         );
+                         distanceSq = Math.min(distanceSq, segmentDistSq);
+                       }
                    }
                }
-          } else if (feature instanceof DomainPolygon) {
-              if (feature.isMultiPolygon && feature.subPolygons) {
-                  // MultiPolygon: 各サブポリゴンとの距離を計算し最小値をとる
-                  feature.subPolygons.forEach(sub => {
-                      const subVertices = sub.vertexIds?.map(id => world.vertices.find(v => v.id === id)).filter(Boolean);
-                      if (subVertices && subVertices.length >= 3) {
-                          let subDistSq = Infinity;
-                          if (this._viewModel._geometryService.isPointInPolygon(worldPoint, subVertices)) {
-                              subDistSq = 0;
-                          } else {
-                              const polygonVertices = [...subVertices, subVertices[0]];
-                              for (let i = 0; i < polygonVertices.length - 1; i++) {
-                                  subDistSq = Math.min(subDistSq, this._viewModel._geometryService.distancePointSegmentSq(
-                                      worldPoint, polygonVertices[i], polygonVertices[i + 1]
-                                  ));
+          } else if (isPolygon) {
+              // Check for holes and subPolygons even if main vertices are missing for MultiPolygon
+              const checkPolygonProximity = (polyVertices) => {
+                  let polyDistSq = Infinity;
+                  if (polyVertices?.length >= 3) {
+                      if (this._viewModel._geometryService.isPointInPolygon(worldPoint, polyVertices)) {
+                          polyDistSq = 0; // Inside the polygon
+                      } else {
+                          // Calculate distance to edges
+                          const closedVertices = [...polyVertices, polyVertices[0]];
+                          for (let i = 0; i < closedVertices.length - 1; i++) {
+                              if (closedVertices[i] && closedVertices[i+1]) {
+                                 polyDistSq = Math.min(polyDistSq, this._viewModel._geometryService.distancePointSegmentSq(
+                                     worldPoint, closedVertices[i], closedVertices[i + 1]
+                                 ));
                               }
-                              // TODO: MultiPolygonの穴も考慮
                           }
-                          distanceSq = Math.min(distanceSq, subDistSq);
                       }
+                  }
+                  return polyDistSq;
+              };
+
+              distanceSq = checkPolygonProximity(featureVertices);
+
+              if (feature.isMultiPolygon && feature.subPolygons) {
+                  feature.subPolygons.forEach(sub => {
+                      const subVertices = sub.vertexIds
+                          ?.map(id => world.vertices.find(v => v.id === id))
+                          .filter(v => v && typeof v.x === 'number' && typeof v.y === 'number');
+                      distanceSq = Math.min(distanceSq, checkPolygonProximity(subVertices));
+                      // TODO: Check distance to holes within subPolygons
                   });
-              } else if (featureVertices?.length >= 3) {
-                   // 通常ポリゴン
-                   if (this._viewModel._geometryService.isPointInPolygon(worldPoint, featureVertices)) {
-                       distanceSq = 0;
-                   } else {
-                       const polygonVertices = [...featureVertices, featureVertices[0]];
-                       for (let i = 0; i < polygonVertices.length - 1; i++) {
-                           distanceSq = Math.min(distanceSq, this._viewModel._geometryService.distancePointSegmentSq(
-                               worldPoint, polygonVertices[i], polygonVertices[i + 1]
-                           ));
-                       }
-                       // TODO: 通常ポリゴンの穴も考慮
-                   }
               }
+              // TODO: Check distance to main holes (feature.holesVertexIds)
           }
+
 
           if (distanceSq < minDistanceSq) {
               minDistanceSq = distanceSq;
@@ -1346,23 +1399,7 @@ _onWheel(event) {
       const clickedVertex = this._findClosestVertex(worldPoint);
       if (clickedVertex) {
             this._viewModel.selectVertex(clickedVertex.id, addToSelection);
-            // this._draggedVertexId = clickedVertex.id; // ViewModelで管理するため不要
-            // 関連地物の選択処理
-            const features = this._viewModel.getFeatures();
-            const ownerFeature = features.find(f =>
-                (f.vertexIds && f.vertexIds.includes(clickedVertex.id)) ||
-                (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(clickedVertex.id))) ||
-                (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds.includes(clickedVertex.id)))
-            );
-            if (ownerFeature) {
-                if (!addToSelection || this._viewModel.getSelectedFeature()?.id !== ownerFeature.id) {
-                    this._viewModel.selectFeature(ownerFeature.id); // ViewModelのメソッドを使う
-                }
-            } else {
-                 if (!addToSelection) {
-                     this._viewModel.clearSelection(); // 地物の選択もクリア
-                 }
-            }
+            // 関連地物のハイライトはViewModelが行う
       } else {
            const clickedFeature = this._findClosestFeature(worldPoint);
            if (clickedFeature) {
