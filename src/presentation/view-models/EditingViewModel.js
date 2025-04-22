@@ -3,6 +3,7 @@ import { Line as DomainLine } from '../../domain/entities/Line.js'; // Line は�
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js'; // Polygon も同様にエイリアス
 import { TimePoint } from '../../domain/value-objects/TimePoint.js'; // TimePoint をインポート
 import { Property } from '../../domain/value-objects/Property.js'; // Property をインポート
+import { Vertex } from '../../domain/entities/Vertex.js'; // Vertexクラスをインポート
 
 
 /**
@@ -35,7 +36,7 @@ export class EditingViewModel {
     this._observers = [];
   }
 
-  // --- TimePoint と Property のデシリアライズヘルパー ---
+  // --- TimePoint と Property のデシリアライズヘルパー (History用も兼ねる) ---
 
   /**
    * プレーンオブジェクトから TimePoint インスタンスを生成
@@ -88,6 +89,133 @@ export class EditingViewModel {
           endTime
       );
   }
+
+  // --- History 用 シリアライズ/デシリアライズ ヘルパー ---
+
+  /**
+   * ドメインオブジェクトを履歴保存用のプレーンオブジェクトにシリアライズ
+   * @param {Object} object - ドメインオブジェクト (Vertex, Feature, Property, TimePoint)
+   * @returns {Object | null} シリアライズされたプレーンオブジェクト、または null
+   * @private
+   */
+   _serializeForHistory(object) {
+    if (!object) return null;
+
+    const serializeTimePoint = (tp) => tp ? { year: tp.year, month: tp.month, day: tp.day } : null;
+    const serializeProperty = (prop) => {
+        if (!prop || !(prop instanceof Property)) return null;
+        const attributes = prop.getAttributes ? prop.getAttributes() : {};
+        return {
+            _constructorName: 'Property',
+            timePoint: serializeTimePoint(prop.timePoint),
+            name: prop.name,
+            description: prop.description,
+            attributes: attributes,
+            timeRange: {
+                start: serializeTimePoint(prop.startTime),
+                end: serializeTimePoint(prop.endTime),
+            }
+        };
+    };
+
+    if (object instanceof Vertex) {
+        return { _constructorName: 'Vertex', id: object.id, x: object.x, y: object.y };
+    } else if (object instanceof Point || object instanceof DomainLine || object instanceof DomainPolygon) {
+        const baseData = {
+            _constructorName: object.constructor.name,
+            id: object.id,
+            vertexIds: Array.isArray(object.vertexIds) ? [...object.vertexIds] : null, // Nullable for Polygon
+            properties: Array.isArray(object.properties) ? object.properties.map(serializeProperty).filter(Boolean) : [],
+            layerId: object.layerId
+        };
+        if (object instanceof DomainPolygon) {
+            baseData.holesVertexIds = Array.isArray(object.holesVertexIds) ? object.holesVertexIds.map(hole => [...hole]) : [];
+            baseData.parentId = object.parentId;
+            baseData.childIds = Array.isArray(object.childIds) ? [...object.childIds] : [];
+            baseData.isMultiPolygon = object.isMultiPolygon;
+            baseData.subPolygons = Array.isArray(object.subPolygons) ? object.subPolygons.map(sub => ({
+                vertexIds: Array.isArray(sub.vertexIds) ? [...sub.vertexIds] : [],
+                holesVertexIds: Array.isArray(sub.holesVertexIds) ? sub.holesVertexIds.map(hole => [...hole]) : []
+            })) : [];
+        }
+        return baseData;
+    } else if (object instanceof Property) {
+        return serializeProperty(object);
+    } else if (object instanceof TimePoint) {
+        return { _constructorName: 'TimePoint', ...serializeTimePoint(object) };
+    } else {
+        console.warn("Unsupported object type for history serialization:", object);
+        // 安全策としてJSONシリアライズを試みる（ただし推奨されない）
+        try {
+             return JSON.parse(JSON.stringify(object));
+        } catch {
+             return null;
+        }
+    }
+  }
+
+ /**
+ * 履歴から読み込んだプレーンオブジェクトを対応するドメインインスタンスにデシリアライズ
+ * @param {Object | null} data - シリアライズされたプレーンオブジェクト
+ * @returns {Object | null} デシリアライズされたドメインインスタンス、または null
+ * @private
+ */
+_deserializeFromHistory(data) {
+    if (!data || !data._constructorName) return null;
+
+    const constructorName = data._constructorName;
+
+    try {
+        switch (constructorName) {
+            case 'Vertex':
+                return new Vertex(data.id, data.x, data.y);
+            case 'TimePoint':
+                return this._deserializeTimePoint(data); // 既存のヘルパーを使用
+            case 'Property':
+                // Property のデシリアライズには既存のヘルパーを使用
+                // ただし、attributes がネストされている場合に対応が必要な可能性あり
+                const attributes = { ...data.attributes }; // Shallow copy
+                const propData = { ...data, attributes: attributes }; // Pass copied attributes
+                return this._deserializeProperty(propData); // Use existing robust deserializer
+            case 'Point':
+                return new Point(
+                    data.id,
+                    data.vertexIds || [], // Point should always have 1 vertexId
+                    (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(Boolean),
+                    data.layerId
+                );
+            case 'Line':
+                return new DomainLine( // Use alias
+                    data.id,
+                    data.vertexIds || [],
+                    (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(Boolean),
+                    data.layerId
+                );
+            case 'Polygon':
+                const subPolygons = (data.subPolygons || []).map(sub => ({
+                     vertexIds: sub.vertexIds || [],
+                     holesVertexIds: sub.holesVertexIds || []
+                }));
+                return new DomainPolygon( // Use alias
+                    data.id,
+                    data.vertexIds, // Can be null
+                    (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(Boolean),
+                    data.layerId,
+                    data.holesVertexIds || [],
+                    data.parentId || "0",
+                    data.childIds || [],
+                    data.isMultiPolygon || false,
+                    subPolygons
+                );
+            default:
+                console.warn(`Unsupported constructor name for history deserialization: ${constructorName}`);
+                return null;
+        }
+    } catch (error) {
+        console.error(`Error deserializing object with constructor ${constructorName}:`, error, data);
+        return null;
+    }
+}
 
 
   /**
@@ -247,13 +375,12 @@ export class EditingViewModel {
    * 地物の追加を確定
    * @param {Object} properties - プロパティ (Property インスタンスの配列)
    * @param {string} layerId - レイヤーID
-   * @returns {Promise<Object>} 追加された地物
+   * @returns {Promise<Object>} 追加された地物インスタンス
    */
   async confirmAddFeature(properties, layerId) {
     if (this._mode !== 'add' || !this._tool || this._addingPoints.length === 0) {
       throw new Error('地物の追加状態ではありません');
     }
-     // properties が Property インスタンスの配列であることを確認
     if (!Array.isArray(properties) || !properties.every(p => p instanceof Property)) {
         console.error("confirmAddFeature: properties must be an array of Property instances.", properties);
         throw new Error("Invalid properties format.");
@@ -261,27 +388,19 @@ export class EditingViewModel {
 
     try {
       let feature;
-      const geometryData = { vertices: this._addingPoints }; // 頂点データ
+      const geometryData = { vertices: this._addingPoints };
 
-      // ツールタイプに応じた処理
       switch (this._tool) {
         case 'point':
-          if (this._addingPoints.length !== 1) {
-            throw new Error('点情報は1つの点のみを持つ必要があります');
-          }
+          if (this._addingPoints.length !== 1) throw new Error('点情報は1つの点のみを持つ必要があります');
           feature = await this._editFeatureUseCase.addFeature('point', properties, geometryData, layerId);
           break;
         case 'line':
-          if (this._addingPoints.length < 2) {
-            throw new Error('線情報は少なくとも2つの点が必要です');
-          }
+          if (this._addingPoints.length < 2) throw new Error('線情報は少なくとも2つの点が必要です');
            feature = await this._editFeatureUseCase.addFeature('line', properties, geometryData, layerId);
           break;
         case 'polygon':
-          if (this._addingPoints.length < 3) {
-            throw new Error('面情報は少なくとも3つの点が必要です');
-          }
-           // ポリゴンの初期情報（穴なし、親なし）を追加
+          if (this._addingPoints.length < 3) throw new Error('面情報は少なくとも3つの点が必要です');
            const polygonGeometry = { ...geometryData, holesVertexIds: [], parentId: "0" };
            feature = await this._editFeatureUseCase.addFeature('polygon', properties, polygonGeometry, layerId);
           break;
@@ -289,27 +408,23 @@ export class EditingViewModel {
           throw new Error(`未対応のツールタイプ: ${this._tool}`);
       }
 
-      // 操作履歴に追加
+      // 操作履歴に追加 (プレーンオブジェクトを保存)
+      const addedVerticesData = await this._getVerticesByIds(feature.vertexIds); // worldから取得
       this._addToHistory({
         type: 'add',
         featureId: feature.id,
         featureType: this._tool,
-        // 履歴にはシリアライズ可能なプレーンオブジェクトを保存する方が安全かもしれない
-        // featureData: JSON.parse(JSON.stringify(feature)), // Featureインスタンスではなくプレーンデータ
-        featureData: feature, // 一旦インスタンスを保存するが、Undo/Redoでの復元に注意
-        addedVertices: this._getVerticesByIds(feature.vertexIds) // これはプレーンオブジェクト配列
+        featureData: this._serializeForHistory(feature), // プレーンオブジェクトで保存
+        addedVerticesData: addedVerticesData // プレーンオブジェクト配列
       });
 
-      // 追加状態をクリア
       this._clearAddingState();
+      this._eventBus.publish('FeatureAdded', { feature }); // イベントにはインスタンスを渡す
 
-      // イベントを発行
-      this._eventBus.publish('FeatureAdded', { feature });
-
-      return feature;
+      return feature; // インスタンスを返す
     } catch (error) {
       console.error('地物の追加に失敗しました', error);
-      this._clearAddingState(); // エラー時もクリア
+      this._clearAddingState();
       throw error;
     }
   }
@@ -468,17 +583,6 @@ export class EditingViewModel {
 
 
   /**
-   * 頂点を移動 (内部メソッド、endVertexDragから呼ばれる) - このメソッドは不要になった
-   * @param {string} vertexId - 移動する頂点のID
-   * @param {Object} oldPosition - 元の位置 { x, y }
-   * @param {Object} newPosition - 新しい位置 { x, y }
-   * @returns {Promise<Object>} 移動結果
-   * @private internal use by endVertexDrag
-   */
-  // async moveVertex(vertexId, oldPosition, newPosition) { ... } // 削除またはコメントアウト
-
-
-  /**
    * 地物を削除
    * @param {string} featureId - 削除する地物のID
    * @param {Object} feature - 削除前の地物データ（アンドゥ用、ドメインインスタンス）
@@ -490,33 +594,22 @@ export class EditingViewModel {
         throw new Error("Missing feature data for deletion.");
     }
     try {
-       // アンドゥ用に削除される頂点の情報も取得・保存
-       const verticesToDeleteIds = new Set();
-       if (feature.vertexIds) feature.vertexIds.forEach(id => verticesToDeleteIds.add(id));
-       if (feature instanceof DomainPolygon) {
-           (feature.holesVertexIds || []).flat().forEach(id => verticesToDeleteIds.add(id));
-           if (feature.isMultiPolygon && feature.subPolygons) {
-               feature.subPolygons.forEach(sub => (sub.vertexIds || []).forEach(id => verticesToDeleteIds.add(id)));
-               // TODO: MultiPolygon の穴の頂点も考慮
-           }
-       }
-       const deletedVerticesData = this._getVerticesByIds(Array.from(verticesToDeleteIds));
+       const verticesToRestoreData = await this._getVerticesDataForFeature(feature); // 関連頂点データを取得
 
-      await this._editFeatureUseCase.deleteFeature(featureId);
+       await this._editFeatureUseCase.deleteFeature(featureId);
 
-      // 操作履歴に追加
-      this._addToHistory({
-        type: 'delete',
-        featureId,
-        // featureData: JSON.parse(JSON.stringify(feature)), // プレーンオブジェクトで保存
-        featureData: feature, // インスタンスで保存（Undo時に再生成が必要）
-        deletedVerticesData: deletedVerticesData // 削除された頂点のデータ (プレーンオブジェクト)
-      });
+       // 操作履歴に追加 (プレーンオブジェクトで保存)
+       this._addToHistory({
+         type: 'delete',
+         featureId,
+         featureData: this._serializeForHistory(feature), // プレーンオブジェクトで保存
+         verticesToRestoreData: verticesToRestoreData // 関連頂点データも保存
+       });
 
       // イベントを発行
-      this._eventBus.publish('FeatureDeleted', { featureId });
+       this._eventBus.publish('FeatureDeleted', { featureId });
       // 選択解除もイベントで処理
-      this._eventBus.publish('ClearSelection');
+       this._eventBus.publish('ClearSelection');
     } catch (error) {
       console.error('地物の削除に失敗しました', error);
       throw error;
@@ -533,57 +626,51 @@ export class EditingViewModel {
     console.log('Deleting vertices in ViewModel:', vertexIds);
 
     try {
-        // --- アンドゥ情報準備 ---
-        // 1. 削除対象の頂点データ
-        const deletedVerticesData = this._getVerticesByIds(vertexIds);
-        if (deletedVerticesData.length === 0) {
-            console.warn("No valid vertices found for deletion.");
-            return;
-        }
-
-        // 2. 影響を受ける地物の「変更前」の状態
-        const worldRepository = this._editFeatureUseCase._worldRepository; // UseCase経由が望ましいが一時的にアクセス
+        const worldRepository = this._editFeatureUseCase._worldRepository;
         const world = await worldRepository.getWorld();
-        const affectedFeaturesBefore = {};
 
+        // 1. 影響を受ける地物の操作前の状態 (プレーン) と、それらが参照する全頂点データ (プレーン) を取得
+        const affectedFeaturesBeforePlain = {};
+        const allAffectedVertexIds = new Set();
         if (world && world.features) {
             world.features.forEach(f => {
-                // 地物が削除される頂点を使用しているかチェック
                  const featureUsesVertex = vertexIds.some(vid =>
                     (f.vertexIds && f.vertexIds.includes(vid)) ||
                     (f instanceof DomainPolygon && f.holesVertexIds?.some(hole => hole.includes(vid))) ||
                     (f instanceof DomainPolygon && f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds?.includes(vid)))
                  );
-
-                if (featureUsesVertex) {
-                    // 変更前の地物データをディープコピーして保存 (インスタンスをそのまま保存)
-                    // 注意: Undo時にプレーンオブジェクトからドメインオブジェクトへの変換が必要になる
-                    // affectedFeaturesBefore[f.id] = JSON.parse(JSON.stringify(f));
-                    affectedFeaturesBefore[f.id] = f; // インスタンスを保存
-                }
+                 if (featureUsesVertex) {
+                     affectedFeaturesBeforePlain[f.id] = this._serializeForHistory(f);
+                     // この地物が参照する全ての頂点IDを収集
+                     if (f.vertexIds) f.vertexIds.forEach(id => allAffectedVertexIds.add(id));
+                     if (f instanceof DomainPolygon) {
+                         f.holesVertexIds?.flat().forEach(id => allAffectedVertexIds.add(id));
+                         if(f.isMultiPolygon && f.subPolygons) {
+                             f.subPolygons.forEach(sub => sub.vertexIds?.forEach(id => allAffectedVertexIds.add(id)));
+                         }
+                     }
+                 }
             });
         }
+        const verticesToRestoreData = await this._getVerticesByIds(Array.from(allAffectedVertexIds));
 
-        // --- UseCaseを呼び出して削除実行 ---
+        // 2. UseCaseを呼び出して削除実行
         const result = await this._editFeatureUseCase.deleteVertices(vertexIds);
-        // result = { deletedVertexIds, updatedFeatureIds, deletedFeatureIds }
 
-        // --- アンドゥ履歴に追加 ---
+        // 3. アンドゥ履歴に追加
         this._addToHistory({
             type: 'deleteVertices',
-            deletedVertexIds: vertexIds,
-            deletedVerticesData: deletedVerticesData, // 削除された頂点の完全なデータ (プレーン)
-            affectedFeaturesBefore: affectedFeaturesBefore, // 影響を受けた地物の変更前データ (インスタンス)
-            deletedFeatureIds: result?.deletedFeatureIds || [] // UseCaseの結果から削除された地物IDを取得
+            deletedVertexIds: vertexIds, // ユーザーが指示したID
+            verticesToRestoreData: verticesToRestoreData, // 復元に必要な全頂点データ (プレーン)
+            affectedFeaturesBefore: affectedFeaturesBeforePlain, // 影響を受けた地物の変更前データ (プレーン)
+            deletedFeatureIds: result?.deletedFeatureIds || [] // 実際に削除された地物ID
         });
 
-        // --- イベント発行 ---
-        // UseCaseの結果に基づいてイベントを発行
+        // 4. イベント発行
         if (result?.deletedFeatureIds?.length > 0) {
              result.deletedFeatureIds.forEach(id => this._eventBus.publish('FeatureDeleted', { featureId: id }));
         }
         if (result?.updatedFeatureIds?.length > 0) {
-             // 更新された地物の最新データを取得してイベント発行 (オプション)
              const updatedWorld = await worldRepository.getWorld();
              result.updatedFeatureIds.forEach(id => {
                  const updatedFeature = updatedWorld.features.find(f => f.id === id);
@@ -608,83 +695,77 @@ export class EditingViewModel {
   /**
    * 地物プロパティを更新
    * @param {string} featureId - 更新する地物のID
-   * @param {Object} oldProperties - 古いプロパティ配列 (Propertyインスタンスの配列)
-   * @param {Object} newProperties - 新しいプロパティ配列 (Propertyインスタンスの配列)
-   * @returns {Promise<Object>} 更新された地物
+   * @param {Object} oldPropertiesPlain - 古いプロパティ配列 (プレーンオブジェクトの配列)
+   * @param {Object} newPropertiesPlain - 新しいプロパティ配列 (プレーンオブジェクトの配列)
+   * @returns {Promise<Object>} 更新された地物インスタンス
    */
-  async updateFeatureProperties(featureId, oldProperties, newProperties) {
-     // 型チェック
-    if (!Array.isArray(oldProperties) || !oldProperties.every(p => p instanceof Property)) {
-        console.error("updateFeatureProperties: oldProperties must be an array of Property instances.");
-        throw new Error("Invalid oldProperties format.");
-    }
-    if (!Array.isArray(newProperties) || !newProperties.every(p => p instanceof Property)) {
-        console.error("updateFeatureProperties: newProperties must be an array of Property instances.");
-        throw new Error("Invalid newProperties format.");
-    }
+  async updateFeatureProperties(featureId, oldPropertiesPlain, newPropertiesPlain) {
     try {
-      const feature = await this._editFeatureUseCase.updateFeature(
-        featureId, { properties: newProperties }
-      );
+        // プレーンオブジェクトから Property インスタンスの配列を生成
+        const newPropertiesInstances = newPropertiesPlain
+            .map(pData => this._deserializeFromHistory(pData))
+            .filter(p => p instanceof Property);
 
-      // 操作履歴に追加
-      this._addToHistory({
-        type: 'updateProperties',
-        featureId,
-        oldProperties: oldProperties, // 更新「前」のプロパティ配列を保存 (インスタンス)
-        newProperties: newProperties  // 更新「後」のプロパティ配列を保存 (インスタンス)
-      });
+        if (newPropertiesInstances.length !== newPropertiesPlain.length) {
+            console.warn("Some properties failed to deserialize during update.");
+        }
 
-      // イベントを発行
-      this._eventBus.publish('FeatureUpdated', { feature });
+        const feature = await this._editFeatureUseCase.updateFeature(
+          featureId, { properties: newPropertiesInstances } // インスタンスを渡す
+        );
 
-      return feature;
-    } catch (error) {
-      console.error('地物プロパティの更新に失敗しました', error);
-      throw error;
-    }
+        // 操作履歴に追加 (プレーンオブジェクトを保存)
+        this._addToHistory({
+          type: 'updateProperties',
+          featureId,
+          oldProperties: oldPropertiesPlain, // 更新「前」のプレーンデータを保存
+          newProperties: newPropertiesPlain  // 更新「後」のプレーンデータを保存
+        });
+
+        this._eventBus.publish('FeatureUpdated', { feature }); // イベントにはインスタンス
+
+        return feature; // インスタンスを返す
+      } catch (error) {
+        console.error('地物プロパティの更新に失敗しました', error);
+        throw error;
+      }
   }
 
   /**
    * ポリゴンに穴を追加
    * @param {string} polygonId - ポリゴンID
    * @param {Array} holePoints - 穴の頂点配列 [{x, y}, ...]
-   * @returns {Promise<Object>} 更新されたポリゴン
+   * @returns {Promise<Object>} 更新されたポリゴンインスタンス
    */
   async addHoleToPolygon(polygonId, holePoints) {
-    // console.log(`addHoleToPolygon called: polygonId=${polygonId}, points=`, holePoints);
     try {
       if (holePoints.length < 3) {
         throw new Error('穴は少なくとも3つの点が必要です');
       }
 
-      // ポリゴンを取得
       const worldRepository = this._editFeatureUseCase._worldRepository;
       const world = await worldRepository.getWorld();
 
       const polygonIndex = world.features.findIndex(f => f.id === polygonId && f instanceof DomainPolygon);
-      if (polygonIndex === -1) {
-        throw new Error(`ポリゴンが見つかりません: ${polygonId}`);
-      }
+      if (polygonIndex === -1) throw new Error(`ポリゴンが見つかりません: ${polygonId}`);
       const polygon = world.features[polygonIndex];
 
-      // 古い穴配列を保存（アンドゥ用）
-      const oldHolesVertexIds = polygon.holesVertexIds.map(hole => [...hole]); // ディープコピー
+      const oldHolesVertexIdsPlain = this._serializeForHistory({ holesVertexIds: polygon.holesVertexIds })?.holesVertexIds || []; // プレーンで保存
 
-      // 新しい頂点を作成し、頂点IDを取得
       const newHoleVertexIds = [];
-      const tempVertices = []; // アンドゥ用に作成した頂点も記録 (プレーンオブジェクト)
+      const addedVerticesData = []; // 追加された頂点のプレーンデータ
+      let verticesChanged = false;
       for (const point of holePoints) {
-          const vertexId = this._editFeatureUseCase._generateId('vertex'); // UseCaseのID生成を利用
-          tempVertices.push({ id: vertexId, x: point.x, y: point.y });
+          const vertexId = this._editFeatureUseCase._generateId('vertex');
+          const vertexData = { _constructorName: 'Vertex', id: vertexId, x: point.x, y: point.y };
+          addedVerticesData.push(vertexData);
           newHoleVertexIds.push(vertexId);
+          if (!world.vertices.some(v => v.id === vertexId)) { // worldに直接追加
+             world.vertices.push({ id: vertexId, x: point.x, y: point.y }); // UseCaseはプレーンを期待
+             verticesChanged = true;
+          }
       }
-      // 作成した頂点をワールドデータに追加
-      // updateFeature の _processGeometry で処理されるように修正が必要 -> されないのでここで追加
-      if (tempVertices.length > 0) {
-          world.vertices.push(...tempVertices);
-          await worldRepository.saveWorld(world); // 追加した頂点を一旦保存
-      }
+      if (verticesChanged) await worldRepository.saveWorld(world); // 追加頂点を保存
 
       // 穴を追加
       const newHolesVertexIdsWithNewOne = [...oldHolesVertexIds, newHoleVertexIds];
@@ -694,27 +775,24 @@ export class EditingViewModel {
         polygonId,
         { geometry: { holesVertexIds: newHolesVertexIdsWithNewOne } } // geometry オブジェクトで渡す
       );
-      // console.log("Polygon updated with new hole:", updatedPolygon);
 
-      // 操作履歴に追加
+      const newHolesVertexIdsPlain = this._serializeForHistory({ holesVertexIds: updatedPolygon.holesVertexIds })?.holesVertexIds || []; // プレーンで保存
+
       this._addToHistory({
         type: 'addHole',
         polygonId,
-        oldHolesVertexIds, // 更新前の穴全体
-        newHolesVertexIds: updatedPolygon.holesVertexIds, // 更新後の穴全体
-        addedVerticesData: tempVertices // 追加された頂点の情報 (プレーン)
+        oldHolesVertexIds: oldHolesVertexIdsPlain, // 更新前のプレーンデータ
+        newHolesVertexIds: newHolesVertexIdsPlain, // 更新後のプレーンデータ
+        addedVerticesData: addedVerticesData // 追加された頂点のプレーンデータ
       });
 
-      // イベントを発行
       this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
-
-      // 穴追加状態をクリア (confirmAddHoleから呼ばれる場合は不要かもしれないが念のため)
       this._clearAddingState();
 
       return updatedPolygon;
     } catch (error) {
       console.error('穴の追加に失敗しました', error);
-      this._clearAddingState(); // エラー時もクリア
+      this._clearAddingState();
       throw error;
     }
   }
@@ -725,7 +803,6 @@ export class EditingViewModel {
    * @param {Object} element - 表示要素
    */
   addTemporaryElement(element) {
-    // ドラッグ中の仮表示は ViewModel 内部で管理するため、このメソッドは不要になるかも
     this._temporaryElements.push(element);
     this._notifyObservers('temporaryElements');
   }
@@ -762,8 +839,9 @@ export class EditingViewModel {
 
     try {
       await this._executeReverseOperation(operation);
-      this._redoStack.push(operation); // 成功した場合のみリドゥスタックへ
+      this._redoStack.push(operation);
       this._notifyObservers('history');
+      this._eventBus.publish('WorldUpdated'); // 全体更新イベント
     } catch (error) {
       // エラーが発生した場合、アンドゥスタックに戻す
       this._undoStack.push(operation);
@@ -789,6 +867,7 @@ export class EditingViewModel {
       await this._executeOperation(operation);
       this._undoStack.push(operation); // 成功した場合のみアンドゥスタックへ
       this._notifyObservers('history');
+      this._eventBus.publish('WorldUpdated'); // 全体更新イベント
     } catch (error) {
       // エラーが発生した場合、リドゥスタックに戻す
       this._redoStack.push(operation);
@@ -800,274 +879,227 @@ export class EditingViewModel {
 
   /**
    * 操作履歴に追加
-   * @param {Object} operation - 操作情報
+   * @param {Object} operation - 操作情報 (内部データはプレーンオブジェクトであるべき)
    * @private
    */
   _addToHistory(operation) {
+    // operation内のデータがプレーンオブジェクトであることを確認 (開発用)
+    // JSON.parse(JSON.stringify(operation)); // deep copy & check serializability
+
     this._undoStack.push(operation);
 
-    // 履歴サイズの制限
     if (this._undoStack.length > this._maxHistorySize) {
       this._undoStack.shift();
     }
-
-    // リドゥスタックをクリア
     this._redoStack = [];
-
     this._notifyObservers('history');
   }
 
   /**
    * 操作を実行 (リドゥ用)
-   * @param {Object} operation - 操作情報
+   * @param {Object} operation - 操作情報 (プレーンオブジェクト)
    * @returns {Promise<void>}
    * @private
    */
   async _executeOperation(operation) {
-    // console.log("Executing operation (redo):", operation);
-    switch (operation.type) {
-      case 'add':
-        // 地物を復元
-        const worldRepoAdd = this._editFeatureUseCase._worldRepository;
-        const worldAdd = await worldRepoAdd.getWorld();
-        // 頂点も復元 (プレーンオブジェクトを追加)
-        if (operation.addedVertices) {
-            operation.addedVertices.forEach(vData => {
-                if (!worldAdd.vertices.some(wv => wv.id === vData.id)) {
-                    worldAdd.vertices.push(vData);
-                }
-            });
-        }
-        // 地物自体を復元 (ドメインインスタンスを直接追加)
-        if (operation.featureData && !worldAdd.features.some(f => f.id === operation.featureId)) {
-            // 履歴に保存されたインスタンスを追加（状態が古くないか注意）
-            worldAdd.features.push(operation.featureData);
-            await worldRepoAdd.saveWorld(worldAdd);
-            this._eventBus.publish('FeatureAdded', { feature: operation.featureData });
-        } else {
-             console.warn("Redo add: Feature already exists or data missing.", operation.featureId);
-        }
-        break;
-
-      case 'delete':
-         // 地物を再度削除
-         await this._editFeatureUseCase.deleteFeature(operation.featureId);
-         // 削除された頂点も再度削除 (deleteFeature内で処理されるはず)
-         this._eventBus.publish('FeatureDeleted', { featureId: operation.featureId });
-         this._eventBus.publish('ClearSelection');
-        break;
-
-      case 'deleteVertices': // リドゥ：頂点削除
-          // UseCase を呼び出して再度頂点を削除
-          const redoResult = await this._editFeatureUseCase.deleteVertices(operation.deletedVertexIds);
-          // イベント発行 (UseCase の結果に基づいて)
-          if (redoResult?.deletedFeatureIds?.length > 0) {
-               redoResult.deletedFeatureIds.forEach(id => this._eventBus.publish('FeatureDeleted', { featureId: id }));
-          }
-          // 更新イベントは省略（WorldUpdated でカバーする方針なら不要）
-          this._eventBus.publish('VerticesDeleted', { deletedVertexIds: operation.deletedVertexIds });
-          this._eventBus.publish('ClearSelection');
-          break;
-
-      case 'moveVertex':
-        // 頂点を新しい位置に再度移動
-        await this._editFeatureUseCase.moveVertex(
-          operation.vertexId,
-          operation.newPosition // Redoなので newPosition を使う
-        );
-         this._eventBus.publish('VertexMoved', { vertexId: operation.vertexId, newPosition: operation.newPosition });
-        break;
-
-      case 'updateProperties':
-        // プロパティを新しい状態に再度更新
-        const updatedFeatureProps = await this._editFeatureUseCase.updateFeature(
-          operation.featureId,
-          { properties: operation.newProperties } // Redoなので newProperties を使う (インスタンス配列)
-        );
-         this._eventBus.publish('FeatureUpdated', { feature: updatedFeatureProps });
-        break;
-
-      case 'addHole':
-         // 穴追加時に作成された頂点も復元
-         const repoHoleAdd = this._editFeatureUseCase._worldRepository;
-         const worldHoleAdd = await repoHoleAdd.getWorld();
-         let addedVerticesChanged = false;
-         if (operation.addedVerticesData) {
-             operation.addedVerticesData.forEach(vData => {
-                 if (!worldHoleAdd.vertices.some(wv => wv.id === vData.id)) {
-                     worldHoleAdd.vertices.push(vData); // プレーンオブジェクトを追加
-                     addedVerticesChanged = true;
-                 }
-             });
-         }
-        // 穴を再度追加
-        const updatedPolygonHole = await this._editFeatureUseCase.updateFeature(
-          operation.polygonId,
-          { geometry: { holesVertexIds: operation.newHolesVertexIds } } // Redoなので newHolesVertexIds を使う
-        );
-         if (addedVerticesChanged) await repoHoleAdd.saveWorld(worldHoleAdd); // 頂点追加後に保存
-         this._eventBus.publish('FeatureUpdated', { feature: updatedPolygonHole });
-        break;
-
-      default:
-        console.warn(`未対応の操作タイプ (Redo): ${operation.type}`);
-        // throw new Error(`未対応の操作タイプ: ${operation.type}`);
-    }
-  }
-
-  /**
-   * 逆操作を実行 (アンドゥ用)
-   * @param {Object} operation - 操作情報
-   * @returns {Promise<void>}
-   * @private
-   */
-  async _executeReverseOperation(operation) {
-    // console.log("Executing reverse operation (undo):", operation);
     const worldRepo = this._editFeatureUseCase._worldRepository;
-    const world = await worldRepo.getWorld();
+    let world = await worldRepo.getWorld();
     let worldChanged = false;
 
     switch (operation.type) {
       case 'add':
-        // 追加された地物を削除
-        await this._editFeatureUseCase.deleteFeature(operation.featureId);
-        // 追加された頂点も削除 (deleteFeature内で処理されるはず)
-        this._eventBus.publish('FeatureDeleted', { featureId: operation.featureId });
-        this._eventBus.publish('ClearSelection');
-        break;
-
-      case 'delete':
-        // 削除された地物を復元
-        // 削除された頂点も復元 (プレーンオブジェクトを追加)
-        if (operation.deletedVerticesData) {
-            operation.deletedVerticesData.forEach(vData => {
+        // 地物と頂点を復元 (プレーンからインスタンス生成)
+        if (operation.addedVerticesData) {
+            operation.addedVerticesData.forEach(vData => {
                 if (!world.vertices.some(wv => wv.id === vData.id)) {
-                    world.vertices.push(vData);
+                    world.vertices.push(vData); // UseCaseはプレーンを期待
                     worldChanged = true;
                 }
             });
         }
-        // 地物自体を復元 (インスタンスを直接追加)
-        if (operation.featureData && !world.features.some(f => f.id === operation.featureId)) {
-            world.features.push(operation.featureData);
-            worldChanged = true;
-            this._eventBus.publish('FeatureAdded', { feature: operation.featureData });
-        } else {
-             console.warn("Undo delete: Feature already exists or data missing.", operation.featureId);
+        if (operation.featureData) {
+            const featureInstance = this._deserializeFromHistory(operation.featureData);
+            if (featureInstance && !world.features.some(f => f.id === featureInstance.id)) {
+                world.features.push(featureInstance); // ★ インスタンスを追加
+                worldChanged = true;
+                this._eventBus.publish('FeatureAdded', { feature: featureInstance });
+            }
         }
         break;
 
-      case 'deleteVertices': // アンドゥ：頂点削除の復元
-        let verticesRestored = false;
-        let featuresRestored = false;
-        // 1. 削除された頂点を復元 (プレーンオブジェクトを追加)
-        if (operation.deletedVerticesData) {
-            operation.deletedVerticesData.forEach(vData => {
-                if (!world.vertices.some(v => v.id === vData.id)) {
-                    world.vertices.push(vData);
-                    verticesRestored = true;
-                }
-            });
-        }
-        // 2. 影響を受けた地物を変更前の状態に復元
-        if (operation.affectedFeaturesBefore) {
-            Object.values(operation.affectedFeaturesBefore).forEach(featureBefore => {
-                if (!featureBefore || !featureBefore.id) {
-                     console.warn("Undo deleteVertices: Invalid feature data in history.", featureBefore);
-                     return;
-                }
-                const index = world.features.findIndex(f => f.id === featureBefore.id);
-                // featureBefore はインスタンスのはずなのでそのまま使う
-                if (index !== -1) {
-                    // 既存の地物を変更前のインスタンスで置き換え
-                    if (world.features[index] !== featureBefore) { // 参照が違う場合のみ更新
-                        world.features[index] = featureBefore;
-                        featuresRestored = true;
-                        this._eventBus.publish('FeatureUpdated', { feature: featureBefore });
-                    }
-                } else if (!operation.deletedFeatureIds || !operation.deletedFeatureIds.includes(featureBefore.id)) {
-                    // 地物が削除されていなかった（更新のみだった）のに見つからないのはおかしい
-                    // が、Redoで削除された地物の場合は追加する
-                    world.features.push(featureBefore);
-                    featuresRestored = true;
-                    this._eventBus.publish('FeatureAdded', { feature: featureBefore });
-                } else {
-                     // Redoで削除されていた地物を復元する場合
-                     world.features.push(featureBefore);
-                     featuresRestored = true;
-                     this._eventBus.publish('FeatureAdded', { feature: featureBefore });
-                }
-            });
-        }
-         // 3. Redoで削除された地物も復元する必要がある
-        if (operation.deletedFeatureIds && operation.affectedFeaturesBefore) {
-             operation.deletedFeatureIds.forEach(deletedId => {
-                 const featureData = operation.affectedFeaturesBefore[deletedId];
-                 if (featureData && !world.features.some(f => f.id === deletedId)) {
-                     world.features.push(featureData); // 復元
-                     featuresRestored = true;
-                     this._eventBus.publish('FeatureAdded', { feature: featureData });
-                 }
-             });
-        }
+      case 'delete':
+         await this._editFeatureUseCase.deleteFeature(operation.featureId);
+         // Note: deleteFeature内でイベント発行される
+         break;
 
-        worldChanged = verticesRestored || featuresRestored;
-        // イベント発行（影響範囲が大きいので再描画を促すなど）
-        if (worldChanged) {
-             this._eventBus.publish('WorldUpdated'); // 広範な変更を示すイベントが良いかも
-             this._eventBus.publish('ClearSelection');
-        }
-        break;
+      case 'deleteVertices':
+          const redoResult = await this._editFeatureUseCase.deleteVertices(operation.deletedVertexIds);
+          // Note: deleteVertices内でイベント発行される
+          break;
 
       case 'moveVertex':
-        // 頂点を元の位置に戻す
-        await this._editFeatureUseCase.moveVertex(
-          operation.vertexId,
-          operation.oldPosition // Undoなので oldPosition を使う
-        );
-         this._eventBus.publish('VertexMoved', { vertexId: operation.vertexId, newPosition: operation.oldPosition });
+        await this._editFeatureUseCase.moveVertex(operation.vertexId, operation.newPosition);
+        this._eventBus.publish('VertexMoved', { vertexId: operation.vertexId, newPosition: operation.newPosition });
         break;
 
       case 'updateProperties':
-        // プロパティを元の状態に戻す
+        const newPropsInstances = operation.newProperties.map(p => this._deserializeFromHistory(p)).filter(Boolean);
         const featureProps = await this._editFeatureUseCase.updateFeature(
-          operation.featureId,
-          { properties: operation.oldProperties } // Undoなので oldProperties を使う (インスタンス配列)
+          operation.featureId, { properties: newPropsInstances }
         );
         this._eventBus.publish('FeatureUpdated', { feature: featureProps });
         break;
 
       case 'addHole':
-         // 追加された穴を削除（＝元の状態に戻す）
-         const updatedPolygonUndoHole = await this._editFeatureUseCase.updateFeature(
+         let verticesAdded = false;
+         if (operation.addedVerticesData) {
+             operation.addedVerticesData.forEach(vData => {
+                 if (!world.vertices.some(wv => wv.id === vData.id)) {
+                     world.vertices.push(vData); // UseCaseはプレーンを期待
+                     verticesAdded = true;
+                 }
+             });
+         }
+         if (verticesAdded) {
+             await worldRepo.saveWorld(world); // Save added vertices first
+             world = await worldRepo.getWorld(); // Reload world
+         }
+         const updatedPolygonHole = await this._editFeatureUseCase.updateFeature(
            operation.polygonId,
-           { geometry: { holesVertexIds: operation.oldHolesVertexIds } } // Undoなので oldHolesVertexIds を使う
+           { geometry: { holesVertexIds: operation.newHolesVertexIds } }
          );
-          // 穴追加時に作成された頂点も削除 (他の地物で使われていない場合)
-          let verticesChangedHoleUndo = false;
-          if (operation.addedVerticesData) {
-              const verticesToRemove = new Set(operation.addedVerticesData.map(v => v.id));
-              // 削除前に現在の地物リストで利用状況を再確認
-              const currentFeatures = world.features.filter(f => f.id !== operation.polygonId); // 自分以外の地物
-              verticesToRemove.forEach(vertexId => {
-                  const isUsed = currentFeatures.some(f =>
-                     (f.vertexIds && f.vertexIds.includes(vertexId)) ||
-                     (f instanceof DomainPolygon && f.holesVertexIds?.some(h => h.includes(vertexId))) ||
-                     (f instanceof DomainPolygon && f.isMultiPolygon && f.subPolygons?.some(s => s.vertexIds?.includes(vertexId)))
-                  );
-                  if (!isUsed) {
-                      const index = world.vertices.findIndex(wv => wv.id === vertexId);
-                      if (index !== -1) {
-                         world.vertices.splice(index, 1);
-                         verticesChangedHoleUndo = true;
-                      }
-                  } else {
-                      console.warn(`Undo addHole: Vertex ${vertexId} is still used by other features.`);
-                  }
-              });
-          }
-          worldChanged = worldChanged || verticesChangedHoleUndo; // 頂点変更フラグを考慮
-          this._eventBus.publish('FeatureUpdated', { feature: updatedPolygonUndoHole });
+         this._eventBus.publish('FeatureUpdated', { feature: updatedPolygonHole });
+        break;
+
+      default:
+        console.warn(`未対応の操作タイプ (Redo): ${operation.type}`);
+    }
+
+    // Note: UseCase内でWorldが保存される場合が多いが、念のため明示的な保存は避ける
+    // if (worldChanged) { await worldRepo.saveWorld(world); }
+  }
+
+  /**
+   * 逆操作を実行 (アンドゥ用)
+   * @param {Object} operation - 操作情報 (プレーンオブジェクト)
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _executeReverseOperation(operation) {
+    const worldRepo = this._editFeatureUseCase._worldRepository;
+    let world = await worldRepo.getWorld();
+    let worldChanged = false;
+
+    switch (operation.type) {
+      case 'add':
+        // 追加された地物を削除 (UseCaseを呼ぶ)
+        await this._editFeatureUseCase.deleteFeature(operation.featureId);
+        // Note: deleteFeature内でイベント発行 & 頂点クリーンアップされる
+        break;
+
+      case 'delete':
+        // 削除された頂点を復元
+        if (operation.verticesToRestoreData) {
+            operation.verticesToRestoreData.forEach(vData => {
+                if (!world.vertices.some(wv => wv.id === vData.id)) {
+                    world.vertices.push(vData); // プレーンオブジェクトを追加
+                    worldChanged = true;
+                }
+            });
+        }
+        // 削除された地物を復元 (プレーンからインスタンス生成)
+        if (operation.featureData) {
+            const featureInstance = this._deserializeFromHistory(operation.featureData);
+            if (featureInstance && !world.features.some(f => f.id === featureInstance.id)) {
+                world.features.push(featureInstance); // インスタンスを追加
+                worldChanged = true;
+                this._eventBus.publish('FeatureAdded', { feature: featureInstance });
+            }
+        }
+        break;
+
+      case 'deleteVertices':
+        // 1. 関連する頂点を復元
+        if (operation.verticesToRestoreData) {
+            operation.verticesToRestoreData.forEach(vData => {
+                if (!world.vertices.some(v => v.id === vData.id)) {
+                    world.vertices.push(vData); // プレーンオブジェクトを追加
+                    worldChanged = true;
+                }
+            });
+        }
+        // 2. 影響を受けた地物を変更前の状態に復元
+        if (operation.affectedFeaturesBefore) {
+            Object.values(operation.affectedFeaturesBefore).forEach(featurePlain => {
+                const featureInstance = this._deserializeFromHistory(featurePlain);
+                if (!featureInstance) return;
+
+                const index = world.features.findIndex(f => f.id === featureInstance.id);
+                const wasDeleted = operation.deletedFeatureIds?.includes(featureInstance.id);
+
+                if (index !== -1) { // 地物が存在する場合 (更新されたケース)
+                    world.features[index] = featureInstance; // インスタンスで置き換え
+                    worldChanged = true;
+                    this._eventBus.publish('FeatureUpdated', { feature: featureInstance });
+                } else if (wasDeleted) { // 削除されていた地物を復元
+                    world.features.push(featureInstance);
+                    worldChanged = true;
+                    this._eventBus.publish('FeatureAdded', { feature: featureInstance });
+                } else {
+                    console.warn(`Undo deleteVertices: Feature ${featureInstance.id} not found but was not marked as deleted.`);
+                }
+            });
+        }
+        // 3. 親ポリゴンのchildIds復元も必要（自動化されることを期待するが、現状は手動復元が必要かも）
+        //    -> Polygonインスタンス生成時にchildIdsも復元されるはず。
+        break;
+
+      case 'moveVertex':
+        await this._editFeatureUseCase.moveVertex(operation.vertexId, operation.oldPosition);
+        this._eventBus.publish('VertexMoved', { vertexId: operation.vertexId, newPosition: operation.oldPosition });
+        break;
+
+      case 'updateProperties':
+        const oldPropsInstances = operation.oldProperties.map(p => this._deserializeFromHistory(p)).filter(Boolean);
+        const featureProps = await this._editFeatureUseCase.updateFeature(
+          operation.featureId, { properties: oldPropsInstances }
+        );
+        this._eventBus.publish('FeatureUpdated', { feature: featureProps });
+        break;
+
+      case 'addHole':
+         const polygonHoleUndo = await this._editFeatureUseCase.updateFeature(
+           operation.polygonId,
+           { geometry: { holesVertexIds: operation.oldHolesVertexIds } }
+         );
+         // 穴追加時に作成された頂点も削除 (他の地物で使われていない場合)
+         if (operation.addedVerticesData) {
+             const verticesToRemoveIds = new Set(operation.addedVerticesData.map(v => v.id));
+             world = await worldRepo.getWorld(); // 最新のworldを取得
+             const featuresToCheck = world.features; // 全地物をチェック
+             const usedVertexIds = new Set();
+             featuresToCheck.forEach(f => {
+                 if (f.vertexIds) f.vertexIds.forEach(id => usedVertexIds.add(id));
+                 if (f instanceof DomainPolygon) {
+                    f.holesVertexIds?.flat().forEach(id => usedVertexIds.add(id));
+                    f.subPolygons?.forEach(s => s.vertexIds?.forEach(id => usedVertexIds.add(id)));
+                 }
+             });
+
+             const verticesActuallyRemoved = [];
+             world.vertices = world.vertices.filter(v => {
+                 if (verticesToRemoveIds.has(v.id) && !usedVertexIds.has(v.id)) {
+                     verticesActuallyRemoved.push(v.id);
+                     return false; // 削除
+                 }
+                 return true;
+             });
+             if (verticesActuallyRemoved.length > 0) {
+                 console.log(`Undo addHole: Removed ${verticesActuallyRemoved.length} vertices.`);
+                 worldChanged = true;
+             }
+         }
+         this._eventBus.publish('FeatureUpdated', { feature: polygonHoleUndo });
         break;
 
       default:
@@ -1084,18 +1116,45 @@ export class EditingViewModel {
   /**
    * ID配列から頂点オブジェクトの配列を取得 (アンドゥ/リドゥ用)
    * @param {string[]} vertexIds - 頂点IDの配列
-   * @returns {Vertex[]} 頂点オブジェクトの配列 (プレーンオブジェクトのコピー)
+   * @returns {Promise<Array<Object>>} 頂点オブジェクトのプレーンコピー配列
    * @private
    */
-  _getVerticesByIds(vertexIds) {
-      const worldRepository = this._editFeatureUseCase._worldRepository; // UseCase経由でアクセス
-      const world = worldRepository._world; // キャッシュにアクセス（非推奨だが一時的）
-      if (!world || !world.vertices) return [];
-      const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
-      return vertexIds
-          .map(id => verticesMap.get(id))
-          .filter(Boolean) // 見つからない場合は除外
-          .map(v => ({ ...v })); // ディープコピーして返す (JSON.stringifyより軽量)
+  async _getVerticesByIds(vertexIds) {
+    if (!vertexIds || vertexIds.length === 0) return [];
+    try {
+        const worldRepository = this._editFeatureUseCase._worldRepository;
+        const world = await worldRepository.getWorld(); // 最新のworldを取得
+        if (!world || !world.vertices) return [];
+
+        const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+        return vertexIds
+            .map(id => verticesMap.get(id))
+            .filter(Boolean)
+            .map(v => this._serializeForHistory(v)); // プレーンオブジェクトで返す
+    } catch (error) {
+        console.error("Error fetching vertices by IDs:", error);
+        return [];
+    }
+  }
+
+  /**
+   * 特定の地物が参照する全ての頂点データを取得するヘルパー
+   * @param {Feature} feature - 地物インスタンス
+   * @returns {Promise<Array<Object>>} 頂点オブジェクトのプレーンコピー配列
+   * @private
+   */
+  async _getVerticesDataForFeature(feature) {
+    if (!feature) return [];
+    const vertexIds = new Set();
+    if (feature.vertexIds) feature.vertexIds.forEach(id => vertexIds.add(id));
+    if (feature instanceof DomainPolygon) {
+        feature.holesVertexIds?.flat().forEach(id => vertexIds.add(id));
+        if(feature.isMultiPolygon && feature.subPolygons) {
+            feature.subPolygons.forEach(sub => sub.vertexIds?.forEach(id => vertexIds.add(id)));
+            // TODO: MultiPolygonの穴の頂点も考慮
+        }
+    }
+    return await this._getVerticesByIds(Array.from(vertexIds));
   }
 
 
@@ -1170,7 +1229,7 @@ export class EditingViewModel {
         return this._targetPolygonIdForHole;
       case 'temporaryElements':
         return this._temporaryElements;
-      case 'draggingVertex': // ドラッグ状態の変更を通知
+      case 'draggingVertex':
         return this._draggingVertexInfo;
       case 'history':
         return {
