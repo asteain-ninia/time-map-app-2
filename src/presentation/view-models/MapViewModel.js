@@ -91,9 +91,13 @@ export class MapViewModel {
             if (currentVertexIds.has(id)) {
                 // さらに、この頂点が現在の時間で表示されている地物のいずれかに属しているかチェック
                  const vertexIsVisible = this._features.some(f =>
-                    (f.vertexIds && f.vertexIds.includes(id)) ||
-                    (f instanceof DomainPolygon && f.holesVertexIds?.some(hole => hole.includes(id))) ||
-                    (f instanceof DomainPolygon && f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds?.includes(id)))
+                    // ドメインクラスのインスタンスかチェック
+                    {
+                        const isPolygon = f instanceof DomainPolygon || f.constructor?.name === 'Polygon';
+                        return (f.vertexIds && f.vertexIds.includes(id)) ||
+                            (isPolygon && (f.holesVertexIds || []).some(hole => hole.includes(id))) ||
+                            (isPolygon && f.isMultiPolygon && (f.subPolygons || []).some(sub => (sub.vertexIds || []).includes(id)));
+                    }
                  );
                  if (vertexIsVisible) {
                     existingSelectedVertexIds.add(id);
@@ -280,9 +284,13 @@ export class MapViewModel {
             const belongsToVisibleLayer = this._world.features.some(f =>
                 f.layerId !== layerId && // このレイヤー以外で
                 this._world.layers.find(l => l.id === f.layerId)?.visible && // 表示されているレイヤーに属し
-                ((f.vertexIds && f.vertexIds.includes(vertexId)) ||
-                 (f instanceof DomainPolygon && f.holesVertexIds?.some(h => h.includes(vertexId))) ||
-                 (f instanceof DomainPolygon && f.isMultiPolygon && f.subPolygons?.some(s => s.vertexIds?.includes(vertexId))))
+                // ドメインクラスのインスタンスかチェック
+                 ( () => {
+                     const isPolygon = f instanceof DomainPolygon || f.constructor?.name === 'Polygon';
+                     return (f.vertexIds && f.vertexIds.includes(vertexId)) ||
+                            (isPolygon && (f.holesVertexIds || []).some(h => h.includes(vertexId))) ||
+                            (isPolygon && f.isMultiPolygon && (f.subPolygons || []).some(s => (s.vertexIds || []).includes(vertexId)));
+                 } )()
             );
             if (belongsToVisibleLayer) {
                 newSelectedVertexIds.add(vertexId); // 表示レイヤーにも属していれば維持
@@ -409,6 +417,23 @@ export class MapViewModel {
          return; // 存在しない頂点は選択できない
     }
 
+    // 頂点が現在表示中の地物に属しているか確認
+    const isVertexVisible = this._features.some(f => {
+         // ドメインクラスのインスタンスかチェック
+         const isPolygon = f instanceof DomainPolygon || f.constructor?.name === 'Polygon';
+         return (f.vertexIds && f.vertexIds.includes(vertexId)) ||
+                (isPolygon && (f.holesVertexIds || []).some(hole => hole.includes(vertexId))) ||
+                (isPolygon && f.isMultiPolygon && (f.subPolygons || []).some(sub => (sub.vertexIds || []).includes(vertexId)));
+    });
+    if (!isVertexVisible) {
+        console.warn(`Vertex ${vertexId} is not part of any currently visible feature. Selection denied.`);
+        // 非表示頂点を選択しようとした場合、単一選択ならクリア、複数選択なら何もしない
+        if (!addToSelection) {
+            this.clearSelection();
+        }
+        return;
+    }
+
     let vertexSelectionChanged = false;
     const newSelectedVertexIds = addToSelection ? new Set(this._selectedVertexIds) : new Set();
 
@@ -455,9 +480,13 @@ export class MapViewModel {
           // 選択された頂点のいずれかが属する地物を探す（最初の1つで良い）
           const firstSelectedVertexId = this._selectedVertexIds.values().next().value;
           const ownerFeature = this._features.find(f =>
-              (f.vertexIds && f.vertexIds.includes(firstSelectedVertexId)) ||
-              (f instanceof DomainPolygon && f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(firstSelectedVertexId))) ||
-              (f instanceof DomainPolygon && f.subPolygons && f.subPolygons.some(sub => sub.vertexIds?.includes(firstSelectedVertexId)))
+              {
+                  // ドメインクラスのインスタンスかチェック
+                  const isPolygon = f instanceof DomainPolygon || f.constructor?.name === 'Polygon';
+                  return (f.vertexIds && f.vertexIds.includes(firstSelectedVertexId)) ||
+                         (isPolygon && (f.holesVertexIds || []).some(hole => hole.includes(firstSelectedVertexId))) ||
+                         (isPolygon && f.isMultiPolygon && (f.subPolygons || []).some(sub => (sub.vertexIds || []).includes(firstSelectedVertexId)))
+              }
           );
           newHighlightedFeatureId = ownerFeature ? ownerFeature.id : null;
       }

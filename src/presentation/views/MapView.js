@@ -464,14 +464,14 @@ _svgToWorld(svgPoint) {
       // 影響を受ける地物を探し、仮の形状を描画
       const draggedVertexIds = new Set(draggingVerticesInfo.keys());
       const affectedFeatures = world.features.filter(f => {
-          return draggedVertexIds.forEach(draggedId => {
-             if (
-                 (f.vertexIds && f.vertexIds.includes(draggedId)) ||
-                 (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(draggedId))) ||
-                 (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds?.includes(draggedId)))
-             ) return true;
-          });
-          return false;
+          // ドメインクラスのインスタンスかチェック
+          const isPolygon = f instanceof DomainPolygon || f.constructor?.name === 'Polygon';
+          // 地物がドラッグ中の頂点のいずれかを使用しているかチェック
+          return Array.from(draggedVertexIds).some(draggedId =>
+              (f.vertexIds && f.vertexIds.includes(draggedId)) ||
+              (isPolygon && (f.holesVertexIds || []).some(hole => hole.includes(draggedId))) ||
+              (isPolygon && f.isMultiPolygon && (f.subPolygons || []).some(sub => (sub.vertexIds || []).includes(draggedId)))
+          );
       });
 
 
@@ -1308,20 +1308,39 @@ _onWheel(event) {
   }
 
   /**
-   * クリックされたワールド座標に最も近い頂点を探す
+   * クリックされたワールド座標に最も近い**表示中の**頂点を探す
    * @param {object} worldPoint - ワールド座標 {x, y}
    * @returns {Vertex | null} 最も近い頂点オブジェクト、またはnull
    * @private
    */
   _findClosestVertex(worldPoint) {
       const world = this._viewModel.getWorld();
-      if (!world || !world.vertices || world.vertices.length === 0) {
+      const features = this._viewModel.getFeatures(); // 表示中の地物を取得
+      if (!world || !world.vertices || features.length === 0) {
           return null;
       }
+
+      const visibleVertexIds = new Set();
+      features.forEach(f => {
+          // ドメインクラスのインスタンスかチェック
+          const isPolygon = f instanceof DomainPolygon || f.constructor?.name === 'Polygon';
+          if (f.vertexIds) f.vertexIds.forEach(id => visibleVertexIds.add(id));
+          if (isPolygon) {
+              (f.holesVertexIds || []).flat().forEach(id => visibleVertexIds.add(id));
+              if(f.isMultiPolygon && f.subPolygons) {
+                  f.subPolygons.forEach(sub => (sub.vertexIds || []).forEach(id => visibleVertexIds.add(id)));
+              }
+          }
+      });
+
+      if (visibleVertexIds.size === 0) return null;
+
+      const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
       let closestVertex = null;
       let minDistanceSq = this._clickToleranceSq;
-      for (const vertex of world.vertices) {
-          // Ensure vertex has x and y properties
+
+      for (const vertexId of visibleVertexIds) { // 表示中の頂点IDのみループ
+          const vertex = verticesMap.get(vertexId);
           if (vertex && typeof vertex.x === 'number' && typeof vertex.y === 'number') {
             const distanceSq = this._viewModel._geometryService.calculateDistanceSq(
                 worldPoint.x, worldPoint.y, vertex.x, vertex.y
@@ -1330,8 +1349,6 @@ _onWheel(event) {
                 minDistanceSq = distanceSq;
                 closestVertex = vertex;
             }
-          } else {
-             // console.warn("Invalid vertex data encountered in _findClosestVertex:", vertex);
           }
       }
       return closestVertex;
