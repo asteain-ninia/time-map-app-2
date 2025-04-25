@@ -46,7 +46,7 @@ export class MapView {
 
     // クリック許容範囲（ワールド座標での距離の二乗）
     this._clickToleranceSq = 0; // _initialize で設定
-    this._clickTolerancePixels = 10; // ピクセル単位での許容範囲
+    this._clickTolerancePixels = 3; // ピクセル単位での許容範囲
 
     // 初期化
     this._initialize();
