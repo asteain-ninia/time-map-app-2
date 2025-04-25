@@ -574,6 +574,69 @@ export class EditFeatureUseCase {
   }
 
   /**
+   * 複数の頂点を移動
+   * @param {Array<{ vertexId: string, newPosition: {x: number, y: number} }>} vertexUpdates - 移動する頂点の情報配列
+   * @returns {Promise<Object>} 更新情報 { updatedVertices: Object[], affectedFeatures: Object[] }
+   */
+  async moveVertices(vertexUpdates) {
+    const world = await this._worldRepository.getWorld();
+    const updatedVertices = [];
+    const allAffectedFeatureIds = new Set();
+
+    // world.vertices を Map にして高速アクセス
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+
+    for (const update of vertexUpdates) {
+      const { vertexId, newPosition } = update;
+      const vertex = verticesMap.get(vertexId);
+
+      if (!vertex) {
+        console.warn(`Vertex not found with ID during moveVertices: ${vertexId}`);
+        continue;
+      }
+
+      // TODO: 必要であれば衝突検出と位置調整を追加
+      // const adjustedPosition = this._handleCollisionForVertexMove(vertex, newPosition, world);
+      const adjustedPosition = newPosition; // 簡易的に調整なし
+
+      const updatedVertexData = {
+        id: vertexId,
+        x: adjustedPosition.x,
+        y: adjustedPosition.y,
+      };
+
+      // 更新されたデータを Map と配列で管理
+      verticesMap.set(vertexId, updatedVertexData);
+      updatedVertices.push(updatedVertexData);
+
+      // この頂点を使用する地物のIDを収集
+      world.features.forEach(f => {
+        if (!f || typeof f !== 'object') return;
+        const usesVertex = (f.vertexIds && f.vertexIds.includes(vertexId)) ||
+                           (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(vertexId))) ||
+                           (f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds?.includes(vertexId)));
+        if (usesVertex) {
+          allAffectedFeatureIds.add(f.id);
+        }
+      });
+    }
+
+    // world.vertices 配列を更新されたデータで再構築
+    world.vertices = Array.from(verticesMap.values());
+
+    // 影響を受けた地物リストを作成
+    const affectedFeatures = world.features.filter(f => allAffectedFeatureIds.has(f.id));
+
+    // 世界データを保存 (一度だけ)
+    await this._worldRepository.saveWorld(world);
+
+    return {
+      updatedVertices, // 更新された頂点のプレーンオブジェクトの配列
+      affectedFeatures // 影響を受けた地物のリスト（参照は古い可能性あり）
+    };
+  }
+
+  /**
    * 頂点を共有化
    * @param {string} vertexId1 - 頂点1のID
    * @param {string} vertexId2 - 頂点2のID

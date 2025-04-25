@@ -25,7 +25,8 @@ export class EditingViewModel {
     this._addingPoints = []; // 追加中の点の配列 (地物追加または穴追加用)
     this._targetPolygonIdForHole = null; // 穴追加対象のポリゴンID
     this._temporaryElements = []; // 一時的な表示要素 (MapViewで描画)
-    this._draggingVertexInfo = null; // ドラッグ中の頂点情報 { id: string, originalPosition: {x, y}, currentPosition: {x, y} }
+    // this._draggingVertexInfo = null; // 廃止: 単一頂点ドラッグ情報
+    this._draggingVerticesInfo = new Map(); // ドラッグ中の頂点情報 Map<vertexId, { originalPosition, currentPosition }>
 
     // アンドゥ・リドゥの状態
     this._undoStack = [];
@@ -229,7 +230,7 @@ _deserializeFromHistory(data) {
         this._clearAddingState();
       }
       // ドラッグ中の場合、ドラッグをキャンセル
-      if (this._draggingVertexInfo) {
+      if (this._draggingVerticesInfo.size > 0) {
          this._resetDraggingState();
       }
       // 編集モード終了時に一時要素クリア
@@ -255,7 +256,7 @@ _deserializeFromHistory(data) {
         this._clearAddingState();
       }
       // ドラッグ中の場合、ドラッグをキャンセル
-      if (this._draggingVertexInfo) {
+      if (this._draggingVerticesInfo.size > 0) {
          this._resetDraggingState();
       }
        // ツール変更時に一時要素クリア
@@ -324,7 +325,7 @@ _deserializeFromHistory(data) {
     // 'add' モードまたは 'edit' モードの 'add-hole' ツールの場合に追加
     if ((this._mode === 'add' && this._tool) || (this._mode === 'edit' && this._tool === 'add-hole')) {
         // ドラッグ中は追加しない（誤操作防止）
-        if(this._draggingVertexInfo) return;
+        if(this._draggingVerticesInfo.size > 0) return;
         this._addingPoints.push(point);
         this._notifyObservers('addingPoints');
     } else {
@@ -460,52 +461,60 @@ _deserializeFromHistory(data) {
   }
 
   /**
-   * 頂点ドラッグの開始
-   * @param {string} vertexId - ドラッグする頂点のID
-   * @param {Object} originalPosition - ドラッグ開始時の位置 { x, y }
+   * 複数の頂点のドラッグを開始
+   * @param {Map<string, {x: number, y: number}>} vertices - ドラッグする頂点のIDと開始位置のMap
    */
-  startVertexDrag(vertexId, originalPosition) {
+  startVerticesDrag(vertices) {
       if (this._mode !== 'edit' || this._tool === 'add-hole') {
           console.warn("Cannot start vertex drag in current mode/tool:", this._mode, this._tool);
           return;
       }
-      if (!vertexId || !originalPosition) {
-          console.error("Invalid arguments for startVertexDrag");
+      if (!vertices || vertices.size === 0) {
+          console.error("Invalid arguments for startVerticesDrag");
           return;
       }
       // 既にドラッグ中なら何もしない（またはエラー）
-      if (this._draggingVertexInfo) {
-          console.warn("Already dragging a vertex:", this._draggingVertexInfo.id);
+      if (this._draggingVerticesInfo.size > 0) {
+          console.warn("Already dragging vertices:", Array.from(this._draggingVerticesInfo.keys()));
           return;
       }
-      this._draggingVertexInfo = {
-          id: vertexId,
-          originalPosition: { ...originalPosition },
-          currentPosition: { ...originalPosition } // 初期位置は同じ
-      };
-      // console.log("Vertex drag started:", this._draggingVertexInfo);
-      this._notifyObservers('draggingVertex');
+
+      this._draggingVerticesInfo.clear();
+      for (const [vertexId, position] of vertices.entries()) {
+          this._draggingVerticesInfo.set(vertexId, {
+              originalPosition: { ...position },
+              currentPosition: { ...position } // 初期位置は同じ
+          });
+      }
+      // console.log("Vertices drag started:", this._draggingVerticesInfo);
+      this._notifyObservers('draggingVertices');
   }
 
   /**
    * 頂点ドラッグ中の位置更新
-   * @param {Object} currentPosition - 現在のマウス位置（ワールド座標） { x, y }
+   * @param {number} deltaX - X方向の移動差分 (ワールド座標)
+   * @param {number} deltaY - Y方向の移動差分 (ワールド座標)
    */
-  updateVertexDrag(currentPosition) {
-      if (!this._draggingVertexInfo) {
-          // console.warn("updateVertexDrag called but not dragging.");
+  updateVerticesDrag(deltaX, deltaY) {
+      if (this._draggingVerticesInfo.size === 0) {
+          // console.warn("updateVerticesDrag called but not dragging.");
           return;
       }
-      if (!currentPosition) {
-          console.error("Invalid currentPosition for updateVertexDrag");
-          return;
+
+      let positionChanged = false;
+      for (const info of this._draggingVerticesInfo.values()) {
+          const newX = info.originalPosition.x + deltaX;
+          const newY = info.originalPosition.y + deltaY;
+          // パフォーマンスのため、位置が変わった場合のみ更新
+          if (info.currentPosition.x !== newX || info.currentPosition.y !== newY) {
+              info.currentPosition = { x: newX, y: newY };
+              positionChanged = true;
+          }
       }
-      // パフォーマンスのため、位置が変わった場合のみ更新＆通知する
-      if (this._draggingVertexInfo.currentPosition.x !== currentPosition.x ||
-          this._draggingVertexInfo.currentPosition.y !== currentPosition.y) {
-          this._draggingVertexInfo.currentPosition = { ...currentPosition };
-          // console.log("Vertex drag updated:", this._draggingVertexInfo);
-          this._notifyObservers('draggingVertex'); // 高頻度で通知される
+
+      if (positionChanged) {
+           // console.log("Vertices drag updated:", this._draggingVerticesInfo);
+           this._notifyObservers('draggingVertices'); // 高頻度で通知される
       }
   }
 
@@ -513,61 +522,72 @@ _deserializeFromHistory(data) {
    * 頂点ドラッグの終了
    * @returns {Promise<void>}
    */
-  async endVertexDrag() {
-      if (!this._draggingVertexInfo) {
-          // console.warn("endVertexDrag called but not dragging.");
+  async endVerticesDrag() {
+      if (this._draggingVerticesInfo.size === 0) {
+          // console.warn("endVerticesDrag called but not dragging.");
           return;
       }
 
-      const { id, originalPosition, currentPosition } = this._draggingVertexInfo;
-      const dragInfoCopy = { ...this._draggingVertexInfo }; // コピーを作成
-
+      const dragInfoCopy = new Map(this._draggingVerticesInfo); // コピーを作成
       this._resetDraggingState(); // 先に状態をリセット（再描画のため）
 
-      // 移動距離が小さい場合は実際の移動処理をスキップ（クリックと区別）
-      const dx = currentPosition.x - originalPosition.x;
-      const dy = currentPosition.y - originalPosition.y;
-      const distanceSq = dx * dx + dy * dy;
-      // クリック許容範囲を MapView から取得するか、ここで定義する (例: 1e-6)
+      const vertexUpdates = [];
+      let significantMovement = false;
       const clickToleranceSq = 1e-6; // 仮の値
 
-      if (distanceSq > clickToleranceSq) {
-           console.log("Ending vertex drag and applying move:", id, originalPosition, currentPosition);
+      for (const [vertexId, info] of dragInfoCopy.entries()) {
+          const dx = info.currentPosition.x - info.originalPosition.x;
+          const dy = info.currentPosition.y - info.originalPosition.y;
+          const distanceSq = dx * dx + dy * dy;
+
+          if (distanceSq > clickToleranceSq) {
+              significantMovement = true;
+          }
+          vertexUpdates.push({ vertexId, newPosition: info.currentPosition });
+      }
+
+      if (significantMovement) {
+           console.log("Ending vertices drag and applying move:", vertexUpdates);
           try {
               // 確定処理: EditFeatureUseCaseを呼び出す
-              // moveVertex は内部メソッドではなく公開メソッドを使うべき
-              // await this.moveVertex(id, originalPosition, currentPosition); // これはプライベートメソッド
-              await this._editFeatureUseCase.moveVertex(id, currentPosition);
+              await this._editFeatureUseCase.moveVertices(vertexUpdates);
 
                // 操作履歴に追加 (移動した場合のみ)
-              this._addToHistory({
-                type: 'moveVertex',
-                vertexId: id,
-                oldPosition: originalPosition, // 移動「前」の位置を保存
-                newPosition: currentPosition   // 移動「後」の位置を保存
-              });
-              // MapViewModel で World データが更新されるイベントが飛ぶはず
-              this._eventBus.publish('VertexMoved', { vertexId: id, newPosition: currentPosition });
+               const historyData = {
+                   type: 'moveVertices',
+                   updates: []
+               };
+               for (const [vertexId, info] of dragInfoCopy.entries()) {
+                   historyData.updates.push({
+                       vertexId: vertexId,
+                       oldPosition: info.originalPosition,
+                       newPosition: info.currentPosition
+                   });
+               }
+               this._addToHistory(historyData);
 
+              // MapViewModel で World データが更新されるイベントが飛ぶはず
+              vertexUpdates.forEach(update => {
+                 this._eventBus.publish('VertexMoved', { vertexId: update.vertexId, newPosition: update.newPosition });
+              });
 
           } catch (error) {
-              console.error('頂点の移動確定に失敗しました', error);
+              console.error('複数頂点の移動確定に失敗しました', error);
               // 必要であればエラー通知や状態のロールバック
-              // 例: this._draggingVertexInfo = dragInfoCopy; // 状態を戻す（あまり推奨されない）
               alert(`頂点の移動に失敗しました: ${error.message}`);
           }
       } else {
-          // console.log("Vertex drag ended without significant movement.");
+          // console.log("Vertices drag ended without significant movement.");
           // 移動がなければアンドゥ履歴には追加しない
       }
   }
 
   /**
    * ドラッグ中の頂点情報を取得
-   * @returns {Object | null} ドラッグ情報、またはnull
+   * @returns {Map<string, { originalPosition: {x, y}, currentPosition: {x, y} }>} ドラッグ情報Map
    */
-  getDraggingVertexInfo() {
-      return this._draggingVertexInfo;
+  getDraggingVerticesInfo() {
+      return this._draggingVerticesInfo;
   }
 
   /**
@@ -575,9 +595,9 @@ _deserializeFromHistory(data) {
    * @private
    */
   _resetDraggingState() {
-      if (this._draggingVertexInfo) {
-          this._draggingVertexInfo = null;
-          this._notifyObservers('draggingVertex'); // ドラッグ終了を通知
+      if (this._draggingVerticesInfo.size > 0) {
+          this._draggingVerticesInfo.clear();
+          this._notifyObservers('draggingVertices'); // ドラッグ終了を通知
       }
   }
 
@@ -832,7 +852,7 @@ _deserializeFromHistory(data) {
   async undo() {
     if (this._undoStack.length === 0) return;
     // ドラッグ中の場合はキャンセル
-    if (this._draggingVertexInfo) this._resetDraggingState();
+    if (this._draggingVerticesInfo.size > 0) this._resetDraggingState();
 
     const operation = this._undoStack.pop();
     // console.log("Undoing:", operation);
@@ -858,7 +878,7 @@ _deserializeFromHistory(data) {
   async redo() {
     if (this._redoStack.length === 0) return;
      // ドラッグ中の場合はキャンセル
-    if (this._draggingVertexInfo) this._resetDraggingState();
+    if (this._draggingVerticesInfo.size > 0) this._resetDraggingState();
 
     const operation = this._redoStack.pop();
     // console.log("Redoing:", operation);
@@ -937,9 +957,19 @@ _deserializeFromHistory(data) {
           // Note: deleteVertices内でイベント発行される
           break;
 
-      case 'moveVertex':
+      case 'moveVertex': // 念のため残すが、moveVerticesに移行
         await this._editFeatureUseCase.moveVertex(operation.vertexId, operation.newPosition);
         this._eventBus.publish('VertexMoved', { vertexId: operation.vertexId, newPosition: operation.newPosition });
+        break;
+      case 'moveVertices':
+        const redoUpdates = operation.updates.map(u => ({
+            vertexId: u.vertexId,
+            newPosition: u.newPosition
+        }));
+        await this._editFeatureUseCase.moveVertices(redoUpdates);
+        redoUpdates.forEach(update => {
+            this._eventBus.publish('VertexMoved', { vertexId: update.vertexId, newPosition: update.newPosition });
+        });
         break;
 
       case 'updateProperties':
@@ -1054,10 +1084,20 @@ _deserializeFromHistory(data) {
         //    -> Polygonインスタンス生成時にchildIdsも復元されるはず。
         break;
 
-      case 'moveVertex':
+      case 'moveVertex': // 念のため残すが、moveVerticesに移行
         await this._editFeatureUseCase.moveVertex(operation.vertexId, operation.oldPosition);
         this._eventBus.publish('VertexMoved', { vertexId: operation.vertexId, newPosition: operation.oldPosition });
         break;
+      case 'moveVertices':
+          const undoUpdates = operation.updates.map(u => ({
+              vertexId: u.vertexId,
+              newPosition: u.oldPosition // 古い位置に戻す
+          }));
+          await this._editFeatureUseCase.moveVertices(undoUpdates);
+          undoUpdates.forEach(update => {
+              this._eventBus.publish('VertexMoved', { vertexId: update.vertexId, newPosition: update.newPosition });
+          });
+          break;
 
       case 'updateProperties':
         const oldPropsInstances = operation.oldProperties.map(p => this._deserializeFromHistory(p)).filter(Boolean);
@@ -1229,8 +1269,8 @@ _deserializeFromHistory(data) {
         return this._targetPolygonIdForHole;
       case 'temporaryElements':
         return this._temporaryElements;
-      case 'draggingVertex':
-        return this._draggingVertexInfo;
+      case 'draggingVertices': // 変更: draggingVertex -> draggingVertices
+        return this._draggingVerticesInfo;
       case 'history':
         return {
           canUndo: this.canUndo(),

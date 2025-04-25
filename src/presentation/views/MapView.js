@@ -41,9 +41,8 @@ export class MapView {
     // マウス状態
     this._isMouseDown = false;
     this._isDragging = false;
-    this._dragStartPosition = { x: 0, y: 0 }; // ドラッグ開始時のワールド座標
+    this._dragStartScreenPosition = { x: 0, y: 0 }; // ドラッグ開始時のスクリーン座標
     this._lastMousePosition = { x: 0, y: 0 }; // ページ座標
-    // this._draggedVertexId = null; // EditingViewModelで管理するため不要に
 
     // クリック許容範囲（ワールド座標での距離の二乗）
     this._clickToleranceSq = 0; // _initialize で設定
@@ -226,14 +225,14 @@ _svgToWorld(svgPoint) {
         this._render();
          this._viewModel.clearSelection();
          // モード変更時にドラッグ状態をリセット (ViewModel側でも行われるが念のため)
-         if (this._editingViewModel.getDraggingVertexInfo()) {
+         if (this._editingViewModel.getDraggingVerticesInfo().size > 0) {
              this._editingViewModel._resetDraggingState();
          }
         break;
       case 'addingPoints':
       case 'addingHoleTarget': // 穴追加対象変更時も再描画
       case 'temporaryElements': // 汎用一時要素の変更
-      case 'draggingVertex': // ドラッグ中の頂点変更
+      case 'draggingVertices': // ドラッグ中の頂点変更
         this._render();
         break;
        case 'history':
@@ -279,7 +278,7 @@ _svgToWorld(svgPoint) {
 
     const viewport = this._viewportManager.getViewport();
     const currentTime = this._viewModel.getCurrentTime();
-    const draggingVertexInfo = this._editingViewModel.getDraggingVertexInfo();
+    const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo(); // 複数形に変更
 
     // --- 実際の描画 ---
     // 1. 通常の地物を描画 (Rendererに任せる)
@@ -295,8 +294,8 @@ _svgToWorld(svgPoint) {
 
     // 4. ドラッグ中のプレビュー (Rendererを使う)
     this._clearDragPreviews();
-    if (draggingVertexInfo) {
-        this._renderDragPreview(draggingVertexInfo, world, viewport);
+    if (draggingVerticesInfo.size > 0) { // Mapのsizeで判定
+        this._renderDragPreview(draggingVerticesInfo, world, viewport);
     }
 
     // 5. 汎用一時要素 (EditingViewModelの temporaryElements)
@@ -343,12 +342,13 @@ _svgToWorld(svgPoint) {
     const currentTime = this._viewModel.getCurrentTime(); // 現在時刻も考慮
     if (!world) return;
 
-    const draggingVertexInfo = this._editingViewModel.getDraggingVertexInfo();
+    const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo(); // 複数形
 
     // 座標取得ヘルパー（ドラッグ中も考慮）
     const getVertexPos = (vertexId) => {
-        if (draggingVertexInfo && vertexId === draggingVertexInfo.id) {
-            return draggingVertexInfo.currentPosition;
+        const dragInfo = draggingVerticesInfo.get(vertexId);
+        if (dragInfo) {
+            return dragInfo.currentPosition;
         }
         const v = world.vertices.find(wv => wv.id === vertexId);
         return v ? { x: v.x, y: v.y } : null;
@@ -427,7 +427,7 @@ _svgToWorld(svgPoint) {
 
     // --- 主選択された頂点のハイライト ---
     selectedVertexIds.forEach(vertexId => {
-        if (draggingVertexInfo && vertexId === draggingVertexInfo.id) return; // ドラッグ中は別で描画
+        if (draggingVerticesInfo.has(vertexId)) return; // ドラッグ中は別で描画
 
         const vertexPos = getVertexPos(vertexId);
         if (vertexPos) {
@@ -444,30 +444,40 @@ _svgToWorld(svgPoint) {
 
   /**
    * ドラッグ中のプレビューを描画
-   * @param {Object} draggingInfo - ドラッグ情報 { id, currentPosition }
+   * @param {Map<string, { originalPosition: {x, y}, currentPosition: {x, y} }>} draggingVerticesInfo - ドラッグ中の頂点情報Map
    * @param {Object} world - ワールドデータ
    * @param {Object} viewport - ビューポート情報
    * @private
    */
-  _renderDragPreview(draggingInfo, world, viewport) {
+  _renderDragPreview(draggingVerticesInfo, world, viewport) {
       // ドラッグ中の頂点マーカー
-      const marker = this._renderer.drawPoint(
-          draggingInfo.currentPosition.x,
-          draggingInfo.currentPosition.y,
-          { fill: '#ff00ff', radius: 7, stroke: '#ffffff', strokeWidth: 2 },
-          viewport
-      );
-      if (marker) this._dragPreviewElements.push(marker);
+      for (const [vertexId, info] of draggingVerticesInfo.entries()) {
+          const marker = this._renderer.drawPoint(
+              info.currentPosition.x,
+              info.currentPosition.y,
+              { fill: '#ff00ff', radius: 7, stroke: '#ffffff', strokeWidth: 2 },
+              viewport
+          );
+          if (marker) this._dragPreviewElements.push(marker);
+      }
 
       // 影響を受ける地物を探し、仮の形状を描画
-      const affectedFeatures = world.features.filter(f =>
-          (f.vertexIds && f.vertexIds.includes(draggingInfo.id)) ||
-          (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(draggingInfo.id))) ||
-          (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds?.includes(draggingInfo.id)))
-      );
+      const draggedVertexIds = new Set(draggingVerticesInfo.keys());
+      const affectedFeatures = world.features.filter(f => {
+          return draggedVertexIds.forEach(draggedId => {
+             if (
+                 (f.vertexIds && f.vertexIds.includes(draggedId)) ||
+                 (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(draggedId))) ||
+                 (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds?.includes(draggedId)))
+             ) return true;
+          });
+          return false;
+      });
+
 
       const getVertexPos = (vertexId) => {
-          if (vertexId === draggingInfo.id) return draggingInfo.currentPosition;
+          const dragInfo = draggingVerticesInfo.get(vertexId);
+          if (dragInfo) return dragInfo.currentPosition;
           const v = world.vertices.find(wv => wv.id === vertexId);
           return v ? { x: v.x, y: v.y } : null;
       };
@@ -680,7 +690,7 @@ _onMouseDown(event) {
     return;
   }
 
-    if (event.button === 2) return;
+    if (event.button === 2) return; // 右クリックは無視
 
   const pageX = event.clientX;
   const pageY = event.clientY;
@@ -694,11 +704,11 @@ _onMouseDown(event) {
 
   this._isMouseDown = true;
   this._lastMousePosition = { x: pageX, y: pageY };
-  this._dragStartPosition = worldPoint;
-  // this._draggedVertexId = null; // ViewModelで管理
+  this._dragStartScreenPosition = { x: pageX, y: pageY }; // スクリーン座標を保存
 
   const mode = this._editingViewModel.getMode();
   const tool = this._editingViewModel.getTool();
+  const addToSelection = event.shiftKey;
 
   switch (mode) {
     case 'view':
@@ -711,31 +721,50 @@ _onMouseDown(event) {
 
     case 'edit':
       if (tool === 'add-hole') {
-        // 穴追加モードの場合
+        // 穴追加モードの処理... (変更なし)
         if (!this._editingViewModel.getTargetPolygonIdForHole()) {
-             // 最初のクリック: 穴を追加するポリゴンを選択
              const clickedFeature = this._findClosestFeature(worldPoint);
              if (clickedFeature instanceof DomainPolygon) {
                  this._editingViewModel.startAddingHole(clickedFeature.id);
-                 this._viewModel.selectFeature(clickedFeature.id); // 対象ポリゴンを選択状態にする
+                 this._viewModel.selectFeature(clickedFeature.id);
                  console.log(`Hole adding started for polygon: ${clickedFeature.id}`);
              } else {
                  alert("穴を追加するポリゴンを選択してください。");
              }
         } else {
-             // 2回目以降のクリック: 穴の頂点を追加
              this._handleAddPoint(worldPoint);
         }
       } else {
         // 通常の編集モード (選択/移動など)
         const clickedVertex = this._findClosestVertex(worldPoint);
-        const addToSelection = event.shiftKey;
+        const currentlySelectedVertexIds = this._viewModel.getSelectedVertexIds();
 
         if (clickedVertex) {
-          // 頂点が見つかった場合、ViewModel経由で選択し、ドラッグ開始
-          this._viewModel.selectVertex(clickedVertex.id, addToSelection);
-          this._editingViewModel.startVertexDrag(clickedVertex.id, { x: clickedVertex.x, y: clickedVertex.y });
-          // 関連地物の選択はViewModelが暗黙的に行うため、ここでは何もしない
+          // 頂点が見つかった場合
+          if (addToSelection) {
+            // Shiftキーあり: 既存の選択に追加/削除
+            this._viewModel.selectVertex(clickedVertex.id, true);
+          } else if (!currentlySelectedVertexIds.has(clickedVertex.id)) {
+            // Shiftキーなし & 未選択の頂点: 新規単一選択
+            this._viewModel.selectVertex(clickedVertex.id, false);
+          }
+          // else (Shiftキーなし & 既に選択中の頂点): 何もしない（ドラッグ開始のため選択維持）
+
+          // ドラッグ開始処理 (複数選択対応)
+          const verticesToDrag = new Map();
+          if (this._viewModel.getSelectedVertexIds().has(clickedVertex.id)) {
+              // クリックされた頂点が（現在の）選択セットに含まれていれば、選択セット全体をドラッグ対象とする
+              this._viewModel.getSelectedVertices().forEach(v => {
+                  verticesToDrag.set(v.id, { x: v.x, y: v.y });
+              });
+          } else {
+              // 含まれていない場合（新規単一選択など）は、クリックされた頂点のみドラッグ対象
+              verticesToDrag.set(clickedVertex.id, { x: clickedVertex.x, y: clickedVertex.y });
+          }
+          if (verticesToDrag.size > 0) {
+              this._editingViewModel.startVerticesDrag(verticesToDrag);
+          }
+
         } else {
           // 頂点が見つからない場合、地物を探して選択
           this._selectObjectAt(worldPoint, addToSelection); // 地物または選択解除
@@ -772,10 +801,9 @@ _onMouseMove(event) {
 
   if (this._isMouseDown) {
     if (!this._isDragging) {
-      const dx = pageX - this._lastMousePosition.x;
-      const dy = pageY - this._lastMousePosition.y;
-      const dragThreshold = 5;
-      if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
+      const dxScreen = pageX - this._dragStartScreenPosition.x; // スクリーン座標で比較
+      const dyScreen = pageY - this._dragStartScreenPosition.y;
+      if (Math.sqrt(dxScreen * dxScreen + dyScreen * dyScreen) > this._clickTolerancePixels) {
         this._isDragging = true;
       }
     }
@@ -783,12 +811,19 @@ _onMouseMove(event) {
     if (this._isDragging) {
       const mode = this._editingViewModel.getMode();
       const tool = this._editingViewModel.getTool();
-      const isDraggingVertex = !!this._editingViewModel.getDraggingVertexInfo(); // ViewModelからドラッグ状態を取得
+      const isDraggingVertices = this._editingViewModel.getDraggingVerticesInfo().size > 0; // 複数形
 
       if (mode === 'view') {
         this._viewportManager.drag(pageX, pageY);
-      } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertex) { // 頂点ドラッグ中
-        this._editingViewModel.updateVertexDrag(worldPoint); // ViewModelに現在の仮位置を通知
+      } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) { // 頂点ドラッグ中
+        // マウス移動差分をワールド座標で計算
+        const dxScreen = pageX - this._dragStartScreenPosition.x;
+        const dyScreen = pageY - this._dragStartScreenPosition.y;
+        const viewport = this._viewportManager.getViewport();
+        const deltaXWorld = dxScreen / viewport.zoom;
+        const deltaYWorld = dyScreen / viewport.zoom; // スクリーンY下向き -> ワールドY上向き
+
+        this._editingViewModel.updateVerticesDrag(deltaXWorld, -deltaYWorld); // Y座標の符号反転
       }
     }
   } else {
@@ -811,7 +846,7 @@ _onMouseUp(event) {
 
   const mode = this._editingViewModel.getMode();
   const tool = this._editingViewModel.getTool();
-  const isDraggingVertex = !!this._editingViewModel.getDraggingVertexInfo(); // ドラッグ状態を取得
+  const isDraggingVertices = this._editingViewModel.getDraggingVerticesInfo().size > 0; // ドラッグ状態を取得
 
   const pageX = event.clientX;
   const pageY = event.clientY;
@@ -822,16 +857,16 @@ _onMouseUp(event) {
   if (this._isMouseDown && this._isDragging) {
     if (mode === 'view') {
       this._viewportManager.endDrag();
-    } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertex) {
+    } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
         // ドラッグ終了をViewModelに通知して確定処理を依頼
-        this._editingViewModel.endVertexDrag();
+        this._editingViewModel.endVerticesDrag(); // 複数形
     }
   }
   // クリック（ドラッグなし）処理
-  else if (this._isMouseDown && !this._isDragging) { // worldPoint のチェックは不要かも
+  else if (this._isMouseDown && !this._isDragging) {
     // ドラッグが発生しなかった場合でも、もし頂点ドラッグが開始されていたら終了処理を呼ぶ
-    if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertex) {
-        this._editingViewModel.endVertexDrag();
+    if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
+        this._editingViewModel.endVerticesDrag(); // 複数形
     }
     // 元々のクリック処理（ビューモードのみ）
     else if (mode === 'view' && worldPoint) {
@@ -843,7 +878,7 @@ _onMouseUp(event) {
   // 状態リセット
   this._isMouseDown = false;
   this._isDragging = false;
-  // ドラッグ状態は ViewModel の endVertexDrag 内でリセットされる
+  // ドラッグ状態は ViewModel の endVerticesDrag 内でリセットされる
 }
 
   /**
@@ -855,18 +890,18 @@ _onMouseUp(event) {
     if (this._isMouseDown) {
       const mode = this._editingViewModel.getMode();
       const tool = this._editingViewModel.getTool();
-      const isDraggingVertex = !!this._editingViewModel.getDraggingVertexInfo();
+      const isDraggingVertices = this._editingViewModel.getDraggingVerticesInfo().size > 0; // 複数形
 
       if (mode === 'view' && this._isDragging) {
         this._viewportManager.endDrag();
-      } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && isDraggingVertex) {
+      } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && isDraggingVertices) {
           // ドラッグ終了をViewModelに通知
-          this._editingViewModel.endVertexDrag();
+          this._editingViewModel.endVerticesDrag(); // 複数形
       }
 
       this._isMouseDown = false;
       this._isDragging = false;
-      // ドラッグ状態は ViewModel の endVertexDrag 内でリセットされる
+      // ドラッグ状態は ViewModel の endVerticesDrag 内でリセットされる
     }
      this._viewModel.hoverFeature(null);
      this._viewModel.hoverVertex(null);
@@ -1002,11 +1037,11 @@ _onWheel(event) {
 
       this._isMouseDown = true;
       this._lastMousePosition = { x: pageX, y: pageY };
-      this._dragStartPosition = worldPoint;
-      // this._draggedVertexId = null; // ViewModelで管理
+      this._dragStartScreenPosition = { x: pageX, y: pageY }; // スクリーン座標を保存
 
       const mode = this._editingViewModel.getMode();
       const tool = this._editingViewModel.getTool();
+      // Note: タッチ操作での複数選択(addToSelection=true)は考慮しない簡易実装
 
       if (mode === 'view') {
         this._viewportManager.startDrag(pageX, pageY);
@@ -1014,6 +1049,7 @@ _onWheel(event) {
           this._handleAddPoint(worldPoint);
       } else if (mode === 'edit') {
            if (tool === 'add-hole') {
+                // 穴追加モードの処理... (変更なし)
                if (!this._editingViewModel.getTargetPolygonIdForHole()) {
                     const clickedFeature = this._findClosestFeature(worldPoint);
                     if (clickedFeature instanceof DomainPolygon) {
@@ -1026,10 +1062,13 @@ _onWheel(event) {
            } else {
                const clickedVertex = this._findClosestVertex(worldPoint);
                if (clickedVertex) {
-                   this._viewModel.selectVertex(clickedVertex.id, false); // 単一選択
-                   this._editingViewModel.startVertexDrag(clickedVertex.id, { x: clickedVertex.x, y: clickedVertex.y });
+                   // タッチでは常に単一選択 -> ドラッグ開始
+                   this._viewModel.selectVertex(clickedVertex.id, false);
+                   const verticesToDrag = new Map();
+                   verticesToDrag.set(clickedVertex.id, { x: clickedVertex.x, y: clickedVertex.y });
+                   this._editingViewModel.startVerticesDrag(verticesToDrag); // 複数形メソッドを呼ぶ
                } else {
-                   this._selectObjectAt(worldPoint); // 頂点以外を選択
+                   this._selectObjectAt(worldPoint); // 頂点以外を選択 (単一選択)
                }
            }
       }
@@ -1064,10 +1103,10 @@ _onWheel(event) {
 
       if (this._isMouseDown) {
         if (!this._isDragging) {
-          const dx = pageX - this._lastMousePosition.x;
-          const dy = pageY - this._lastMousePosition.y;
-          const dragThreshold = 10;
-          if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
+          const dxScreen = pageX - this._dragStartScreenPosition.x;
+          const dyScreen = pageY - this._dragStartScreenPosition.y;
+          const dragThreshold = 10; // タッチは閾値を少し大きく
+          if (Math.sqrt(dxScreen * dxScreen + dyScreen * dyScreen) > dragThreshold) {
             this._isDragging = true;
           }
         }
@@ -1075,12 +1114,19 @@ _onWheel(event) {
         if (this._isDragging) {
           const mode = this._editingViewModel.getMode();
           const tool = this._editingViewModel.getTool();
-          const isDraggingVertex = !!this._editingViewModel.getDraggingVertexInfo();
+          const isDraggingVertices = this._editingViewModel.getDraggingVerticesInfo().size > 0; // 複数形
 
           if (mode === 'view') {
             this._viewportManager.drag(pageX, pageY);
-          } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertex) {
-            this._editingViewModel.updateVertexDrag(worldPoint);
+          } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
+            // マウス移動差分をワールド座標で計算
+            const dxScreen = pageX - this._dragStartScreenPosition.x;
+            const dyScreen = pageY - this._dragStartScreenPosition.y;
+            const viewport = this._viewportManager.getViewport();
+            const deltaXWorld = dxScreen / viewport.zoom;
+            const deltaYWorld = dyScreen / viewport.zoom;
+
+            this._editingViewModel.updateVerticesDrag(deltaXWorld, -deltaYWorld); // 複数形
           }
         }
       }
@@ -1103,12 +1149,12 @@ _onWheel(event) {
     if (this._isMouseDown) {
         const mode = this._editingViewModel.getMode();
         const tool = this._editingViewModel.getTool();
-        const isDraggingVertex = !!this._editingViewModel.getDraggingVertexInfo();
+        const isDraggingVertices = this._editingViewModel.getDraggingVerticesInfo().size > 0; // 複数形
 
         if (mode === 'view' && this._isDragging) {
             this._viewportManager.endDrag();
-        } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && isDraggingVertex) {
-            this._editingViewModel.endVertexDrag();
+        } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && isDraggingVertices) {
+            this._editingViewModel.endVerticesDrag(); // 複数形
         } else if (!this._isDragging) { // タップ（クリック相当）
              // タップ時の選択処理は onTouchStart で既に行われている場合が多い
              // ダブルタップ検出は別途必要
@@ -1116,7 +1162,7 @@ _onWheel(event) {
     }
     this._isMouseDown = false;
     this._isDragging = false;
-    // ドラッグ状態は ViewModel の endVertexDrag 内でリセットされる
+    // ドラッグ状態は ViewModel の endVerticesDrag 内でリセットされる
     // TODO: ピンチ状態リセット
   }
 
@@ -1161,7 +1207,7 @@ _onWheel(event) {
     if (event.key === 'Escape') {
        event.preventDefault();
        // ドラッグ中ならキャンセル
-       if (this._editingViewModel.getDraggingVertexInfo()) {
+       if (this._editingViewModel.getDraggingVerticesInfo().size > 0) { // 複数形
            this._editingViewModel._resetDraggingState();
            console.log("Vertex drag cancelled by ESC.");
        }
@@ -1427,12 +1473,13 @@ _onWheel(event) {
 
   /**
    * オブジェクトドラッグ処理 (内部状態の更新はViewModelへ委譲)
-   * @param {object} worldPoint - 現在のワールド座標 {x, y}
+   * @param {number} deltaX - X方向の移動差分 (ワールド座標)
+   * @param {number} deltaY - Y方向の移動差分 (ワールド座標)
    * @private
    */
-  _handleDragObject(worldPoint) {
+  _handleDragObject(deltaX, deltaY) {
      // ViewModelに現在の位置を通知するだけで、描画は _render で ViewModel の状態を見て行う
-     this._editingViewModel.updateVertexDrag(worldPoint);
+     this._editingViewModel.updateVerticesDrag(deltaX, deltaY); // 複数形
   }
 
   /**
@@ -1443,7 +1490,7 @@ _onWheel(event) {
   async _handleDragEnd(worldPoint) {
     // ViewModelにドラッグ終了を通知し、確定処理を依頼
     // 実際の移動処理は ViewModel -> UseCase で行われる
-    await this._editingViewModel.endVertexDrag();
+    await this._editingViewModel.endVerticesDrag(); // 複数形
     // this._render(); // _onEditingViewModelChangedで呼ばれるはず
   }
 

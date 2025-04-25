@@ -1,3 +1,6 @@
+import { Point as DomainPoint } from '../../domain/entities/Point.js';
+import { Line as DomainLine } from '../../domain/entities/Line.js';
+import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 /**
  * マップビューのデータと状態管理
  */
@@ -79,13 +82,24 @@ export class MapViewModel {
         this.clearSelection();
     }
     // 選択中の頂点が現在の時間で存在しない地物に属する場合も解除
+    // また、world.vertices に存在しない頂点IDも選択から除外する
     if (this._selectedVertexIds.size > 0) {
         const currentVertexIds = new Set(this._world.vertices.map(v => v.id));
         const existingSelectedVertexIds = new Set();
         let selectionChanged = false;
         this._selectedVertexIds.forEach(id => {
             if (currentVertexIds.has(id)) {
-                existingSelectedVertexIds.add(id);
+                // さらに、この頂点が現在の時間で表示されている地物のいずれかに属しているかチェック
+                 const vertexIsVisible = this._features.some(f =>
+                    (f.vertexIds && f.vertexIds.includes(id)) ||
+                    (f instanceof DomainPolygon && f.holesVertexIds?.some(hole => hole.includes(id))) ||
+                    (f instanceof DomainPolygon && f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds?.includes(id)))
+                 );
+                 if (vertexIsVisible) {
+                    existingSelectedVertexIds.add(id);
+                 } else {
+                    selectionChanged = true;
+                 }
             } else {
                 selectionChanged = true;
             }
@@ -128,6 +142,10 @@ export class MapViewModel {
     this._eventBus.subscribe('LayerVisibilityChanged', this._onLayerVisibilityChanged.bind(this));
      // ViewModel内部のイベントで選択を解除
     this._eventBus.subscribe('ClearSelection', this.clearSelection.bind(this));
+     // 頂点移動イベントの購読 (複数移動にも対応できるように)
+     this._eventBus.subscribe('VertexMoved', this._onVertexMoved.bind(this));
+     // 頂点削除イベントの購読
+     this._eventBus.subscribe('VerticesDeleted', this._onVerticesDeleted.bind(this));
   }
 
   /**
@@ -142,11 +160,11 @@ export class MapViewModel {
 
   /**
    * 地物追加イベントのハンドラ
-   * @param {Object} event - イベントデータ
+   * @param {Object} event - イベントデータ { feature }
    * @private
    */
   _onFeatureAdded(event) {
-    if (!this._world) return;
+    if (!this._world || !event.feature) return;
 
     // 世界データを更新
     if (!this._world.features.some(f => f.id === event.feature.id)) {
@@ -159,17 +177,21 @@ export class MapViewModel {
 
   /**
    * 地物更新イベントのハンドラ
-   * @param {Object} event - イベントデータ
+   * @param {Object} event - イベントデータ { feature }
    * @private
    */
   _onFeatureUpdated(event) {
-    if (!this._world) return;
+    if (!this._world || !event.feature) return;
 
     // 世界データを更新
     const index = this._world.features.findIndex(f => f.id === event.feature.id);
     if (index !== -1) {
       this._world.features[index] = event.feature;
+    } else {
+      // 更新対象が見つからない場合は追加 (アンドゥ/リドゥで発生する可能性)
+      this._world.features.push(event.feature);
     }
+
 
     // 現在の時間点に対応する地物をリロード
     this._loadFeaturesForCurrentTime();
@@ -181,7 +203,7 @@ export class MapViewModel {
    * @private
    */
   _onFeatureDeleted(event) {
-    if (!this._world) return;
+    if (!this._world || !event.featureId) return;
 
     let selectionCleared = false;
     // 削除された地物が主選択されていた場合
@@ -197,29 +219,10 @@ export class MapViewModel {
     }
     // 削除された地物に属する頂点が選択されていた場合 (deleteVerticesで処理されるべきだが念のため)
     else if (this._selectedVertexIds.size > 0) {
-        const featureToDelete = this._world.features.find(f => f.id === event.featureId);
-        if (featureToDelete) {
-            const verticesToDelete = new Set(featureToDelete.vertexIds || []);
-            (featureToDelete.holesVertexIds || []).flat().forEach(id => verticesToDelete.add(id));
-            (featureToDelete.subPolygons || []).forEach(sub => (sub.vertexIds || []).forEach(id => verticesToDelete.add(id)));
-
-            let vertexSelectionChanged = false;
-            this._selectedVertexIds.forEach(selectedId => {
-                if (verticesToDelete.has(selectedId)) {
-                    this._selectedVertexIds.delete(selectedId);
-                    vertexSelectionChanged = true;
-                }
-            });
-            if (vertexSelectionChanged) {
-                this._notifyObservers('selectedVertices');
-                // 頂点選択が空になったらハイライトも解除
-                if (this._selectedVertexIds.size === 0) {
-                     this._highlightedFeatureId = null;
-                     this._notifyObservers('highlightedFeature');
-                }
-                // else { ハイライト地物の再計算 } // 削除イベントでは不要か？
-            }
-        }
+        // _world.features から削除される前のデータを参照するのは危険なので、
+        // _onVerticesDeleted で頂点選択解除を行う
+        // ここでは何もしない、または _highlightedFeatureId の再計算のみ行う
+        this._updateHighlightedFeature(); // 選択頂点が変わる可能性があるため
     }
 
     // 世界データを更新
@@ -234,11 +237,11 @@ export class MapViewModel {
 
   /**
    * レイヤー表示変更イベントのハンドラ
-   * @param {Object} event - イベントデータ
+   * @param {Object} event - イベントデータ { layerId, layer }
    * @private
    */
   _onLayerVisibilityChanged(event) {
-    if (!this._world) return;
+    if (!this._world || !event.layer) return;
 
     // レイヤーデータを更新
     const index = this._world.layers.findIndex(l => l.id === event.layerId);
@@ -247,6 +250,123 @@ export class MapViewModel {
     }
 
     this._notifyObservers('layers');
+     // レイヤー非表示になった場合、関連する選択を解除
+     if (!event.layer.visible) {
+         this._clearSelectionForLayer(event.layerId);
+     }
+  }
+
+  /**
+   * 特定レイヤーに関連する選択を解除するヘルパー
+   * @param {string} layerId - 非表示になったレイヤーID
+   * @private
+   */
+  _clearSelectionForLayer(layerId) {
+    let selectionChanged = false;
+
+    // 選択中の地物がこのレイヤーに属していれば解除
+    if (this._selectedFeatureId) {
+        const selectedFeature = this.getSelectedFeature();
+        if (selectedFeature && selectedFeature.layerId === layerId) {
+            this.clearSelection();
+            return; // 地物選択が解除されれば頂点選択もクリアされる
+        }
+    }
+
+    // 選択中の頂点がこのレイヤーの地物にのみ属していれば解除
+    if (this._selectedVertexIds.size > 0) {
+        const newSelectedVertexIds = new Set();
+        this._selectedVertexIds.forEach(vertexId => {
+            const belongsToVisibleLayer = this._world.features.some(f =>
+                f.layerId !== layerId && // このレイヤー以外で
+                this._world.layers.find(l => l.id === f.layerId)?.visible && // 表示されているレイヤーに属し
+                ((f.vertexIds && f.vertexIds.includes(vertexId)) ||
+                 (f instanceof DomainPolygon && f.holesVertexIds?.some(h => h.includes(vertexId))) ||
+                 (f instanceof DomainPolygon && f.isMultiPolygon && f.subPolygons?.some(s => s.vertexIds?.includes(vertexId))))
+            );
+            if (belongsToVisibleLayer) {
+                newSelectedVertexIds.add(vertexId); // 表示レイヤーにも属していれば維持
+            } else {
+                selectionChanged = true; // このレイヤーにしか属していなければ解除
+            }
+        });
+
+        if (selectionChanged) {
+            this._selectedVertexIds = newSelectedVertexIds;
+            this._notifyObservers('selectedVertices');
+            this._updateHighlightedFeature(); // ハイライトも更新
+        }
+    }
+  }
+
+  /**
+   * 頂点移動イベントのハンドラ
+   * @param {Object} event - イベントデータ { vertexId, newPosition }
+   * @private
+   */
+  _onVertexMoved(event) {
+    if (!this._world || !event.vertexId || !event.newPosition) return;
+
+    // World内の頂点データを更新
+    const vertexIndex = this._world.vertices.findIndex(v => v.id === event.vertexId);
+    if (vertexIndex !== -1) {
+        // プレーンオブジェクトを更新
+        this._world.vertices[vertexIndex] = {
+            id: event.vertexId,
+            x: event.newPosition.x,
+            y: event.newPosition.y
+        };
+    }
+
+    // 選択中の頂点オブジェクト配列はゲッターで最新が返るので更新不要
+    // ホバー中の頂点も更新
+    if (this._hoveredVertex && this._hoveredVertex.id === event.vertexId) {
+        this._hoveredVertex = this._world.vertices[vertexIndex] || null;
+        this._notifyObservers('hoveredVertex');
+    }
+
+    // 地物の形状はインスタンスが不変なので、再描画時に新しい頂点座標が使われる
+    this._notifyObservers('features'); // 再描画をトリガー
+  }
+
+  /**
+   * 頂点削除イベントのハンドラ
+   * @param {Object} event - イベントデータ { deletedVertexIds: string[] }
+   * @private
+   */
+  _onVerticesDeleted(event) {
+    if (!this._world || !event.deletedVertexIds || event.deletedVertexIds.length === 0) return;
+
+    const deletedIdsSet = new Set(event.deletedVertexIds);
+    let selectionChanged = false;
+
+    // 削除された頂点を選択セットから削除
+    if (this._selectedVertexIds.size > 0) {
+        this._selectedVertexIds.forEach(id => {
+            if (deletedIdsSet.has(id)) {
+                this._selectedVertexIds.delete(id);
+                selectionChanged = true;
+            }
+        });
+    }
+
+    // World内の頂点リストからも削除 (UseCaseで削除済みのはずだが念のため同期)
+    this._world.vertices = this._world.vertices.filter(v => !deletedIdsSet.has(v.id));
+
+    // ホバー中の頂点が削除された場合
+    if (this._hoveredVertex && deletedIdsSet.has(this._hoveredVertex.id)) {
+        this._hoveredVertex = null;
+        this._notifyObservers('hoveredVertex');
+    }
+
+    if (selectionChanged) {
+        this._notifyObservers('selectedVertices');
+        this._updateHighlightedFeature(); // ハイライトも更新
+    }
+
+    // 地物リストは UseCase -> onFeatureUpdated/onFeatureDeleted で更新されるはず
+    // ここでは再描画トリガーのみ
+    this._notifyObservers('features');
   }
 
   /**
@@ -306,6 +426,7 @@ export class MapViewModel {
         newSelectedVertexIds.add(vertexId); // 単一選択
         vertexSelectionChanged = true;
       }
+      // すでに単一選択されている頂点を再度クリックした場合は何もしない
     }
 
     // 主選択状態の変更
@@ -335,8 +456,8 @@ export class MapViewModel {
           const firstSelectedVertexId = this._selectedVertexIds.values().next().value;
           const ownerFeature = this._features.find(f =>
               (f.vertexIds && f.vertexIds.includes(firstSelectedVertexId)) ||
-              (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(firstSelectedVertexId))) ||
-              (f.subPolygons && f.subPolygons.some(sub => sub.vertexIds?.includes(firstSelectedVertexId)))
+              (f instanceof DomainPolygon && f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(firstSelectedVertexId))) ||
+              (f instanceof DomainPolygon && f.subPolygons && f.subPolygons.some(sub => sub.vertexIds?.includes(firstSelectedVertexId)))
           );
           newHighlightedFeatureId = ownerFeature ? ownerFeature.id : null;
       }
@@ -399,71 +520,49 @@ export class MapViewModel {
   }
 
   /**
-   * 頂点を移動
+   * 頂点を移動 (Deprecated: UseCase 経由で行うべき)
    * @param {string} vertexId - 移動する頂点のID
    * @param {Object} newPosition - 新しい位置 { x, y }
    * @returns {Promise<Object>} 更新情報
+   * @deprecated Use EditingViewModel.endVerticesDrag which calls EditFeatureUseCase.moveVertices
    */
   async moveVertex(vertexId, newPosition) {
-    try {
-      const result = await this._editFeatureUseCase.moveVertex(vertexId, newPosition);
-
-      // 世界データを更新
-      if (this._world) {
-        const vertexIndex = this._world.vertices.findIndex(v => v.id === vertexId);
-        if (vertexIndex !== -1) {
-          this._world.vertices[vertexIndex] = result.vertex;
-        }
-
-        // 影響を受けた地物を更新
-        const updatedWorld = await this._editFeatureUseCase._worldRepository.getWorld();
-        this._world = updatedWorld;
-
-        // 選択された頂点も更新 (新しい参照で)
-        // _selectedVertexIds は Set<string> なので参照の更新は不要
-        // getSelectedVertices() で返すオブジェクトは最新になる
-
-        // ホバー中の頂点も更新
-        if (this._hoveredVertex && this._hoveredVertex.id === vertexId) {
-            this._hoveredVertex = updatedWorld.vertices.find(uv => uv.id === vertexId) || null;
-            this._notifyObservers('hoveredVertex');
-        }
-      }
-
-      // 地物をリロード
-      await this._loadFeaturesForCurrentTime();
-
-      return result;
-    } catch (error) {
-      console.error('頂点の移動に失敗しました', error);
-      throw error;
-    }
+     console.warn("MapViewModel.moveVertex is deprecated. Vertex movement should be handled via EditingViewModel and EditFeatureUseCase.");
+     // このメソッドは実際には使われないはず
+     try {
+       const result = await this._editFeatureUseCase.moveVertex(vertexId, newPosition);
+       // イベント発行は onVertexMoved で処理される
+       return result;
+     } catch (error) {
+       console.error('頂点の移動に失敗しました', error);
+       throw error;
+     }
   }
 
   /**
    * 地物プロパティを更新
    * @param {string} featureId - 更新する地物のID
-   * @param {Object} properties - 新しいプロパティ
+   * @param {Object} properties - 新しいプロパティ (Propertyインスタンスの配列)
    * @returns {Promise<Object>} 更新された地物
    */
   async updateFeatureProperties(featureId, properties) {
+    // Note: このメソッドは SidebarView から呼ばれる可能性がある
+    // EditingViewModel 経由で呼び出す方が一貫性があるかもしれないが、現状維持
     try {
-      const feature = await this._editFeatureUseCase.updateFeature(featureId, { properties });
+      // アンドゥのために古いプロパティ情報を取得
+      const featureBefore = this._world?.features.find(f => f.id === featureId);
+      if (!featureBefore) throw new Error("Feature not found for property update.");
+      const oldPropertiesPlain = featureBefore.properties.map(p => this._editingViewModel._serializeForHistory(p)).filter(Boolean);
+      const newPropertiesPlain = properties.map(p => this._editingViewModel._serializeForHistory(p)).filter(Boolean);
 
-      // 世界データを更新
-      if (this._world) {
-        const index = this._world.features.findIndex(f => f.id === featureId);
-        if (index !== -1) {
-          this._world.features[index] = feature;
-        }
-      }
+      // EditingViewModelのメソッドを呼び出して履歴管理も行う
+      const feature = await this._editingViewModel.updateFeatureProperties(
+          featureId,
+          oldPropertiesPlain,
+          newPropertiesPlain
+      );
 
-      // 選択中の地物が更新された場合、選択も更新
-      // _selectedFeatureId はIDなので参照の更新は不要
-      // getSelectedFeature() で返すオブジェクトは最新になる
-
-      // 地物をリロード
-      await this._loadFeaturesForCurrentTime();
+      // Note: _onFeatureUpdated で ViewModel 内部状態は更新されるはず
 
       return feature;
     } catch (error) {
@@ -473,22 +572,22 @@ export class MapViewModel {
   }
 
   /**
-   * 地物を追加
+   * 地物を追加 (Deprecated: UseCase 経由で行うべき)
    * @param {string} featureType - 地物タイプ ('point', 'line', 'polygon')
    * @param {Object} properties - プロパティ
    * @param {Object} geometry - 形状情報
    * @param {string} layerId - レイヤーID
    * @returns {Promise<Object>} 追加された地物
+   * @deprecated Use EditingViewModel.confirmAddFeature which calls EditFeatureUseCase.addFeature
    */
   async addFeature(featureType, properties, geometry, layerId) {
+    console.warn("MapViewModel.addFeature is deprecated. Feature addition should be handled via EditingViewModel and EditFeatureUseCase.");
+    // このメソッドは実際には使われないはず
     try {
       const feature = await this._editFeatureUseCase.addFeature(
         featureType, properties, geometry, layerId
       );
-
-      // イベントを発行
-      this._eventBus.publish('FeatureAdded', { feature });
-
+      // イベント発行は onFeatureAdded で処理される
       return feature;
     } catch (error) {
       console.error('地物の追加に失敗しました', error);
@@ -497,20 +596,26 @@ export class MapViewModel {
   }
 
   /**
-   * 地物を削除
+   * 地物を削除 (Deprecated: UseCase 経由で行うべき)
    * @param {string} featureId - 削除する地物のID
    * @returns {Promise<void>}
+   * @deprecated Use EditingViewModel.deleteFeature which calls EditFeatureUseCase.deleteFeature
    */
   async deleteFeature(featureId) {
-    try {
-      await this._editFeatureUseCase.deleteFeature(featureId);
-
-      // イベントを発行 (ハンドラ側で選択解除等を行う)
-      this._eventBus.publish('FeatureDeleted', { featureId });
-    } catch (error) {
-      console.error('地物の削除に失敗しました', error);
-      throw error;
-    }
+     console.warn("MapViewModel.deleteFeature is deprecated. Feature deletion should be handled via EditingViewModel and EditFeatureUseCase.");
+     // SidebarView から呼ばれる場合のために EditingViewModel 経由で呼び出す
+     try {
+        const featureToDelete = this._world?.features.find(f => f.id === featureId);
+        if (featureToDelete) {
+             await this._editingViewModel.deleteFeature(featureId, featureToDelete);
+             // イベント発行は onFeatureDeleted で処理される
+        } else {
+             console.error(`Feature with ID ${featureId} not found for deletion.`);
+        }
+     } catch (error) {
+       console.error('地物の削除に失敗しました', error);
+       throw error;
+     }
   }
 
   /**
@@ -659,7 +764,8 @@ export class MapViewModel {
    */
   getSelectedFeature() {
     if (!this._world || !this._selectedFeatureId) return null;
-    return this._features.find(f => f.id === this._selectedFeatureId) || null;
+    // _features からではなく _world.features から探す (時間フィルタリングの影響を受けないように)
+    return this._world.features.find(f => f.id === this._selectedFeatureId) || null;
   }
 
   /**
@@ -680,7 +786,8 @@ export class MapViewModel {
    */
   getHighlightedFeature() {
       if (!this._world || !this._highlightedFeatureId) return null;
-      return this._features.find(f => f.id === this._highlightedFeatureId) || null;
+       // _features からではなく _world.features から探す
+      return this._world.features.find(f => f.id === this._highlightedFeatureId) || null;
   }
 
 
