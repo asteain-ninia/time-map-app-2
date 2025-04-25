@@ -569,38 +569,6 @@ export class MapViewModel {
   }
 
   /**
-   * 地物プロパティを更新
-   * @param {string} featureId - 更新する地物のID
-   * @param {Object} properties - 新しいプロパティ (Propertyインスタンスの配列)
-   * @returns {Promise<Object>} 更新された地物
-   */
-  async updateFeatureProperties(featureId, properties) {
-    // Note: このメソッドは SidebarView から呼ばれる可能性がある
-    // EditingViewModel 経由で呼び出す方が一貫性があるかもしれないが、現状維持
-    try {
-      // アンドゥのために古いプロパティ情報を取得
-      const featureBefore = this._world?.features.find(f => f.id === featureId);
-      if (!featureBefore) throw new Error("Feature not found for property update.");
-      const oldPropertiesPlain = featureBefore.properties.map(p => this._editingViewModel._serializeForHistory(p)).filter(Boolean);
-      const newPropertiesPlain = properties.map(p => this._editingViewModel._serializeForHistory(p)).filter(Boolean);
-
-      // EditingViewModelのメソッドを呼び出して履歴管理も行う
-      const feature = await this._editingViewModel.updateFeatureProperties(
-          featureId,
-          oldPropertiesPlain,
-          newPropertiesPlain
-      );
-
-      // Note: _onFeatureUpdated で ViewModel 内部状態は更新されるはず
-
-      return feature;
-    } catch (error) {
-      console.error('地物プロパティの更新に失敗しました', error);
-      throw error;
-    }
-  }
-
-  /**
    * 地物を追加 (Deprecated: UseCase 経由で行うべき)
    * @param {string} featureType - 地物タイプ ('point', 'line', 'polygon')
    * @param {Object} properties - プロパティ

@@ -1,3 +1,5 @@
+// src/presentation/views/SidebarView.js
+
 import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 import { Property } from '../../domain/value-objects/Property.js';
 
@@ -10,25 +12,26 @@ export class SidebarView {
    * @param {HTMLElement} container - 表示コンテナ
    * @param {MapViewModel} mapViewModel - マップビューモデル
    * @param {ManageLayersUseCase} manageLayersUseCase - レイヤー管理ユースケース
-   * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
+   * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース // 注意: EditingViewModelに変更するべきだが、DI設定に合わせて現状維持
    * @param {EventBus} eventBus - イベントバス
    */
-  constructor(container, mapViewModel, manageLayersUseCase, editFeatureUseCase, eventBus) {
+
+      constructor(container, mapViewModel, manageLayersUseCase, editingViewModel, eventBus) {
     this._container = container;
     this._mapViewModel = mapViewModel;
     this._manageLayersUseCase = manageLayersUseCase;
-    this._editFeatureUseCase = editFeatureUseCase;
+    this._editingViewModel = editingViewModel;
     this._eventBus = eventBus;
-    
+
     // DOM要素
     this._sidebarElement = null;
     this._layersTabElement = null;
     this._featuresTabElement = null;
     this._propertiesTabElement = null;
-    
+
     // 現在のタブ
     this._currentTab = 'layers';
-    
+
     // 初期化
     this._initialize();
   }
@@ -47,21 +50,21 @@ export class SidebarView {
     this._sidebarElement.style.flexDirection = 'column';
     this._sidebarElement.style.backgroundColor = '#f5f5f5';
     this._sidebarElement.style.borderLeft = '1px solid #ddd';
-    
+
     // タブバーの作成
     this._createTabBar();
-    
+
     // タブコンテンツの作成
     this._createLayersTab();
     this._createFeaturesTab();
     this._createPropertiesTab();
-    
+
     // サイドバーコンテナに追加
     this._container.appendChild(this._sidebarElement);
-    
+
     // ビューモデルとの連携
     this._mapViewModel.addObserver(this._onMapViewModelChanged.bind(this));
-    
+
     // 初期タブを表示
     this._switchTab(this._currentTab);
   }
@@ -75,13 +78,13 @@ export class SidebarView {
     tabBar.className = 'sidebar-tabs';
     tabBar.style.display = 'flex';
     tabBar.style.borderBottom = '1px solid #ddd';
-    
+
     const tabs = [
       { id: 'layers', label: 'レイヤー' },
       { id: 'features', label: '地物一覧' },
       { id: 'properties', label: 'プロパティ' }
     ];
-    
+
     tabs.forEach(tab => {
       const tabElement = document.createElement('div');
       tabElement.textContent = tab.label;
@@ -90,10 +93,10 @@ export class SidebarView {
       tabElement.style.cursor = 'pointer';
       tabElement.style.borderRight = '1px solid #ddd';
       tabElement.addEventListener('click', () => this._switchTab(tab.id));
-      
+
       tabBar.appendChild(tabElement);
     });
-    
+
     this._sidebarElement.appendChild(tabBar);
   }
 
@@ -108,20 +111,20 @@ export class SidebarView {
     this._layersTabElement.style.overflow = 'auto';
     this._layersTabElement.style.padding = '10px';
     this._layersTabElement.style.display = 'none';
-    
+
     // レイヤー一覧のコンテナ
     const layersContainer = document.createElement('div');
     layersContainer.className = 'layers-container';
-    
+
     // レイヤー追加ボタン
     const addLayerButton = document.createElement('button');
     addLayerButton.textContent = '+ レイヤー追加';
     addLayerButton.style.marginBottom = '10px';
     addLayerButton.addEventListener('click', this._showAddLayerDialog.bind(this));
-    
+
     this._layersTabElement.appendChild(addLayerButton);
     this._layersTabElement.appendChild(layersContainer);
-    
+
     this._sidebarElement.appendChild(this._layersTabElement);
   }
 
@@ -136,31 +139,31 @@ export class SidebarView {
     this._featuresTabElement.style.overflow = 'auto';
     this._featuresTabElement.style.padding = '10px';
     this._featuresTabElement.style.display = 'none';
-    
+
     // 地物一覧のコンテナ
     const featuresContainer = document.createElement('div');
     featuresContainer.className = 'features-container';
-    
+
     // フィルター行
     const filterRow = document.createElement('div');
     filterRow.style.marginBottom = '10px';
-    
+
     const filterLabel = document.createElement('span');
     filterLabel.textContent = 'フィルター: ';
     filterLabel.style.marginRight = '5px';
-    
+
     const filterInput = document.createElement('input');
     filterInput.type = 'text';
     filterInput.placeholder = '名前で検索...';
     filterInput.style.width = '150px';
     filterInput.addEventListener('input', this._filterFeatures.bind(this));
-    
+
     filterRow.appendChild(filterLabel);
     filterRow.appendChild(filterInput);
-    
+
     this._featuresTabElement.appendChild(filterRow);
     this._featuresTabElement.appendChild(featuresContainer);
-    
+
     this._sidebarElement.appendChild(this._featuresTabElement);
   }
 
@@ -175,18 +178,18 @@ export class SidebarView {
     this._propertiesTabElement.style.overflow = 'auto';
     this._propertiesTabElement.style.padding = '10px';
     this._propertiesTabElement.style.display = 'none';
-    
+
     // プロパティフォームのコンテナ
     const propertiesContainer = document.createElement('div');
     propertiesContainer.className = 'properties-container';
-    
+
     // プロパティが何も選択されていない時のメッセージ
     const noSelectionMsg = document.createElement('p');
     noSelectionMsg.textContent = '地物が選択されていません';
     propertiesContainer.appendChild(noSelectionMsg);
-    
+
     this._propertiesTabElement.appendChild(propertiesContainer);
-    
+
     this._sidebarElement.appendChild(this._propertiesTabElement);
   }
 
@@ -208,7 +211,7 @@ export class SidebarView {
         this._propertiesTabElement.style.display = 'none';
         break;
     }
-    
+
     // 新しいタブを表示
     switch (tabId) {
       case 'layers':
@@ -224,7 +227,7 @@ export class SidebarView {
         this._updatePropertiesTab();
         break;
     }
-    
+
     // タブの状態を更新
     const tabs = this._sidebarElement.querySelector('.sidebar-tabs').children;
     for (let i = 0; i < tabs.length; i++) {
@@ -234,7 +237,7 @@ export class SidebarView {
         tabs[i].style.backgroundColor = '';
       }
     }
-    
+
     this._currentTab = tabId;
   }
 
@@ -253,23 +256,34 @@ export class SidebarView {
           this._updateLayersTab();
         }
         break;
-        
+
       case 'features':
         if (this._currentTab === 'features') {
           this._updateFeaturesTab();
         }
+        // プロパティタブも更新（地物削除などで選択が解除される場合があるため）
+        if (this._currentTab === 'properties') {
+          this._updatePropertiesTab();
+        }
         break;
-        
+
       case 'selectedFeature':
         if (this._currentTab === 'properties') {
           this._updatePropertiesTab();
         }
         // プロパティタブに自動的に切り替え
-        if (data) {
+        if (data) { // data (選択された地物) があれば切り替える
           this._switchTab('properties');
+        } else { // 選択が解除された場合
+          // 選択解除時はプロパティタブにとどまる必要はないかもしれないが、
+          // ユーザーが明示的に他のタブに切り替えるまでは表示を維持し、
+          // 「地物が選択されていません」と表示する。
+          if (this._currentTab === 'properties') {
+            this._updatePropertiesTab(); // メッセージ表示のために更新
+          }
         }
         break;
-        
+
       default:
         break;
     }
@@ -282,7 +296,7 @@ export class SidebarView {
   _updateLayersTab() {
     const world = this._mapViewModel.getWorld();
     if (!world) return;
-    
+
     const layersContainer = this._layersTabElement.querySelector('.layers-container');
     layersContainer.innerHTML = '';
 
@@ -293,6 +307,8 @@ export class SidebarView {
     sortedLayers.forEach(layer => {
       const layerItem = document.createElement('div');
       layerItem.className = 'layer-item';
+      // layerElementの代わりにlayerItemにIDを設定
+      layerItem.dataset.layerId = layer.id;
       layerItem.style.padding = '5px';
       layerItem.style.border = '1px solid #ddd';
       layerItem.style.marginBottom = '5px';
@@ -313,7 +329,7 @@ export class SidebarView {
       const nameLabel = document.createElement('span');
       nameLabel.textContent = layer.name;
       nameLabel.style.flex = '1';
-      
+
       // 不透明度入力
       const opacityLabel = document.createElement('span');
       opacityLabel.textContent = '不透明度:';
@@ -355,7 +371,7 @@ export class SidebarView {
       layerItem.appendChild(opacityInput);
       layerItem.appendChild(editButton);
       layerItem.appendChild(deleteButton);
-      
+
       layersContainer.appendChild(layerItem);
     });
   }
@@ -367,33 +383,33 @@ export class SidebarView {
   _updateFeaturesTab() {
     const features = this._mapViewModel.getFeatures();
     const currentTime = this._mapViewModel.getCurrentTime();
-    
+
     const featuresContainer = this._featuresTabElement.querySelector('.features-container');
     featuresContainer.innerHTML = '';
-    
+
     // フィルター入力値を取得
     const filterInput = this._featuresTabElement.querySelector('input');
     const filterText = filterInput ? filterInput.value.toLowerCase() : '';
-    
+
     // 地物をフィルタリングして表示
     const filteredFeatures = this._filterFeaturesByText(features, filterText, currentTime);
-    
+
     if (filteredFeatures.length === 0) {
       const noFeaturesMsg = document.createElement('p');
       noFeaturesMsg.textContent = '表示する地物がありません';
       featuresContainer.appendChild(noFeaturesMsg);
       return;
     }
-    
+
     // カテゴリーごとにグループ化
     const categorizedFeatures = this._categorizeFeaturesBy(filteredFeatures, currentTime);
-    
+
     // カテゴリーごとに表示
     Object.keys(categorizedFeatures).forEach(category => {
       const categoryGroup = document.createElement('div');
       categoryGroup.className = 'feature-category';
       categoryGroup.style.marginBottom = '10px';
-      
+
       // カテゴリー見出し
       const categoryHeader = document.createElement('h3');
       categoryHeader.textContent = category;
@@ -401,28 +417,28 @@ export class SidebarView {
       categoryHeader.style.padding = '5px';
       categoryHeader.style.backgroundColor = '#eee';
       categoryHeader.style.cursor = 'pointer';
-      
+
       // 折りたたみ機能
       const categoryContent = document.createElement('div');
       categoryContent.className = 'category-content';
-      
+
       categoryHeader.addEventListener('click', () => {
-        categoryContent.style.display = 
+        categoryContent.style.display =
           categoryContent.style.display === 'none' ? 'block' : 'none';
       });
-      
+
       // 地物一覧
       categorizedFeatures[category].forEach(feature => {
         const prop = feature.getPropertyAt(currentTime);
         if (!prop) return;
-        
+
         const featureItem = document.createElement('div');
         featureItem.className = 'feature-item';
         featureItem.style.padding = '5px';
         featureItem.style.border = '1px solid #ddd';
         featureItem.style.marginBottom = '2px';
         featureItem.style.cursor = 'pointer';
-        
+
         // 選択状態の表示
         const selectedFeature = this._mapViewModel.getSelectedFeature();
         if (selectedFeature && selectedFeature.id === feature.id) {
@@ -430,21 +446,21 @@ export class SidebarView {
         } else {
           featureItem.style.backgroundColor = '#fff';
         }
-        
+
         // 地物名
         const nameLabel = document.createElement('span');
         nameLabel.textContent = prop.name || '名称なし';
-        
+
         // クリックイベント
         featureItem.addEventListener('click', () => {
           this._mapViewModel.selectFeature(feature.id);
         });
-        
+
         // アイテムに要素を追加
         featureItem.appendChild(nameLabel);
         categoryContent.appendChild(featureItem);
       });
-      
+
       // グループに要素を追加
       categoryGroup.appendChild(categoryHeader);
       categoryGroup.appendChild(categoryContent);
@@ -459,17 +475,17 @@ export class SidebarView {
   _updatePropertiesTab() {
     const selectedFeature = this._mapViewModel.getSelectedFeature();
     const currentTime = this._mapViewModel.getCurrentTime();
-    
+
     const propertiesContainer = this._propertiesTabElement.querySelector('.properties-container');
     propertiesContainer.innerHTML = '';
-    
+
     if (!selectedFeature) {
       const noSelectionMsg = document.createElement('p');
       noSelectionMsg.textContent = '地物が選択されていません';
       propertiesContainer.appendChild(noSelectionMsg);
       return;
     }
-    
+
     // 地物の種類を特定
     let featureType = 'unknown';
     if (selectedFeature.constructor.name === 'Point') {
@@ -479,54 +495,54 @@ export class SidebarView {
     } else if (selectedFeature.constructor.name === 'Polygon') {
       featureType = 'polygon';
     }
-    
+
     // 地物IDと種類
     const idRow = document.createElement('div');
     idRow.style.marginBottom = '10px';
-    
+
     const idLabel = document.createElement('span');
     idLabel.textContent = `ID: ${selectedFeature.id}`;
     idLabel.style.fontSize = '0.8em';
     idLabel.style.color = '#666';
-    
+
     const typeLabel = document.createElement('span');
     typeLabel.textContent = `種類: ${this._getFeatureTypeName(featureType)}`;
     typeLabel.style.fontSize = '0.8em';
     typeLabel.style.color = '#666';
     typeLabel.style.marginLeft = '10px';
-    
+
     idRow.appendChild(idLabel);
     idRow.appendChild(typeLabel);
     propertiesContainer.appendChild(idRow);
-    
+
     // 現在のプロパティを取得
     const currentProperty = selectedFeature.getPropertyAt(currentTime);
-    
+
     // プロパティフォームの作成
     const form = document.createElement('form');
     form.addEventListener('submit', e => {
       e.preventDefault();
       this._saveFeatureProperties(selectedFeature.id, form);
     });
-    
+
     // 基本プロパティ
     const basicProps = [
       { id: 'name', label: '名前', type: 'text', value: currentProperty ? currentProperty.name : '' },
       { id: 'description', label: '説明', type: 'textarea', value: currentProperty ? currentProperty.description : '' },
       { id: 'category', label: 'カテゴリ', type: 'select', value: currentProperty ? currentProperty.getAttribute('category', '') : '' }
     ];
-    
+
     basicProps.forEach(prop => {
       const row = document.createElement('div');
       row.style.marginBottom = '10px';
-      
+
       const label = document.createElement('label');
       label.textContent = prop.label;
       label.style.display = 'block';
       label.style.marginBottom = '5px';
-      
+
       let input;
-      
+
       if (prop.type === 'textarea') {
         input = document.createElement('textarea');
         input.style.width = '100%';
@@ -535,10 +551,10 @@ export class SidebarView {
       } else if (prop.type === 'select') {
         input = document.createElement('select');
         input.style.width = '100%';
-        
+
         // カテゴリオプション
         const categories = this._getCategoriesForFeatureType(featureType);
-        
+
         categories.forEach(cat => {
           const option = document.createElement('option');
           option.value = cat.id;
@@ -554,48 +570,48 @@ export class SidebarView {
         input.style.width = '100%';
         input.value = prop.value;
       }
-      
+
       input.name = prop.id;
-      
+
       row.appendChild(label);
       row.appendChild(input);
       form.appendChild(row);
     });
-    
+
     // 時間範囲
     const timeRow = document.createElement('div');
     timeRow.style.marginBottom = '10px';
-    
+
     const timeLabel = document.createElement('label');
     timeLabel.textContent = '存在期間';
     timeLabel.style.display = 'block';
     timeLabel.style.marginBottom = '5px';
-    
+
     const startLabel = document.createElement('span');
     startLabel.textContent = '開始: ';
-    
+
     const startInput = document.createElement('input');
     startInput.type = 'number';
     startInput.name = 'startYear';
     startInput.style.width = '80px';
     startInput.value = currentProperty && currentProperty.startTime ? currentProperty.startTime.year : '';
-    
+
     const endLabel = document.createElement('span');
     endLabel.textContent = ' 終了: ';
-    
+
     const endInput = document.createElement('input');
     endInput.type = 'number';
     endInput.name = 'endYear';
     endInput.style.width = '80px';
     endInput.value = currentProperty && currentProperty.endTime ? currentProperty.endTime.year : '';
-    
+
     timeRow.appendChild(timeLabel);
     timeRow.appendChild(startLabel);
     timeRow.appendChild(startInput);
     timeRow.appendChild(endLabel);
     timeRow.appendChild(endInput);
     form.appendChild(timeRow);
-    
+
     // 地物タイプに応じた追加プロパティ
     if (featureType === 'point') {
       // 点特有のプロパティ
@@ -604,12 +620,12 @@ export class SidebarView {
     } else if (featureType === 'polygon') {
       // 面特有のプロパティ
     }
-    
+
     // ボタン行
     const buttonRow = document.createElement('div');
     buttonRow.style.marginTop = '20px';
     buttonRow.style.textAlign = 'right';
-    
+
     const deleteButton = document.createElement('button');
     deleteButton.type = 'button';
     deleteButton.textContent = '削除';
@@ -617,15 +633,15 @@ export class SidebarView {
     deleteButton.addEventListener('click', () => {
       this._showDeleteFeatureConfirm(selectedFeature);
     });
-    
+
     const saveButton = document.createElement('button');
     saveButton.type = 'submit';
     saveButton.textContent = '保存';
-    
+
     buttonRow.appendChild(deleteButton);
     buttonRow.appendChild(saveButton);
     form.appendChild(buttonRow);
-    
+
     propertiesContainer.appendChild(form);
   }
 
@@ -638,7 +654,7 @@ export class SidebarView {
   async _updateLayerVisibility(layerId, visible) {
     try {
       const layer = await this._manageLayersUseCase.updateLayer(layerId, { visible });
-      
+
       // イベントを発行
       this._eventBus.publish('LayerVisibilityChanged', { layerId, layer });
     } catch (error) {
@@ -655,7 +671,7 @@ export class SidebarView {
   async _updateLayerOpacity(layerId, opacity) {
     try {
       const layer = await this._manageLayersUseCase.updateLayer(layerId, { opacity });
-      
+
       // イベントを発行
       this._eventBus.publish('LayerVisibilityChanged', { layerId, layer });
     } catch (error) {
@@ -823,11 +839,19 @@ export class SidebarView {
     const currentTime = this._mapViewModel.getCurrentTime();
     const property = feature.getPropertyAt(currentTime);
     const name = property ? property.name : '名称なし';
-    
+
     // 簡易的な確認ダイアログ
     const confirm = window.confirm(`地物「${name}」を削除してもよろしいですか？`);
     if (confirm) {
-      this._mapViewModel.deleteFeature(feature.id);
+      // MapViewModel 経由ではなく、直接 EditingViewModel を呼び出すべき
+      // DI が正しく設定されていれば this._editingViewModel が使える
+      if (this._editingViewModel) {
+        this._editingViewModel.deleteFeature(feature.id, feature);
+      } else {
+        console.error("EditingViewModel is not available in SidebarView.");
+        // フォールバックとして MapViewModel を使う（非推奨）
+        this._mapViewModel.deleteFeature(feature.id);
+      }
     }
   }
 
@@ -899,13 +923,13 @@ export class SidebarView {
     // 現在の地物と時間点を取得
     const selectedFeature = this._mapViewModel.getSelectedFeature();
     if (!selectedFeature) {
-        console.error("プロパティ保存時に地物が選択されていません。");
-        return;
+      console.error("プロパティ保存時に地物が選択されていません。");
+      return;
     }
     const currentTime = this._mapViewModel.getCurrentTime();
 
-    // 古いプロパティ配列を保存（アンドゥ用）
-    const oldProperties = [...selectedFeature.properties];
+    // 古いプロパティ配列を複製（変更検出のため）
+    // ※ EditingViewModel側で取得するため、ここでは不要
 
     // TimePoint インスタンスを生成
     const currentTp = new TimePoint(currentTime.year, currentTime.month, currentTime.day);
@@ -914,35 +938,42 @@ export class SidebarView {
 
     // 新しい Property インスタンスを作成
     const newProperty = new Property(
-        currentTp,
-        name || '名称未設定', // 名前が空の場合のデフォルト値
-        description || '',   // 説明が空の場合のデフォルト値
-        { category: category || 'default' }, // カテゴリ属性、空の場合のデフォルト値
-        startTp,
-        endTp
+      currentTp,
+      name || '名称未設定', // 名前が空の場合のデフォルト値
+      description || '',   // 説明が空の場合のデフォルト値
+      { category: category || 'default' }, // カテゴリ属性、空の場合のデフォルト値
+      startTp,
+      endTp
     );
 
-    // 既存のプロパティを更新または新しいプロパティを追加
-    let newProperties;
-    const existingPropIndex = oldProperties.findIndex(prop => prop.timePoint.equals(currentTp));
+    // 既存のプロパティ配列から、現在の時点のプロパティを置き換えるか、新しいプロパティを追加する
+    // (元のプロパティ配列を取得する必要がある)
+    const existingProperties = [...selectedFeature.properties]; // 既存のプロパティをコピー
+    let newPropertiesInstances;
+    const existingPropIndex = existingProperties.findIndex(prop => prop.timePoint.equals(currentTp));
 
     if (existingPropIndex !== -1) {
-        // 現在の時点に既にプロパティが存在する場合は置き換え
-        newProperties = [...oldProperties];
-        newProperties[existingPropIndex] = newProperty;
+      // 現在の時点に既にプロパティが存在する場合は置き換え
+      newPropertiesInstances = [...existingProperties];
+      newPropertiesInstances[existingPropIndex] = newProperty;
     } else {
-        // 新しい時点のプロパティとして追加し、時間でソート
-        newProperties = [...oldProperties, newProperty];
-        newProperties.sort((a, b) => {
-            if (a.timePoint.isBefore(b.timePoint)) return -1;
-            if (b.timePoint.isBefore(a.timePoint)) return 1;
-            return 0;
-        });
+      // 新しい時点のプロパティとして追加し、時間でソート
+      newPropertiesInstances = [...existingProperties, newProperty];
+      newPropertiesInstances.sort((a, b) => {
+        if (a.timePoint.isBefore(b.timePoint)) return -1;
+        if (b.timePoint.isBefore(a.timePoint)) return 1;
+        return 0;
+      });
     }
 
     try {
-      // 地物を更新
-      await this._mapViewModel.updateFeatureProperties(featureId, newProperties);
+      // EditingViewModel の updateFeatureProperties を呼び出す
+      if (!this._editingViewModel) {
+        console.error("EditingViewModel is not available in SidebarView. DI might be incorrect.");
+        alert("エラー: 編集機能が利用できません。");
+        return;
+      }
+      await this._editingViewModel.updateFeatureProperties(featureId, newPropertiesInstances);
 
       alert('プロパティを保存しました');
     } catch (error) {
@@ -961,11 +992,11 @@ export class SidebarView {
    */
   _filterFeaturesByText(features, text, currentTime) {
     if (!text) return features;
-    
+
     return features.filter(feature => {
       const property = feature.getPropertyAt(currentTime);
       if (!property) return false;
-      
+
       // 名前または説明が検索テキストを含むか
       return (
         (property.name && property.name.toLowerCase().includes(text)) ||
@@ -992,14 +1023,14 @@ export class SidebarView {
    */
   _categorizeFeaturesBy(features, currentTime) {
     const categorized = {};
-    
+
     features.forEach(feature => {
       const property = feature.getPropertyAt(currentTime);
       if (!property) return;
-      
+
       // カテゴリを取得（なければデフォルト）
       let category = property.getAttribute('category');
-      
+
       if (!category) {
         // 地物タイプに基づくデフォルトカテゴリ
         if (feature.constructor.name === 'Point') {
@@ -1012,18 +1043,18 @@ export class SidebarView {
           category = 'other';
         }
       }
-      
+
       // カテゴリ名の表示用変換
       const categoryName = this._getCategoryDisplayName(category);
-      
+
       // カテゴリグループに追加
       if (!categorized[categoryName]) {
         categorized[categoryName] = [];
       }
-      
+
       categorized[categoryName].push(feature);
     });
-    
+
     return categorized;
   }
 
@@ -1052,9 +1083,10 @@ export class SidebarView {
       'point': '点',
       'line': '線',
       'polygon': '面',
-      'other': 'その他'
+      'other': 'その他',
+      'default': 'デフォルト' // 'default' も追加
     };
-    
+
     return categoryMap[category] || category;
   }
 
@@ -1071,7 +1103,7 @@ export class SidebarView {
       'polygon': '面',
       'unknown': '不明'
     };
-    
+
     return typeMap[type] || type;
   }
 
@@ -1084,9 +1116,10 @@ export class SidebarView {
   _getCategoriesForFeatureType(type) {
     // デフォルトカテゴリ
     const defaultCategories = [
-      { id: '', name: '-- カテゴリなし --' }
+      { id: '', name: '-- カテゴリなし --' },
+      { id: 'default', name: 'デフォルト' } // 'default' カテゴリを追加
     ];
-    
+
     // 地物種類に応じたカテゴリ
     switch (type) {
       case 'point':
@@ -1097,7 +1130,7 @@ export class SidebarView {
           { id: 'battle', name: '戦闘' },
           { id: 'ruin', name: '遺跡' }
         ];
-        
+
       case 'line':
         return [
           ...defaultCategories,
@@ -1107,7 +1140,7 @@ export class SidebarView {
           { id: 'trade_route', name: '交易路' },
           { id: 'border', name: '国境' }
         ];
-        
+
       case 'polygon':
         return [
           ...defaultCategories,
@@ -1117,7 +1150,7 @@ export class SidebarView {
           { id: 'ocean', name: '海洋' },
           { id: 'lake', name: '湖沼' }
         ];
-        
+
       default:
         return defaultCategories;
     }

@@ -715,40 +715,49 @@ _deserializeFromHistory(data) {
   /**
    * 地物プロパティを更新
    * @param {string} featureId - 更新する地物のID
-   * @param {Object} oldPropertiesPlain - 古いプロパティ配列 (プレーンオブジェクトの配列)
-   * @param {Object} newPropertiesPlain - 新しいプロパティ配列 (プレーンオブジェクトの配列)
+   * @param {Property[]} newProperties - 新しいプロパティ配列 (Property インスタンスの配列)
    * @returns {Promise<Object>} 更新された地物インスタンス
    */
-  async updateFeatureProperties(featureId, oldPropertiesPlain, newPropertiesPlain) {
+  async updateFeatureProperties(featureId, newProperties) {
     try {
-        // プレーンオブジェクトから Property インスタンスの配列を生成
-        const newPropertiesInstances = newPropertiesPlain
-            .map(pData => this._deserializeFromHistory(pData))
-            .filter(p => p instanceof Property);
-
-        if (newPropertiesInstances.length !== newPropertiesPlain.length) {
-            console.warn("Some properties failed to deserialize during update.");
-        }
-
-        const feature = await this._editFeatureUseCase.updateFeature(
-          featureId, { properties: newPropertiesInstances } // インスタンスを渡す
-        );
-
-        // 操作履歴に追加 (プレーンオブジェクトを保存)
-        this._addToHistory({
-          type: 'updateProperties',
-          featureId,
-          oldProperties: oldPropertiesPlain, // 更新「前」のプレーンデータを保存
-          newProperties: newPropertiesPlain  // 更新「後」のプレーンデータを保存
-        });
-
-        this._eventBus.publish('FeatureUpdated', { feature }); // イベントにはインスタンス
-
-        return feature; // インスタンスを返す
-      } catch (error) {
-        console.error('地物プロパティの更新に失敗しました', error);
-        throw error;
+      // 1. UseCase を呼び出す前に、現在の地物から古いプロパティを取得
+      const worldRepository = this._editFeatureUseCase._worldRepository;
+      const world = await worldRepository.getWorld();
+      const featureBefore = world.features.find(f => f.id === featureId);
+      if (!featureBefore) {
+        throw new Error(`Feature not found: ${featureId}`);
       }
+      // 古いプロパティをアンドゥ履歴用にシリアライズ (プレーンオブジェクト)
+      const oldPropertiesPlain = featureBefore.properties
+        .map(p => this._serializeForHistory(p))
+        .filter(Boolean); // シリアライズ失敗を除外
+
+      // 2. UseCase を呼び出して地物を更新
+      const feature = await this._editFeatureUseCase.updateFeature(
+        featureId, { properties: newProperties } // 新しい Property インスタンス配列を渡す
+      );
+
+      // 3. アンドゥ履歴に追加 (プレーンオブジェクトを保存)
+      // 新しいプロパティもシリアライズ
+      const newPropertiesPlain = newProperties
+        .map(p => this._serializeForHistory(p))
+        .filter(Boolean); // シリアライズ失敗を除外
+
+      this._addToHistory({
+        type: 'updateProperties',
+        featureId,
+        oldProperties: oldPropertiesPlain, // 更新「前」のプレーンデータを保存
+        newProperties: newPropertiesPlain  // 更新「後」のプレーンデータを保存
+      });
+
+      // 4. イベント発行
+      this._eventBus.publish('FeatureUpdated', { feature }); // イベントには更新後のインスタンス
+
+      return feature; // 更新後のインスタンスを返す
+    } catch (error) {
+      console.error('地物プロパティの更新に失敗しました (EditingViewModel)', error);
+      throw error; // エラーを再スロー
+    }
   }
 
   /**

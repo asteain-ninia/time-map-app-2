@@ -1,3 +1,5 @@
+// src/main/DependencyInjection.js
+
 import { FileSystem } from '../infrastructure/persistence/FileSystem';
 import { JSONSerializer } from '../infrastructure/persistence/JSONSerializer';
 import { JSONWorldRepository } from '../infrastructure/persistence/JSONWorldRepository';
@@ -47,13 +49,13 @@ export class DependencyInjection {
   initialize(mapContainer, timelineContainer, toolbarContainer, sidebarContainer) {
     // インフラストラクチャ層の依存性を登録
     this._registerInfrastructureServices();
-    
+
     // ドメイン層の依存性を登録
     this._registerDomainServices();
-    
+
     // アプリケーション層の依存性を登録
     this._registerApplicationServices();
-    
+
     // プレゼンテーション層の依存性を登録
     this._registerPresentationServices(
       mapContainer,
@@ -71,7 +73,7 @@ export class DependencyInjection {
     // 基本サービス
     this._container.logger = new Logger(3); // INFO レベルで初期化
     this._container.configManager = new ConfigManager();
-    
+
     // 永続化サービス
     this._container.fileSystem = new FileSystem();
     this._container.jsonSerializer = new JSONSerializer();
@@ -79,7 +81,7 @@ export class DependencyInjection {
       this._container.fileSystem,
       this._container.jsonSerializer
     );
-    
+
     // レンダリングサービス
     this._container.viewportManager = new ViewportManager({
       width: 800,
@@ -109,18 +111,18 @@ export class DependencyInjection {
   _registerApplicationServices() {
     // イベントバス
     this._container.eventBus = new EventBus();
-    
+
     // ユースケース
     this._container.editFeatureUseCase = new EditFeatureUseCase(
       this._container.worldRepository,
       this._container.geometryService,
       this._container.layerService
     );
-    
+
     this._container.navigateTimeUseCase = new NavigateTimeUseCase(
       this._container.timeService
     );
-    
+
     this._container.manageLayersUseCase = new ManageLayersUseCase(
       this._container.worldRepository,
       this._container.layerService
@@ -142,59 +144,65 @@ export class DependencyInjection {
     sidebarContainer
   ) {
     // ビューモデル
+    // EditingViewModel を先に生成
+    this._container.editingViewModel = new EditingViewModel(
+      this._container.editFeatureUseCase,
+      this._container.eventBus
+    );
+
     this._container.mapViewModel = new MapViewModel(
       this._container.editFeatureUseCase,
       this._container.navigateTimeUseCase,
       this._container.manageLayersUseCase,
       this._container.geometryService,
       this._container.eventBus
+      // Note: MapViewModelはEditingViewModelに依存しないように修正済み (のはず)
     );
-    
+
     this._container.timelineViewModel = new TimelineViewModel(
       this._container.navigateTimeUseCase,
       this._container.eventBus
     );
-    
-    this._container.editingViewModel = new EditingViewModel(
-      this._container.editFeatureUseCase,
-      this._container.eventBus
-    );
-    
+
     // レンダラー
     this._container.renderer = new SVGRenderer(
       mapContainer,
       { width: mapContainer.clientWidth, height: mapContainer.clientHeight }
     );
-    
+
     // ビュー
     this._container.mapView = new MapView(
       mapContainer,
       this._container.mapViewModel,
-      this._container.editingViewModel,
+      this._container.editingViewModel, // MapViewにはEditingViewModelを渡す
       this._container.viewportManager,
       this._container.renderer,
       this._container.configManager
     );
-    
+
     this._container.timelineView = new TimelineView(
       timelineContainer,
       this._container.timelineViewModel
     );
-    
+
     this._container.toolbarView = new ToolbarView(
       toolbarContainer,
       this._container.editingViewModel,
       this._container.mapView
     );
-    
+
     this._container.sidebarView = new SidebarView(
       sidebarContainer,
       this._container.mapViewModel,
       this._container.manageLayersUseCase,
-      this._container.editFeatureUseCase,
+      // --- 修正箇所 ---
+      // EditFeatureUseCaseではなくEditingViewModelを注入する
+      // this._container.editFeatureUseCase,
+      this._container.editingViewModel,
+      // --- 修正箇所おわり ---
       this._container.eventBus
     );
-    
+
     // コントローラ
     this._container.mapController = new MapController(
       this._container.mapView,
@@ -202,12 +210,12 @@ export class DependencyInjection {
       this._container.editingViewModel,
       this._container.viewportManager
     );
-    
+
     this._container.timelineController = new TimelineController(
       this._container.timelineView,
       this._container.timelineViewModel
     );
-    
+
     this._container.toolController = new ToolController(
       this._container.toolbarView,
       this._container.editingViewModel
