@@ -87,6 +87,16 @@ export class TimePoint {
   }
 
   /**
+   * この時間点が別の時間点より後にあるかどうかを判定
+   * @param {TimePoint} other - 比較する時間点
+   * @returns {boolean} この時間点が引数の時間点より後にあればtrue
+   */
+  isAfter(other) {
+    return other.isBefore(this);
+  }
+
+
+  /**
    * この時間点が別の時間点と同じかどうかを判定
    * @param {TimePoint} other - 比較する時間点
    * @returns {boolean} 時間点が等しいか

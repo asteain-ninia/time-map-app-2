@@ -14,7 +14,7 @@ export class Feature {
     this._vertexIds = [...vertexIds];
     this._properties = [...properties];
     this._layerId = layerId;
-    
+
     // vertexIdsとpropertiesは変更可能だが、内部要素は不変
     Object.freeze(this._vertexIds);
     Object.freeze(this._properties);
@@ -59,18 +59,31 @@ export class Feature {
    * @returns {Property|null} 適用されるプロパティまたはnull
    */
   getPropertyAt(timePoint) {
-    // timePointにおいて有効かつ最も新しいプロパティを検索
-    let latestProperty = null;
-    
-    for (const property of this._properties) {
-      if (property.isActiveAt(timePoint)) {
-        if (!latestProperty || latestProperty.timePoint.isBefore(property.timePoint)) {
-          latestProperty = property;
-        }
-      }
+    // 1. timePointにおいて有効なプロパティをフィルタリング
+    //    (isActiveAt は startTime/endTime のみで判定するよう修正済み)
+    const activeProperties = this._properties.filter(property =>
+      property.isActiveAt(timePoint)
+    );
+
+    // 2. 有効なプロパティがない場合は null を返す
+    if (activeProperties.length === 0) {
+      return null;
     }
-    
-    return latestProperty;
+
+    // 3. 有効なプロパティの中から、最もtimePointが新しいもの(最も後から定義されたもの)を選択する
+    //    指定された timePoint とプロパティ定義の timePoint の前後関係は考慮しない。
+    let latestProperty = activeProperties[0]; // 暫定で最初のを設定
+    for (let i = 1; i < activeProperties.length; i++) {
+        const currentProperty = activeProperties[i];
+        // latestProperty の timePoint より currentProperty の timePoint が後なら更新
+        if (latestProperty.timePoint.isBefore(currentProperty.timePoint)) {
+            latestProperty = currentProperty;
+        }
+        // timePoint が同じ場合はどうするか？ -> 仕様上は同じ時点に複数の定義はない想定だが、
+        // もし存在した場合、現状では配列の後ろにある方が優先される。明確なルールが必要なら追加。
+    }
+
+    return latestProperty; // 最も後から定義された有効なプロパティを返す
   }
 
   /**
@@ -79,6 +92,7 @@ export class Feature {
    * @returns {boolean} オブジェクトが存在すればtrue
    */
   existsAt(timePoint) {
+    // getPropertyAtがnullでないかで判定
     return this.getPropertyAt(timePoint) !== null;
   }
 
@@ -88,7 +102,20 @@ export class Feature {
    * @returns {Feature} 新しい地理オブジェクト
    */
   withVertexIds(vertexIds) {
-    return new this.constructor(this._id, vertexIds, this._properties, this._layerId);
+    // サブクラスがオーバーライドする必要があるが、基底クラスでも動作するように
+    // this.constructor を使うことで、呼び出されたサブクラスのコンストラクタを呼ぶ
+    // ただし、サブクラスが追加の引数を必要とする場合は、サブクラスでのオーバーライドが必須
+    if (this.constructor === Feature) {
+        return new Feature(this._id, vertexIds, this._properties, this._layerId);
+    } else {
+        // サブクラスのインスタンスから呼ばれた場合、サブクラスのコンストラクタを期待
+        // これはサブクラスのオーバーライドに依存するため、警告を出すか、
+        // またはサブクラスが必ずオーバーライドすることを前提とする
+        // console.warn(`Feature.withVertexIds called on subclass ${this.constructor.name}. Subclass should override this method.`);
+        // 簡易的なフォールバック (サブクラスの固有状態は失われる可能性がある)
+        // → ポリゴンクラスでオーバーライドされているのでこの警告は基本出ないはず
+        return new this.constructor(this._id, vertexIds, this._properties, this._layerId);
+    }
   }
 
   /**
@@ -97,7 +124,14 @@ export class Feature {
    * @returns {Feature} 新しい地理オブジェクト
    */
   withProperties(properties) {
-    return new this.constructor(this._id, this._vertexIds, properties, this._layerId);
+    // withVertexIdsと同様
+    if (this.constructor === Feature) {
+        return new Feature(this._id, this._vertexIds, properties, this._layerId);
+    } else {
+        // console.warn(`Feature.withProperties called on subclass ${this.constructor.name}. Subclass should override this method.`);
+        // → ポリゴンクラスでオーバーライドされているのでこの警告は基本出ないはず
+        return new this.constructor(this._id, this._vertexIds, properties, this._layerId);
+    }
   }
 
   /**
@@ -115,6 +149,13 @@ export class Feature {
    * @returns {Feature} 新しい地理オブジェクト
    */
   withLayerId(layerId) {
-    return new this.constructor(this._id, this._vertexIds, this._properties, layerId);
+    // withVertexIdsと同様
+     if (this.constructor === Feature) {
+        return new Feature(this._id, this._vertexIds, this._properties, layerId);
+    } else {
+        // console.warn(`Feature.withLayerId called on subclass ${this.constructor.name}. Subclass should override this method.`);
+        // → ポリゴンクラスでオーバーライドされているのでこの警告は基本出ないはず
+        return new this.constructor(this._id, this._vertexIds, this._properties, layerId);
+    }
   }
 }

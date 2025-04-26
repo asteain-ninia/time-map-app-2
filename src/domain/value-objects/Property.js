@@ -4,12 +4,12 @@
 export class Property {
   /**
    * プロパティオブジェクトを作成
-   * @param {TimePoint} timePoint - 適用開始時点
+   * @param {TimePoint} timePoint - 適用開始時点 (このプロパティ定義が有効になる時間)
    * @param {string} name - 名称
    * @param {string} description - 説明
    * @param {Object} [attributes={}] - 追加属性
-   * @param {TimePoint} [startTime=null] - 存在開始時点（省略可）
-   * @param {TimePoint} [endTime=null] - 存在終了時点（省略可）
+   * @param {TimePoint} [startTime=null] - このプロパティが示すエンティティ状態の存在開始時点（省略可）
+   * @param {TimePoint} [endTime=null] - このプロパティが示すエンティティ状態の存在終了時点（省略可、排他的）
    */
   constructor(timePoint, name, description, attributes = {}, startTime = null, endTime = null) {
     this._timePoint = timePoint;
@@ -104,15 +104,16 @@ export class Property {
    * @returns {boolean} プロパティが有効ならtrue
    */
   isActiveAt(timePoint) {
-    // 時間点が適用開始時点より前なら非アクティブ
-    if (timePoint.isBefore(this._timePoint)) return false;
-    
+    // プロパティ定義自体のtimePointは有効期間に関係しない
+    // if (timePoint.isBefore(this._timePoint)) return false;
+
     // 開始時点が設定されていて、それよりも前なら非アクティブ
     if (this._startTime && timePoint.isBefore(this._startTime)) return false;
-    
-    // 終了時点が設定されていて、それよりも後なら非アクティブ
-    if (this._endTime && this._endTime.isBefore(timePoint)) return false;
-    
+
+    // 終了時点が設定されていて、それと等しいかそれよりも後なら非アクティブ (endTimeは排他的)
+    if (this._endTime && !timePoint.isBefore(this._endTime)) return false;
+    // 上記は以下と同じ意味: if (this._endTime && (timePoint.isAfter(this._endTime) || timePoint.equals(this._endTime))) return false;
+
     return true;
   }
 
@@ -126,23 +127,23 @@ export class Property {
     if (!this._timePoint.equals(other.timePoint)) return false;
     if (this._name !== other.name) return false;
     if (this._description !== other.description) return false;
-    
+
     // 開始時間と終了時間の比較
     if ((this._startTime === null) !== (other.startTime === null)) return false;
     if (this._startTime && !this._startTime.equals(other.startTime)) return false;
-    
+
     if ((this._endTime === null) !== (other.endTime === null)) return false;
     if (this._endTime && !this._endTime.equals(other.endTime)) return false;
-    
+
     // 属性の比較
     const thisKeys = Object.keys(this._attributes);
     const otherKeys = Object.keys(other.getAttributes());
     if (thisKeys.length !== otherKeys.length) return false;
-    
+
     for (const key of thisKeys) {
       if (this._attributes[key] !== other.getAttribute(key)) return false;
     }
-    
+
     return true;
   }
 }
