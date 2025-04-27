@@ -797,7 +797,7 @@ _deserializeFromHistory(data) {
       if (verticesChanged) await worldRepository.saveWorld(world); // 追加頂点を保存
 
       // 穴を追加
-      const newHolesVertexIdsWithNewOne = [...oldHolesVertexIds, newHoleVertexIds];
+      const newHolesVertexIdsWithNewOne = [...oldHolesVertexIdsPlain, newHoleVertexIds];
 
       // ポリゴンを更新 (更新対象の geometry を渡す)
       const updatedPolygon = await this._editFeatureUseCase.updateFeature(
