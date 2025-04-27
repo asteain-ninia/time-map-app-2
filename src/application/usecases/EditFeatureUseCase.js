@@ -24,8 +24,8 @@ export class EditFeatureUseCase {
   /**
    * 新しい地理オブジェクトを追加
    * @param {string} featureType - オブジェクトタイプ ('point', 'line', 'polygon')
-   * @param {Object} properties - プロパティ情報
-   * @param {Object} geometry - 形状情報
+   * @param {Object} properties - プロパティ情報 (Propertyインスタンスの配列)
+   * @param {Object} geometry - 形状情報 { vertices?: {x,y}[], vertexIds?: string[], holesVertexIds?: string[][], parentId?: string, isMultiPolygon?: boolean, subPolygons?: object[] }
    * @param {string} layerId - レイヤーID
    * @returns {Promise<Feature>} 追加されたオブジェクト
    */
@@ -36,6 +36,7 @@ export class EditFeatureUseCase {
     const featureId = this._generateId(featureType);
 
     // 形状情報の検証とID割り当て
+    // processedGeometry は { vertexIds?, holesVertexIds?, parentId?, isMultiPolygon?, subPolygons? } を持つ
     const processedGeometry = this._processGeometry(geometry, world);
 
     // 適切なファクトリーメソッドを使用して地物オブジェクトを作成
@@ -45,10 +46,16 @@ export class EditFeatureUseCase {
         // Point.create は geometry.vertexId を期待するが、
         // processedGeometry は geometry.vertexIds (配列) を持つため、
         // 最初の要素を geometry.vertexId として渡す
+        if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length !== 1) {
+            throw new Error("Point geometry must have exactly one vertexId.");
+        }
         const pointGeometry = { ...processedGeometry, vertexId: processedGeometry.vertexIds[0] };
         feature = Point.create(featureId, properties, pointGeometry, layerId);
         break;
       case 'line':
+        if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 2) {
+            throw new Error("Line geometry must have at least two vertexIds.");
+        }
         feature = Line.create(featureId, properties, processedGeometry, layerId);
         break;
       case 'polygon':
@@ -72,7 +79,7 @@ export class EditFeatureUseCase {
   /**
    * 既存の地理オブジェクトを更新
    * @param {string} featureId - 更新するオブジェクトのID
-   * @param {Object} updates - 更新内容
+   * @param {Object} updates - 更新内容 { properties?: Property[], geometry?: Object, layerId?: string }
    * @returns {Promise<Feature>} 更新されたオブジェクト
    */
   async updateFeature(featureId, updates) {
@@ -89,9 +96,9 @@ export class EditFeatureUseCase {
     // 更新内容に応じてオブジェクトを変更
     if (updates.properties) {
         // properties は Property インスタンスの配列であることを期待
-        if (!Array.isArray(updates.properties) || !updates.properties.every(p => p.constructor.name === 'Property')) {
+        if (!Array.isArray(updates.properties) || !updates.properties.every(p => p instanceof Property)) {
            console.warn("updateFeature received 'properties' but it's not an array of Property instances. Attempting to proceed, but this might cause issues.", updates.properties);
-           // ここで変換処理を入れることも検討できるが、呼び出し元で正しく渡すのが基本
+           // TODO: 必要ならここでインスタンス化を試みる
         }
         // Null check for feature before calling withProperties
         if (feature && typeof feature.withProperties === 'function') {
@@ -103,6 +110,9 @@ export class EditFeatureUseCase {
     }
 
     if (updates.geometry) {
+      // geometry の処理: 頂点ID生成、穴ID生成、飛び地ID生成など
+      // _processGeometry は新しい頂点（座標）を処理する。既存IDの更新はここでは行わない。
+      // 既存IDの更新（穴追加など）は processedGeometry を調整して行う。
       const processedGeometry = this._processGeometry(updates.geometry, world);
 
       // Null check for feature before proceeding
@@ -115,46 +125,81 @@ export class EditFeatureUseCase {
       if (feature instanceof Polygon) {
         this._validatePolygonUpdate(processedGeometry, feature, world);
 
-        // 頂点IDsの更新
-        if (processedGeometry.vertexIds !== undefined) { // null や空配列も更新対象とするため undefined チェック
-          feature = feature.withVertexIds(processedGeometry.vertexIds);
+        // --- 飛び地追加処理 ---
+        if (processedGeometry.newSubPolygonVertices) {
+            // 新しい飛び地の頂点IDを生成 (processedGeometryは既にID割り当て済みの頂点を持つ)
+            if (!processedGeometry.newSubPolygonVertexIds || processedGeometry.newSubPolygonVertexIds.length < 3) {
+                 throw new Error("New enclave must have at least three vertices.");
+            }
+            const newSubPolygon = {
+                 vertexIds: processedGeometry.newSubPolygonVertexIds,
+                 holesVertexIds: [] // 新しい飛び地に穴はまだない
+            };
+            // 検証 (自己交差、他との重複など)
+            this._validateSubPolygon(newSubPolygon, feature, world);
+
+            // 既存の飛び地と結合
+            const existingSubPolygons = feature.subPolygons || [];
+            const updatedSubPolygons = [...existingSubPolygons, newSubPolygon];
+
+            // Polygon インスタンスを更新 (withMultiPolygonDataを使用)
+            feature = feature.withMultiPolygonData(true, updatedSubPolygons);
+        } else {
+            // --- 通常のジオメトリ更新 (穴、外周など) ---
+            // 頂点IDsの更新 (外周)
+            if (processedGeometry.vertexIds !== undefined) { // null や空配列も更新対象とするため undefined チェック
+              feature = feature.withVertexIds(processedGeometry.vertexIds);
+            }
+
+            // 穴の更新
+            if (processedGeometry.holesVertexIds) {
+              // 穴の検証もここで行うべき
+              processedGeometry.holesVertexIds.forEach(hole => this._validatePolygonHole(hole, feature, world));
+              feature = feature.withHolesVertexIds(processedGeometry.holesVertexIds);
+            }
+
+            // 親IDの更新
+            if (processedGeometry.parentId !== undefined) { // 0 や null も更新対象
+              feature = feature.withParentId(processedGeometry.parentId);
+            }
+
+            // 飛び地情報全体の更新 (isMultiPolygonフラグやsubPolygons配列自体の上書き)
+            if (processedGeometry.isMultiPolygon !== undefined) {
+              // 検証
+              (processedGeometry.subPolygons || []).forEach(sub => this._validateSubPolygon(sub, feature, world));
+              feature = feature.withMultiPolygonData(
+                processedGeometry.isMultiPolygon,
+                processedGeometry.subPolygons || []
+              );
+            }
         }
 
-        // 穴の更新
-        if (processedGeometry.holesVertexIds) {
-          feature = feature.withHolesVertexIds(processedGeometry.holesVertexIds);
-        }
-
-        // 親IDの更新
-        if (processedGeometry.parentId) {
-          feature = feature.withParentId(processedGeometry.parentId);
-        }
-
-        // 飛び地情報の更新
-        if (processedGeometry.isMultiPolygon !== undefined) {
-          feature = feature.withMultiPolygonData(
-            processedGeometry.isMultiPolygon,
-            processedGeometry.subPolygons || []
-          );
-        }
-      } else {
+      } else { // Point or Line
         // 点または線の頂点IDsの更新
-        if (processedGeometry.vertexIds) {
+        if (processedGeometry.vertexIds !== undefined) {
           // Null check for feature before calling withVertexIds
           if (feature && typeof feature.withVertexIds === 'function') {
+             if (feature instanceof Point && processedGeometry.vertexIds.length !== 1) {
+                 throw new Error("Point must have exactly one vertexId.");
+             }
+             if (feature instanceof Line && processedGeometry.vertexIds.length < 2) {
+                  throw new Error("Line must have at least two vertexIds.");
+             }
              feature = feature.withVertexIds(processedGeometry.vertexIds);
           } else {
              console.error(`Feature ${featureId} is invalid or missing withVertexIds method (Point/Line).`);
              throw new Error(`Invalid feature object for ID: ${featureId}`);
           }
-        } else if (processedGeometry.vertexId) { // Point用
-          if (feature && typeof feature.withVertexIds === 'function') {
-            feature = feature.withVertexIds([processedGeometry.vertexId]);
-          } else {
-            console.error(`Feature ${featureId} is invalid or missing withVertexIds method (Point).`);
-            throw new Error(`Invalid feature object for ID: ${featureId}`);
-          }
         }
+        // Point 用の vertexId 更新 (旧形式、基本は vertexIds を使うべき)
+        // else if (processedGeometry.vertexId && feature instanceof Point) {
+        //   if (feature && typeof feature.withVertexIds === 'function') {
+        //     feature = feature.withVertexIds([processedGeometry.vertexId]);
+        //   } else {
+        //     console.error(`Feature ${featureId} is invalid or missing withVertexIds method (Point).`);
+        //     throw new Error(`Invalid feature object for ID: ${featureId}`);
+        //   }
+        // }
       }
     }
 
@@ -164,8 +209,9 @@ export class EditFeatureUseCase {
         throw new Error(`Feature object invalid before layer ID update for ID: ${featureId}`);
     }
 
-    if (updates.layerId) {
+    if (updates.layerId !== undefined) {
       if (typeof feature.withLayerId === 'function') {
+         // TODO: レイヤー変更に伴う親子関係などの検証
          feature = feature.withLayerId(updates.layerId);
       } else {
          console.error(`Feature ${featureId} is invalid or missing withLayerId method.`);
@@ -196,7 +242,6 @@ export class EditFeatureUseCase {
       // すでに削除されている可能性もあるため、エラーではなく警告に留めるか、何もしない
       console.warn(`Feature not found with ID during deletion: ${featureId}`);
       return;
-      // throw new Error(`Feature not found with ID: ${featureId}`);
     }
 
     const feature = world.features[featureIndex];
@@ -219,9 +264,10 @@ export class EditFeatureUseCase {
 
     // ポリゴンの場合、依存関係をチェック
     if (feature instanceof Polygon) {
-      // 下位領域がある場合は削除不可
+      // 下位領域がある場合は削除不可 (要件確認: 削除して子も削除 or 削除不可)
+      // 現状は削除不可とする
       if (feature.hasChildren()) {
-        throw new Error('Cannot delete a polygon that has child polygons');
+        throw new Error('Cannot delete a polygon that has child polygons. Remove children first.');
       }
 
       // 親ポリゴンの子IDsリストから自身を削除
@@ -281,45 +327,30 @@ export class EditFeatureUseCase {
                 updatedFeatures.push(currentFeature); // 不明なものはそのまま保持
                 continue;
             }
-            //console.log(`${logPrefix} Processing as ${currentFeature.constructor.name}`); // ★ Log: Feature Type
 
             // 1. 外周 vertexIds の更新とチェック
             let newVertexIds = currentFeature.vertexIds; // 更新後の頂点IDリスト
             let vertexIdsUpdated = false;
             if (currentFeature.vertexIds && currentFeature.vertexIds.some(id => verticesToDeleteSet.has(id))) {
-                console.log(`${logPrefix} Original vertexIds:`, currentFeature.vertexIds); // ★ Log: Original vertexIds
                 newVertexIds = filterVertexIds(currentFeature.vertexIds);
-                console.log(`${logPrefix} New vertexIds after filter:`, newVertexIds); // ★ Log: New vertexIds
                 needsUpdate = true;
                 vertexIdsUpdated = true; // 外周が更新されたフラグ
 
                 // --- 形状維持チェック ---
-                if (currentFeature instanceof Line && newVertexIds.length < 2) {
-                    console.log(`${logPrefix} Line became < 2 vertices. Marking for deletion.`); // ★ Log: Deletion condition
+                if (currentFeature instanceof Point && newVertexIds.length === 0) {
+                    featureShouldBeDeleted = true;
+                } else if (currentFeature instanceof Line && newVertexIds.length < 2) {
                     featureShouldBeDeleted = true;
                 } else if (currentFeature instanceof Polygon && newVertexIds.length < 3) {
-                    console.log(`${logPrefix} Polygon outer ring became < 3 vertices.`); // ★ Log: Polygon vertex check
-                    //   Polygonインスタンスでない場合のエラーチェックは上で済んでいるはず
-                    //   単純ポリゴン(MultiPolygonでなく子もいない)なら削除
+                    // 本体が3点未満になっても、飛び地や子があれば地物は残る
                     const isSimpleOrChildless = !currentFeature.isMultiPolygon && !currentFeature.hasChildren();
-                    console.log(`${logPrefix} isMultiPolygon: ${currentFeature.isMultiPolygon}, hasChildren: ${currentFeature.hasChildren()}, SimpleOrChildless: ${isSimpleOrChildless}`); // ★ Log: Polygon state
                     if (isSimpleOrChildless) {
-                       console.log(`${logPrefix} Simple/Childless Polygon became < 3 vertices. Marking for deletion.`); // ★ Log: Deletion condition
-                       featureShouldBeDeleted = true;
+                       featureShouldBeDeleted = true; // 単純ポリゴンは削除
                     } else {
-                    //   MultiPolygon or 親ポリゴンの場合、外周がなくなっても地物は残る可能性がある
-                        console.log(`${logPrefix} Multi/Parent Polygon outer ring became < 3 vertices. Setting vertexIds to null.`); // ★ Log: Setting vertexIds to null
-                        // ▼▼▼ 前回の修正箇所 ▼▼▼
-                        try {
-                           currentFeature = currentFeature.withVertexIds(null); // null を設定
-                        } catch(e) {
-                           console.error(`${logPrefix} Error calling withVertexIds(null):`, e);
-                           featureShouldBeDeleted = true; // エラー時は削除扱いに
-                        }
-                        // ▲▲▲ 前回の修正箇所 ▲▲▲
+                       // MultiPolygon or 親ポリゴンの場合、外周がなくなってもOK
+                       // null を設定 (後続のインスタンス更新ステップで)
                     }
                 }
-                // 形状が維持される場合は、この後のインスタンス更新ステップで更新される
             }
 
             // 2. ポリゴンの穴と飛び地の更新 (地物が削除対象でない場合のみ)
@@ -329,16 +360,15 @@ export class EditFeatureUseCase {
             let polygonSpecificsUpdated = false;
 
             if (currentFeature instanceof Polygon && !featureShouldBeDeleted) {
-                const originalHolesStr = JSON.stringify(newHolesVertexIds); // 比較用
-                const originalSubPolygonsStr = JSON.stringify(newSubPolygons); // 比較用
+                const originalHolesStr = JSON.stringify(newHolesVertexIds);
+                const originalSubPolygonsStr = JSON.stringify(newSubPolygons);
 
                 // --- 穴の更新 ---
                 if (newHolesVertexIds.some(hole => hole.some(id => verticesToDeleteSet.has(id)))) {
                     const filteredHoles = newHolesVertexIds
-                        .map(hole => filterVertexIds(hole)) // 穴から頂点を削除
-                        .filter(hole => hole.length >= 3); // 3点未満の穴は削除
+                        .map(hole => filterVertexIds(hole))
+                        .filter(hole => hole.length >= 3);
                     if (JSON.stringify(filteredHoles) !== originalHolesStr) {
-                        console.log(`${logPrefix} Holes updated. Before: ${originalHolesStr}, After: ${JSON.stringify(filteredHoles)}`); // ★ Log: Holes changed
                         newHolesVertexIds = filteredHoles;
                         needsUpdate = true;
                         polygonSpecificsUpdated = true;
@@ -350,31 +380,37 @@ export class EditFeatureUseCase {
                      const filteredSubPolygons = newSubPolygons
                         .map(sub => ({
                             ...sub,
-                            vertexIds: filterVertexIds(sub.vertexIds) // 飛び地から頂点を削除
+                            vertexIds: filterVertexIds(sub.vertexIds)
                             // TODO: 飛び地の穴も更新
                         }))
-                        .filter(sub => sub.vertexIds && sub.vertexIds.length >= 3); // 3点未満の飛び地は削除
+                        .filter(sub => sub.vertexIds && sub.vertexIds.length >= 3);
                     if (JSON.stringify(filteredSubPolygons) !== originalSubPolygonsStr) {
-                        console.log(`${logPrefix} SubPolygons updated. Before: ${originalSubPolygonsStr}, After: ${JSON.stringify(filteredSubPolygons)}`); // ★ Log: SubPolygons changed
                         newSubPolygons = filteredSubPolygons;
                         needsUpdate = true;
                         polygonSpecificsUpdated = true;
                     }
                 }
 
-                // isMultiPolygon フラグの更新チェック
-                // 更新後の外周(newVertexIds)と飛び地(newSubPolygons)で判定
-                const mainBodyExistsAfterUpdate = vertexIdsUpdated ? (newVertexIds && newVertexIds.length >= 3) : (currentFeature.vertexIds && currentFeature.vertexIds.length >= 3);
+                // isMultiPolygon フラグと地物削除の最終チェック
+                const mainBodyExistsAfterUpdate = vertexIdsUpdated ? (newVertexIds && newVertexIds.length >= 3) : currentFeature.hasDirectGeometry();
                 const totalParts = (mainBodyExistsAfterUpdate ? 1 : 0) + newSubPolygons.length;
-                console.log(`${logPrefix} MultiPolygon check: mainBodyExists=${mainBodyExistsAfterUpdate}, subPolygonsCount=${newSubPolygons.length}, totalParts=${totalParts}`); // ★ Log: MultiPolygon Check
 
                 if (totalParts < 1) { // 本体も飛び地も全てなくなった場合
-                    console.log(`${logPrefix} All parts disappeared. Marking for deletion.`); // ★ Log: Deletion condition
-                    featureShouldBeDeleted = true;
-                } else {
+                    // 子がいれば削除しない（要件確認: 子がいても形状がなくなったら削除するべきか？）
+                    if (!currentFeature.hasChildren()) {
+                       featureShouldBeDeleted = true;
+                    } else {
+                        // 子がいる場合は形状がなくても地物自体は残す (頂点情報はnullになる)
+                        if (vertexIdsUpdated) {
+                            newVertexIds = null; // nullに設定
+                        }
+                        isMultiPolygon = false; // MultiPolygonではなくなる
+                        polygonSpecificsUpdated = true;
+                        needsUpdate = true;
+                    }
+                } else { // パーツが残る場合
                      const shouldBeMultiPolygon = totalParts >= 2;
                      if (isMultiPolygon !== shouldBeMultiPolygon) {
-                         console.log(`${logPrefix} isMultiPolygon changed from ${isMultiPolygon} to ${shouldBeMultiPolygon}`); // ★ Log: isMultiPolygon changed
                          isMultiPolygon = shouldBeMultiPolygon;
                          needsUpdate = true;
                          polygonSpecificsUpdated = true;
@@ -383,26 +419,20 @@ export class EditFeatureUseCase {
             }
 
             // 3. 地物インスタンスの更新 (必要な場合のみ)
-            let finalFeature = currentFeature; // 更新後のインスタンスを入れる変数
+            let finalFeature = currentFeature;
             if (!featureShouldBeDeleted && needsUpdate) {
-                 console.log(`${logPrefix} Needs update. Generating new instance...`); // ★ Log: Needs update
                  try {
                      if (currentFeature instanceof Point) {
-                         if (vertexIdsUpdated && newVertexIds.length === 1) {
-                             finalFeature = currentFeature.withVertexIds(newVertexIds);
-                         } else if (vertexIdsUpdated && newVertexIds.length === 0) {
-                             console.log(`${logPrefix} Point lost its vertex. Marking for deletion.`); // ★ Log: Point deletion
-                             featureShouldBeDeleted = true; // Pointは頂点がなくなったら削除
-                         }
+                         // Pointの削除条件は上でチェック済み
+                         finalFeature = currentFeature.withVertexIds(newVertexIds);
                      } else if (currentFeature instanceof Line) {
-                         if (vertexIdsUpdated) { // 線は外周更新のみ
-                             finalFeature = currentFeature.withVertexIds(newVertexIds);
-                         }
+                          // Lineの削除条件は上でチェック済み
+                         finalFeature = currentFeature.withVertexIds(newVertexIds);
                      } else if (currentFeature instanceof Polygon) {
                          let tempFeature = currentFeature;
                          if (vertexIdsUpdated) {
-                            // null も渡せるように修正済みのはず
-                            tempFeature = tempFeature.withVertexIds(newVertexIds.length > 0 ? newVertexIds : null);
+                            // 頂点配列がnullまたは空の場合でも更新できるように
+                            tempFeature = tempFeature.withVertexIds(newVertexIds);
                          }
                          if (polygonSpecificsUpdated) {
                              tempFeature = tempFeature.withHolesVertexIds(newHolesVertexIds)
@@ -411,26 +441,20 @@ export class EditFeatureUseCase {
                          finalFeature = tempFeature;
                      } else {
                          console.error(`${logPrefix} Cannot update feature: Unknown type or invalid instance state.`);
-                         finalFeature = currentFeature; // 不明な場合は元のまま（またはエラー）
+                         finalFeature = currentFeature;
                      }
-                     if (!featureShouldBeDeleted) { // featureShouldBeDeleted が true になった場合は更新しない
-                        updatedFeatureIds.add(finalFeature.id);
-                        console.log(`${logPrefix} Instance updated successfully.`); // ★ Log: Update success
-                     }
+                     updatedFeatureIds.add(finalFeature.id);
                  } catch (e) {
                       console.error(`${logPrefix} Error updating feature instance:`, e);
-                      featureShouldBeDeleted = true; // 不整合が起きる可能性があるので削除扱いにする
-                      console.log(`${logPrefix} Marked for deletion due to update error.`); // ★ Log: Deletion due to error
+                      featureShouldBeDeleted = true;
                  }
             } else if (!featureShouldBeDeleted) {
-                finalFeature = currentFeature; // 更新不要なら元のインスタンス
-                //console.log(`${logPrefix} No update needed.`); // ★ Log: No update needed (verbose)
+                finalFeature = currentFeature;
             }
 
             // 4. 最終結果の処理
             if (featureShouldBeDeleted) {
-                console.log(`${logPrefix} Final decision: DELETE.`); // ★ Log: Final DELETE
-                deletedFeatureIds.add(finalFeature.id); // 削除対象IDを追加
+                deletedFeatureIds.add(finalFeature.id);
                 if (finalFeature.parentId && finalFeature.parentId !== "0") {
                     if (!parentUpdatesNeeded.has(finalFeature.parentId)) {
                         parentUpdatesNeeded.set(finalFeature.parentId, []);
@@ -438,16 +462,12 @@ export class EditFeatureUseCase {
                     parentUpdatesNeeded.get(finalFeature.parentId).push(finalFeature.id);
                 }
             } else {
-                //console.log(`${logPrefix} Final decision: KEEP/UPDATE.`); // ★ Log: Final KEEP/UPDATE (verbose)
-                updatedFeatures.push(finalFeature); // 更新後または元のインスタンスをリストに追加
+                updatedFeatures.push(finalFeature);
             }
         } // End of loop
 
-        console.log(`[UseCase] Loop finished. Updated features count: ${updatedFeatures.length}, To delete: ${deletedFeatureIds.size}`); // ★ Log: Loop end stats
-
         // 5. 親ポリゴンの childIds 更新
         if (parentUpdatesNeeded.size > 0) {
-            console.log(`[UseCase] Updating parent childIds...`, parentUpdatesNeeded); // ★ Log: Parent update
             const featuresWithUpdatedParents = [];
             for(let feature of updatedFeatures) {
                 if (parentUpdatesNeeded.has(feature.id) && feature instanceof Polygon) {
@@ -458,7 +478,6 @@ export class EditFeatureUseCase {
                    });
                    featuresWithUpdatedParents.push(updatedParent);
                    updatedFeatureIds.add(updatedParent.id); // 親も更新された
-                   console.log(`[UseCase] Parent ${updatedParent.id} updated. Removed children:`, childrenToRemove); // ★ Log: Parent updated
                 } else {
                     featuresWithUpdatedParents.push(feature);
                 }
@@ -476,26 +495,8 @@ export class EditFeatureUseCase {
         console.log(`[UseCase] Physically deleted ${deletedVertexCount} vertices from world.vertices.`); // ★ Log: Vertex deletion count
 
 
-        // 7. 不要になった頂点をさらにクリーンアップ
-        const allRemainingVertexIds = new Set();
-        world.features.forEach(f => {
-            try {
-                f.vertexIds?.forEach(id => allRemainingVertexIds.add(id));
-                if (f instanceof Polygon) {
-                     f.holesVertexIds?.flat().forEach(id => allRemainingVertexIds.add(id));
-                     f.subPolygons?.forEach(sub => sub.vertexIds?.forEach(id => allRemainingVertexIds.add(id)));
-                }
-            } catch (e) {
-                 console.error(`[UseCase] Error accessing properties of feature ${f?.id} during cleanup check:`, e);
-            }
-        });
-        const verticesBeforeCleanup = world.vertices.length;
-        world.vertices = world.vertices.filter(v => allRemainingVertexIds.has(v.id));
-        const cleanedUpCount = verticesBeforeCleanup - world.vertices.length;
-        if (cleanedUpCount > 0) {
-            // このログメッセージは頂点削除後に必ず出るはず
-            console.log(`[UseCase] Cleaned up ${cleanedUpCount} additional unused vertices.`); // ★ Log: Cleanup count
-        }
+        // 7. 不要になった頂点をさらにクリーンアップ (変更なし)
+        this._cleanupUnusedVertices(world, []); // 全頂点をチェック
 
         // 8. 世界データを保存
         console.log(`[UseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`); // ★ Log: Saving world
@@ -552,9 +553,10 @@ export class EditFeatureUseCase {
     const affectedFeatures = world.features.filter(f => {
          // Check if feature is a valid object before accessing properties
          if (!f || typeof f !== 'object') return false;
+         const isPolygon = f instanceof Polygon || f.constructor?.name === 'Polygon';
          return (f.vertexIds && f.vertexIds.includes(vertexId)) ||
-                (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(vertexId))) ||
-                (f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds && sub.vertexIds.includes(vertexId)));
+                (isPolygon && f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(vertexId))) ||
+                (isPolygon && f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds && sub.vertexIds.includes(vertexId)));
      }).map(f => {
          // Return a serializable representation or a clone if needed,
          // as the original objects in world.features might be mutated later.
@@ -582,6 +584,7 @@ export class EditFeatureUseCase {
     const world = await this._worldRepository.getWorld();
     const updatedVertices = [];
     const allAffectedFeatureIds = new Set();
+    const updatedVerticesMap = new Map(); // 更新された頂点データの一時保存用
 
     // world.vertices を Map にして高速アクセス
     const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
@@ -606,23 +609,28 @@ export class EditFeatureUseCase {
       };
 
       // 更新されたデータを Map と配列で管理
-      verticesMap.set(vertexId, updatedVertexData);
-      updatedVertices.push(updatedVertexData);
-
-      // この頂点を使用する地物のIDを収集
-      world.features.forEach(f => {
-        if (!f || typeof f !== 'object') return;
-        const usesVertex = (f.vertexIds && f.vertexIds.includes(vertexId)) ||
-                           (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(vertexId))) ||
-                           (f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds?.includes(vertexId)));
-        if (usesVertex) {
-          allAffectedFeatureIds.add(f.id);
-        }
-      });
+      updatedVerticesMap.set(vertexId, updatedVertexData); // 更新データを一時保存
+      updatedVertices.push(updatedVertexData); // 返却用の配列に追加
     }
 
-    // world.vertices 配列を更新されたデータで再構築
-    world.vertices = Array.from(verticesMap.values());
+    // world.vertices 配列を更新されたデータで更新
+    // 注意: verticesMap は元のプレーンオブジェクトを含むので、updatedVerticesMapで上書きする
+    world.vertices = world.vertices.map(v => updatedVerticesMap.get(v.id) || v);
+
+
+    // 影響を受ける地物のIDを収集 (更新後の頂点を使用する地物)
+    world.features.forEach(f => {
+      if (!f || typeof f !== 'object') return;
+      const isPolygon = f instanceof Polygon || f.constructor?.name === 'Polygon';
+      const usesUpdatedVertex = vertexUpdates.some(update =>
+          (f.vertexIds && f.vertexIds.includes(update.vertexId)) ||
+          (isPolygon && f.holesVertexIds?.some(hole => hole.includes(update.vertexId))) ||
+          (isPolygon && f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds?.includes(update.vertexId)))
+      );
+      if (usesUpdatedVertex) {
+        allAffectedFeatureIds.add(f.id);
+      }
+    });
 
     // 影響を受けた地物リストを作成
     const affectedFeatures = world.features.filter(f => allAffectedFeatureIds.has(f.id));
@@ -679,7 +687,7 @@ export class EditFeatureUseCase {
       // Check if feature is a valid object and has expected methods
       const isValidFeature = feature && typeof feature === 'object';
       const hasWithVertexIds = isValidFeature && typeof feature.withVertexIds === 'function';
-      const isPolygon = isValidFeature && feature.constructor?.name === 'Polygon'; // Use constructor name as fallback
+      const isPolygon = isValidFeature && (feature instanceof Polygon || feature.constructor?.name === 'Polygon'); // Use constructor name as fallback
       const hasWithHolesVertexIds = isPolygon && typeof feature.withHolesVertexIds === 'function';
       const hasWithMultiPolygonData = isPolygon && typeof feature.withMultiPolygonData === 'function';
 
@@ -760,7 +768,7 @@ export class EditFeatureUseCase {
   /**
    * 共有頂点を解除
    * @param {string} vertexId - 共有を解除する頂点のID
-   * @param {string} featureId - このに対して新しい頂点を作成
+   * @param {string} featureId - この地物に対して新しい頂点を作成
    * @returns {Promise<Object>} 更新情報 { newVertex, updatedFeature }
    */
   async unlinkSharedVertex(vertexId, featureId) {
@@ -772,7 +780,7 @@ export class EditFeatureUseCase {
       throw new Error(`Vertex not found with ID: ${vertexId}`);
     }
 
-    // を検索
+    // 地物を検索
     const featureIndex = world.features.findIndex(f => f.id === featureId);
     if (featureIndex === -1) {
       throw new Error(`Feature not found with ID: ${featureId}`);
@@ -786,7 +794,7 @@ export class EditFeatureUseCase {
 
 
     // が指定された頂点を使用しているか確認 (穴と飛び地も)
-    const isPolygon = feature.constructor?.name === 'Polygon'; // Use constructor name as fallback
+    const isPolygon = feature instanceof Polygon || feature.constructor?.name === 'Polygon'; // Use constructor name as fallback
     const usesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) ||
                      (isPolygon && feature.holesVertexIds?.some(hole => hole.includes(vertexId))) ||
                      (isPolygon && feature.isMultiPolygon && feature.subPolygons?.some(sub => sub.vertexIds && sub.vertexIds.includes(vertexId)));
@@ -1142,37 +1150,28 @@ export class EditFeatureUseCase {
    * 形状情報の処理とID割り当て
    * @param {Object} geometry - 形状情報
    * @param {Object} world - 世界データ
-   * @returns {Object} 処理された形状情報
+   * @returns {Object} 処理された形状情報 (新しい頂点のIDを含む)
    * @private
    */
   _processGeometry(geometry, world) {
     // 既存頂点のコピー
     const processedGeometry = { ...geometry };
 
-    // 新しい頂点の場合はIDを割り当てて頂点リストに追加
+    // 新しい頂点 (vertices配列で渡されたもの) のID割り当てと追加
     if (geometry.vertices && Array.isArray(geometry.vertices)) {
-      processedGeometry.vertexIds = [];
-
+      processedGeometry.vertexIds = processedGeometry.vertexIds || []; // 既存IDがあればマージ
       for (const vertex of geometry.vertices) {
-          if(vertex.x === undefined || vertex.y === undefined) continue; // 不正な頂点データはスキップ
+          if(vertex.x === undefined || vertex.y === undefined) continue;
         const vertexId = this._generateId('vertex');
         processedGeometry.vertexIds.push(vertexId);
-
-        // 新しい頂点をワールドに追加
-        world.vertices.push({
-          id: vertexId,
-          x: vertex.x,
-          y: vertex.y
-        });
+        world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
       }
-       // 元の vertices 配列は不要なので削除 (vertexIds に置き換え)
-       delete processedGeometry.vertices;
+       delete processedGeometry.vertices; // 元の配列は削除
     }
 
-    // 穴についても同様の処理
+    // 新しい穴 (holes配列で渡されたもの) のID割り当てと追加
     if (geometry.holes && Array.isArray(geometry.holes)) {
-      processedGeometry.holesVertexIds = [];
-
+      processedGeometry.holesVertexIds = processedGeometry.holesVertexIds || [];
       for (const hole of geometry.holes) {
         if(!Array.isArray(hole)) continue;
         const holeIds = [];
@@ -1180,23 +1179,34 @@ export class EditFeatureUseCase {
             if(vertex.x === undefined || vertex.y === undefined) continue;
           const vertexId = this._generateId('vertex');
           holeIds.push(vertexId);
-
-          world.vertices.push({
-            id: vertexId,
-            x: vertex.x,
-            y: vertex.y
-          });
+          world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
         }
-        if(holeIds.length > 0) { // 有効な頂点がある穴のみ追加
+        if(holeIds.length >= 3) { // 3点以上で有効な穴
            processedGeometry.holesVertexIds.push(holeIds);
         }
       }
-      // 元の holes 配列は不要なので削除
-      delete processedGeometry.holes;
+      delete processedGeometry.holes; // 元の配列は削除
     }
 
-    // 飛び地の処理 (頂点ID割り当て)
-    if(geometry.subPolygons && Array.isArray(geometry.subPolygons)) {
+    // 新しい飛び地 (geometry.newSubPolygonVertices) のID割り当て
+    // 注意: geometry.subPolygons は既存の飛び地情報の上書き用であり、新規追加用ではない
+    if (geometry.newSubPolygonVertices && Array.isArray(geometry.newSubPolygonVertices)) {
+        const newSubPolygonVertexIds = [];
+        for (const vertex of geometry.newSubPolygonVertices) {
+             if(vertex.x === undefined || vertex.y === undefined) continue;
+             const vertexId = this._generateId('vertex');
+             newSubPolygonVertexIds.push(vertexId);
+             world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
+        }
+        if (newSubPolygonVertexIds.length >= 3) {
+            // 処理結果にID配列を追加 (updateFeature内で利用される)
+            processedGeometry.newSubPolygonVertexIds = newSubPolygonVertexIds;
+        }
+        // 元の newSubPolygonVertices は削除しない（updateFeatureで使うため）
+    }
+
+    // 既存の飛び地情報 (subPolygons) の頂点ID割り当て (新規追加時のみ)
+    if(geometry.subPolygons && Array.isArray(geometry.subPolygons) && !geometry.newSubPolygonVertices) {
         processedGeometry.subPolygons = geometry.subPolygons.map(sub => {
             if (!sub.vertices || !Array.isArray(sub.vertices)) return sub; // verticesがない場合はそのまま
 
@@ -1219,17 +1229,36 @@ export class EditFeatureUseCase {
 
   /**
    * ポリゴンの追加検証
-   * @param {Object} geometry - 形状情報
+   * @param {Object} geometry - 形状情報 { vertexIds?, holesVertexIds?, parentId?, isMultiPolygon?, subPolygons? }
    * @param {string} layerId - レイヤーID
    * @param {Object} world - 世界データ
    * @private
    */
   _validatePolygonAddition(geometry, layerId, world) {
     // TODO: 同一レイヤー内のポリゴンとの排他性チェック
-    // ...
+    // this._layerService.checkExclusivity(newPolygon, layerPolygons, world.vertices, this._geometryService);
 
     // TODO: 親ポリゴンとの関係チェック (指定されたparentIdが存在し、正しい階層にあるか)
-    // ...
+    // this._layerService.validatePolygonHierarchy(newPolygon, world.features, world.layers);
+
+    // 自己交差チェック
+    if (geometry.vertexIds && this._geometryService.isPolygonSelfIntersecting(this._getVerticesFromIds(geometry.vertexIds, world))) {
+         throw new Error("Polygon cannot self-intersect.");
+    }
+    // 穴の自己交差チェック
+    geometry.holesVertexIds?.forEach(holeIds => {
+        if (this._geometryService.isPolygonSelfIntersecting(this._getVerticesFromIds(holeIds, world))) {
+            throw new Error("Polygon hole cannot self-intersect.");
+        }
+    });
+    // 飛び地の自己交差チェック
+    geometry.subPolygons?.forEach(sub => {
+         if (sub.vertexIds && this._geometryService.isPolygonSelfIntersecting(this._getVerticesFromIds(sub.vertexIds, world))) {
+             throw new Error("Sub-polygon cannot self-intersect.");
+         }
+         // TODO: 飛び地の穴のチェック
+    });
+
   }
 
   /**
@@ -1240,14 +1269,32 @@ export class EditFeatureUseCase {
    * @private
    */
   _validatePolygonUpdate(geometry, polygon, world) {
-    // TODO: 同一レイヤー内のポリゴンとの排他性チェック
+    // TODO: 同一レイヤー内のポリゴンとの排他性チェック (更新後の形状で)
     // ...
 
-    // TODO: 親ポリゴンとの関係チェック
+    // TODO: 親ポリゴンとの関係チェック (更新後の形状で)
     // ...
 
     // TODO: 子ポリゴンとの関係チェック (子が内部に含まれなくなるような変更はNG)
     // ...
+
+    // 自己交差チェック (形状が変更される場合)
+    if (geometry.vertexIds && this._geometryService.isPolygonSelfIntersecting(this._getVerticesFromIds(geometry.vertexIds, world))) {
+         throw new Error("Updated polygon cannot self-intersect.");
+    }
+    // 穴の自己交差チェック
+    geometry.holesVertexIds?.forEach(holeIds => {
+        if (this._geometryService.isPolygonSelfIntersecting(this._getVerticesFromIds(holeIds, world))) {
+            throw new Error("Updated polygon hole cannot self-intersect.");
+        }
+    });
+     // 飛び地の自己交差チェック
+    geometry.subPolygons?.forEach(sub => {
+         if (sub.vertexIds && this._geometryService.isPolygonSelfIntersecting(this._getVerticesFromIds(sub.vertexIds, world))) {
+             throw new Error("Updated sub-polygon cannot self-intersect.");
+         }
+         // TODO: 飛び地の穴のチェック
+    });
   }
 
   /**
@@ -1259,16 +1306,65 @@ export class EditFeatureUseCase {
    */
   _validatePolygonHole(holeVertexIds, polygon, world) {
     // 穴が少なくとも3つの頂点を持つことを確認
-    if (holeVertexIds.length < 3) {
+    if (!holeVertexIds || holeVertexIds.length < 3) {
       throw new Error('Polygon hole must have at least three vertices');
     }
 
-    // TODO: 穴がポリゴン内部に完全に含まれることを確認
-    // ...
+    const holeVertices = this._getVerticesFromIds(holeVertexIds, world);
+    if (holeVertices.length !== holeVertexIds.length) {
+         throw new Error("Invalid vertex ID found in hole definition.");
+    }
 
-    // TODO: 穴が他の穴と交差しないことを確認
+    // 自己交差チェック
+    if (this._geometryService.isPolygonSelfIntersecting(holeVertices)) {
+        throw new Error("Polygon hole cannot self-intersect.");
+    }
+
+    // TODO: 穴がポリゴン内部に完全に含まれることを確認
+    // const polygonVertices = this._getVerticesFromIds(polygon.vertexIds, world);
+    // if (!holeVertices.every(hv => this._geometryService.isPointInPolygon(hv, polygonVertices))) {
+    //      throw new Error("Hole must be completely inside the polygon outer boundary.");
+    // }
+
+    // TODO: 穴が他の穴と交差しないこと、または内部に含まれないことを確認
     // ...
   }
+
+  /**
+   * 飛び地のバリデーション (新規追加時)
+   * @param {Object} subPolygon - 飛び地情報 { vertexIds, holesVertexIds }
+   * @param {Polygon} parentPolygon - 親ポリゴン
+   * @param {Object} world - 世界データ
+   * @private
+   */
+   _validateSubPolygon(subPolygon, parentPolygon, world) {
+    if (!subPolygon || !subPolygon.vertexIds || subPolygon.vertexIds.length < 3) {
+        throw new Error('Sub-polygon must have at least three vertices');
+    }
+    const subVertices = this._getVerticesFromIds(subPolygon.vertexIds, world);
+    if (subVertices.length !== subPolygon.vertexIds.length) {
+        throw new Error("Invalid vertex ID found in sub-polygon definition.");
+    }
+
+    // 自己交差チェック
+    if (this._geometryService.isPolygonSelfIntersecting(subVertices)) {
+        throw new Error("Sub-polygon cannot self-intersect.");
+    }
+
+    // TODO: 飛び地が親ポリゴンの外周や他の飛び地、他の穴と重ならないことを確認
+    // ...
+
+    // TODO: 飛び地が同じレイヤーの他のポリゴンと重ならないことを確認
+    // ...
+
+    // 飛び地内の穴の検証
+    if (subPolygon.holesVertexIds) {
+         subPolygon.holesVertexIds.forEach(holeIds => {
+             // this._validatePolygonHole(holeIds, ???, world); // 穴の所属をどう扱うか？
+             // 穴が飛び地内部に含まれるかのチェックが必要
+         });
+    }
+   }
 
   /**
    * 頂点移動時の衝突処理
@@ -1294,7 +1390,10 @@ export class EditFeatureUseCase {
     }
 
     // TODO: 各ポリゴンについて衝突判定とエッジ滑り処理
-    // ...
+    // - 移動後の頂点を含むポリゴンの形状を仮計算
+    // - 同一レイヤーの他のポリゴンとの衝突判定 (doPolygonsOverlap)
+    // - 衝突する場合、移動ベクトルと衝突エッジから最近接点を計算 (projectPointToEdge)
+    // - 穴や自己交差のチェックも必要
 
     // 本来ならここで衝突判定とエッジ滑り処理を実装するが、簡易的な処理として
     // 新しい位置をそのまま返す
@@ -1304,36 +1403,30 @@ export class EditFeatureUseCase {
   /**
    * 使用されていない頂点のクリーンアップ
    * @param {Object} world - 世界データ
-   * @param {string[]} vertexIds - チェックする頂点IDの配列
+   * @param {string[]} vertexIdsToCheck - チェック対象の頂点ID (指定がなければ全地物をチェック)
    * @private
    */
-  _cleanupUnusedVertices(world, vertexIds) {
-      if (!vertexIds || vertexIds.length === 0) return;
+  _cleanupUnusedVertices(world, vertexIdsToCheck = []) {
+      const allUsedVertexIds = new Set();
+      world.features.forEach(f => {
+           if (!f || typeof f !== 'object') return;
+           const isPolygon = f instanceof Polygon || f.constructor?.name === 'Polygon';
+           if (f.vertexIds) f.vertexIds.forEach(id => allUsedVertexIds.add(id));
+           if (isPolygon && f.holesVertexIds) {
+               f.holesVertexIds.flat().forEach(id => allUsedVertexIds.add(id));
+           }
+           if (isPolygon && f.isMultiPolygon && f.subPolygons) {
+               f.subPolygons.forEach(sub => sub.vertexIds?.forEach(id => allUsedVertexIds.add(id)));
+               // TODO: 飛び地の穴
+           }
+       });
 
-      const verticesToRemove = new Set();
-      const vertexIdsToCheck = new Set(vertexIds); // チェック対象の頂点
+      const originalVertexCount = world.vertices.length;
+      world.vertices = world.vertices.filter(v => allUsedVertexIds.has(v.id));
+      const removedCount = originalVertexCount - world.vertices.length;
 
-      for (const vertexId of vertexIdsToCheck) {
-          // この頂点を使用する他の地物が存在するかチェック
-          const isUsed = world.features.some(f => {
-               // Check if f is a valid object before accessing properties
-               if (!f || typeof f !== 'object') return false;
-               const isPolygon = f.constructor?.name === 'Polygon'; // Use constructor name as fallback
-               return (f.vertexIds && f.vertexIds.includes(vertexId)) ||
-                      (isPolygon && f.holesVertexIds?.some(hole => hole.includes(vertexId))) ||
-                      (isPolygon && f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds && sub.vertexIds.includes(vertexId)));
-           });
-
-
-          if (!isUsed) {
-              verticesToRemove.add(vertexId);
-          }
-      }
-
-      if (verticesToRemove.size > 0) {
-          world.vertices = world.vertices.filter(v => !verticesToRemove.has(v.id));
-          // ★★★ このログは deleteVertices 内のログと重複する可能性がある
-          console.log(`[UseCase] Cleaned up ${verticesToRemove.size} unused vertices (via _cleanupUnusedVertices).`);
+      if (removedCount > 0) {
+          console.log(`[UseCase] Cleaned up ${removedCount} unused vertices (via _cleanupUnusedVertices).`);
       }
   }
 
@@ -1363,4 +1456,17 @@ export class EditFeatureUseCase {
 
     return timestamp1 < timestamp2 ? id1 : id2;
   }
+
+  /**
+   * 頂点ID配列から頂点オブジェクト配列を取得するヘルパー
+   * @param {string[]} vertexIds
+   * @param {Object} world
+   * @returns {Vertex[]}
+   * @private
+   */
+   _getVerticesFromIds(vertexIds, world) {
+    if (!vertexIds || !world || !world.vertices) return [];
+    const vertexMap = new Map(world.vertices.map(v => [v.id, v]));
+    return vertexIds.map(id => vertexMap.get(id)).filter(Boolean);
+   }
 }

@@ -230,7 +230,8 @@ _svgToWorld(svgPoint) {
          }
         break;
       case 'addingPoints':
-      case 'addingHoleTarget': // 穴追加対象変更時も再描画
+      case 'addingHoleTarget': // 穴/飛び地追加対象変更時も再描画
+      case 'addingSubMode': // サブモード変更時も再描画
       case 'temporaryElements': // 汎用一時要素の変更
       case 'draggingVertices': // ドラッグ中の頂点変更
         this._render();
@@ -289,7 +290,7 @@ _svgToWorld(svgPoint) {
     this._clearSelectionHighlights();
     this._renderSelection(); // 修正: 選択状態の描画
 
-    // 3. 地物追加/穴追加プレビュー
+    // 3. 地物追加/穴/飛び地追加プレビュー
     this._renderAddingFeature();
 
     // 4. ドラッグ中のプレビュー (Rendererを使う)
@@ -386,7 +387,16 @@ _svgToWorld(svgPoint) {
                         }
                     });
                 }
-                // TODO: 穴のハイライト (ドラッグ対応)
+                // 穴のハイライト (ドラッグ対応)
+                if (feature.holesVertexIds) {
+                    feature.holesVertexIds.forEach(holeIds => {
+                        const holeVertices = holeIds.map(id => getVertexPos(id)).filter(Boolean);
+                        if (holeVertices.length >= 3) {
+                            const holeElem = this._renderer.drawLine([...holeVertices, holeVertices[0]], style, viewport);
+                            if (holeElem) this._selectionElements.push(holeElem);
+                        }
+                    });
+                }
             }
         }
     }
@@ -420,7 +430,16 @@ _svgToWorld(svgPoint) {
                         }
                     });
                  }
-                 // TODO: 穴のハイライト (ドラッグ対応)
+                 // 穴のハイライト (ドラッグ対応)
+                 if (feature.holesVertexIds) {
+                    feature.holesVertexIds.forEach(holeIds => {
+                        const holeVertices = holeIds.map(id => getVertexPos(id)).filter(Boolean);
+                        if (holeVertices.length >= 3) {
+                            const holeElem = this._renderer.drawLine([...holeVertices, holeVertices[0]], style, viewport);
+                            if (holeElem) this._selectionElements.push(holeElem);
+                        }
+                    });
+                 }
             }
         }
     }
@@ -523,7 +542,7 @@ _svgToWorld(svgPoint) {
 
 
   /**
-   * 追加中の地物または穴の描画
+   * 追加中の地物または穴/飛び地の描画
    * @private
    */
   _renderAddingFeature() {
@@ -532,6 +551,7 @@ _svgToWorld(svgPoint) {
 
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
+    const subMode = this._editingViewModel.getAddingSubMode(); // サブモード取得
 
     // 'add' モードまたは 'edit' モードの 'add-hole' ツールの場合のみ描画
     if (!((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole'))) {
@@ -543,17 +563,24 @@ _svgToWorld(svgPoint) {
 
     const viewport = this._viewportManager.getViewport();
     let tempElements = []; // この描画で作成した一時要素
-    const isAddingHole = tool === 'add-hole';
 
     // スタイル設定
     const pointStyle = { fill: '#ffffff', radius: 4, stroke: '#000000', strokeWidth: 1 };
-    const lineStyle = isAddingHole
-        ? { stroke: '#ff00ff', strokeWidth: 3, strokeDasharray: '5,5' } // 穴追加時の線スタイル
-        : tool === 'line'
-            ? { stroke: '#0000ff', strokeWidth: 3, strokeDasharray: '5,5' } // 線追加時の線スタイル
+    let lineStyle = {};
+    if (mode === 'add') {
+        lineStyle = tool === 'line'
+            ? { stroke: '#0000ff', strokeWidth: 3, strokeDasharray: '5,5' } // 線追加時
             : tool === 'polygon'
-                ? { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' } // 面追加時の線スタイル
+                ? { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' } // 面追加時
                 : {}; // 点追加時は線なし
+    } else if (mode === 'edit' && tool === 'add-hole') {
+        lineStyle = subMode === 'hole'
+            ? { stroke: '#ff00ff', strokeWidth: 3, strokeDasharray: '5,5' } // 穴追加時
+            : subMode === 'enclave'
+                ? { stroke: '#ff8800', strokeWidth: 3, strokeDasharray: '5,5' } // 飛び地追加時
+                : {}; // サブモード未定時
+    }
+
 
     // ツールタイプに応じた描画
     if (tool === 'point') {
@@ -563,14 +590,17 @@ _svgToWorld(svgPoint) {
             if (elem) tempElements.push(elem);
         }
     } else if (tool === 'line' || tool === 'polygon' || tool === 'add-hole') {
-        // 線またはポリゴン（穴）のプレビュー線を描画
+        // 線またはポリゴン（穴/飛び地）のプレビュー線を描画
         if (addingPoints.length >= 2) {
-            // ポリゴンまたは穴の場合は閉じる線も描画 (3点以上の場合)
-            const pointsToDraw = (tool === 'polygon' || tool === 'add-hole') && addingPoints.length >= 3
+            // ポリゴンまたは穴/飛び地の場合は閉じる線も描画 (3点以上の場合)
+            const isClosedShape = tool === 'polygon' || tool === 'add-hole';
+            const pointsToDraw = isClosedShape && addingPoints.length >= 3
                 ? [...addingPoints, addingPoints[0]]
                 : addingPoints;
-            const elem = this._renderer.drawLine(pointsToDraw, lineStyle, viewport);
-            if (elem) tempElements.push(elem);
+            if (Object.keys(lineStyle).length > 0) { // スタイルが定義されていれば描画
+                 const elem = this._renderer.drawLine(pointsToDraw, lineStyle, viewport);
+                 if (elem) tempElements.push(elem);
+            }
         }
     }
 
@@ -721,21 +751,85 @@ _onMouseDown(event) {
 
     case 'edit':
       if (tool === 'add-hole') {
-        // 穴追加モードの処理... (変更なし)
-        if (!this._editingViewModel.getTargetPolygonIdForHole()) {
-             const clickedFeature = this._findClosestFeature(worldPoint);
-             if (clickedFeature instanceof DomainPolygon) {
-                 this._editingViewModel.startAddingHole(clickedFeature.id);
-                 this._viewModel.selectFeature(clickedFeature.id);
-                 console.log(`Hole adding started for polygon: ${clickedFeature.id}`);
-             } else {
-                 alert("穴を追加するポリゴンを選択してください。");
-             }
-        } else {
-             this._handleAddPoint(worldPoint);
+        // 穴/飛び地追加モードの処理
+        const targetPolygon = this._editingViewModel.getTargetPolygon(); // 対象ポリゴンインスタンスを取得
+        const currentSubMode = this._editingViewModel.getAddingSubMode();
+
+        if (!targetPolygon) { // 1. 対象ポリゴン選択フェーズ
+          const clickedFeature = this._findClosestFeature(worldPoint);
+          if (clickedFeature instanceof DomainPolygon) {
+            this._editingViewModel.startAddingHoleOrEnclave(clickedFeature); // インスタンスを渡す
+            this._viewModel.selectFeature(clickedFeature.id); // 対象をハイライト
+            console.log(`Hole/Enclave adding started for polygon: ${clickedFeature.id}. Click inside or outside.`);
+          } else {
+            alert("穴または飛び地を追加するポリゴンを選択してください。");
+          }
+        } else if (currentSubMode === null) { // 2. サブモード決定フェーズ (最初の頂点クリック)
+            const world = this._viewModel.getWorld();
+            if (!world || !world.vertices) return;
+            const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+
+            // 他ポリゴン情報取得 (ViewModel経由が望ましいが、直接worldから取得)
+            const otherPolygonsInLayer = world.features.filter(f =>
+                f.id !== targetPolygon.id &&
+                f.layerId === targetPolygon.layerId &&
+                f instanceof DomainPolygon
+            );
+
+            const isInside = this._isPointInsidePolygon(worldPoint, targetPolygon, verticesMap);
+            const isOnBoundary = this._isPointNearPolygonBoundary(worldPoint, targetPolygon, verticesMap);
+            const isInOtherPolygon = otherPolygonsInLayer.some(otherPoly => this._isPointInsidePolygon(worldPoint, otherPoly, verticesMap));
+            const isOnOtherBoundary = otherPolygonsInLayer.some(otherPoly => this._isPointNearPolygonBoundary(worldPoint, otherPoly, verticesMap));
+
+
+            if (isOnBoundary || isOnOtherBoundary) {
+                 console.warn("Cannot start on boundary.");
+                 // クリック無効
+            } else if (isInside) { // 内部クリック -> 穴作成モードへ
+                if (isInOtherPolygon) { // 他のポリゴンの中はNG
+                    console.warn("Cannot start hole inside another polygon.");
+                } else {
+                    this._editingViewModel.setAddingSubMode('hole');
+                    this._handleAddPoint(worldPoint); // 最初の点を追加
+                }
+            } else { // 外部クリック -> 飛び地作成モードへ
+                 if (isInOtherPolygon) { // 他のポリゴンの中はNG
+                     console.warn("Cannot start enclave inside another polygon.");
+                 } else {
+                     this._editingViewModel.setAddingSubMode('enclave');
+                     this._handleAddPoint(worldPoint); // 最初の点を追加
+                 }
+            }
+        } else { // 3. 頂点追加フェーズ (2点目以降)
+            const world = this._viewModel.getWorld();
+            if (!world || !world.vertices) return;
+            const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+            const otherPolygonsInLayer = world.features.filter(f =>
+                f.id !== targetPolygon.id &&
+                f.layerId === targetPolygon.layerId &&
+                f instanceof DomainPolygon
+            );
+
+            const isInsideTarget = this._isPointInsidePolygon(worldPoint, targetPolygon, verticesMap);
+            const isOnTargetBoundary = this._isPointNearPolygonBoundary(worldPoint, targetPolygon, verticesMap);
+            const isInOtherPolygon = otherPolygonsInLayer.some(otherPoly => this._isPointInsidePolygon(worldPoint, otherPoly, verticesMap));
+            const isOnOtherBoundary = otherPolygonsInLayer.some(otherPoly => this._isPointNearPolygonBoundary(worldPoint, otherPoly, verticesMap));
+
+            let isValidClick = false;
+            if (currentSubMode === 'hole') {
+                isValidClick = isInsideTarget && !isInOtherPolygon && !isOnTargetBoundary;
+            } else if (currentSubMode === 'enclave') {
+                isValidClick = !isInsideTarget && !isInOtherPolygon && !isOnTargetBoundary && !isOnOtherBoundary;
+            }
+
+            if (isValidClick) {
+                this._handleAddPoint(worldPoint); // 有効な場合のみ点を追加
+            } else {
+                 console.warn("Invalid click location for current subMode:", currentSubMode);
+                 // クリック無効
+            }
         }
-      } else {
-        // 通常の編集モード (選択/移動など)
+      } else { // 通常の編集モード (選択/移動など)
         const clickedVertex = this._findClosestVertex(worldPoint);
         const currentlySelectedVertexIds = this._viewModel.getSelectedVertexIds();
 
@@ -954,15 +1048,12 @@ _onWheel(event) {
 
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
+    const subMode = this._editingViewModel.getAddingSubMode();
 
-    if (mode === 'add' && tool) {
-      // 地物追加モードでのダブルクリックは確定処理
+    // 地物追加中または穴/飛び地追加中のダブルクリックは確定扱い
+    if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole' && subMode)) {
        this._handleAddPoint(worldPoint); // 最後の点を追加
        this._handleConfirmClick(); // 確定処理
-    } else if (mode === 'edit' && tool === 'add-hole') {
-        // 穴追加モードでのダブルクリックも確定処理
-        this._handleAddPoint(worldPoint); // 最後の点を追加
-        this._handleConfirmClick(); // 確定処理 (内部で confirmAddHole を呼ぶ)
     } else if (mode === 'view') {
       // 通常のダブルクリック（ビューポートリセット）
       console.log('ダブルクリック - World:', worldPoint.x, worldPoint.y);
@@ -997,10 +1088,10 @@ _onWheel(event) {
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
 
-    if (mode === 'add' || tool === 'add-hole') {
-        // 地物追加中または穴追加中の右クリックはキャンセル扱い
+    if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
+        // 地物追加中または穴/飛び地追加中の右クリックはキャンセル扱い
         this._handleCancelClick();
-        console.log("Add/Hole operation cancelled by right-click.");
+        console.log("Add/Hole/Enclave operation cancelled by right-click.");
     } else if (mode === 'edit') {
          // 編集モードでの右クリック: コンテキストメニュー
          this._selectObjectAt(worldPoint); // 右クリック位置のオブジェクトを選択
@@ -1049,17 +1140,42 @@ _onWheel(event) {
           this._handleAddPoint(worldPoint);
       } else if (mode === 'edit') {
            if (tool === 'add-hole') {
-                // 穴追加モードの処理... (変更なし)
-               if (!this._editingViewModel.getTargetPolygonIdForHole()) {
-                    const clickedFeature = this._findClosestFeature(worldPoint);
-                    if (clickedFeature instanceof DomainPolygon) {
-                        this._editingViewModel.startAddingHole(clickedFeature.id);
-                        this._viewModel.selectFeature(clickedFeature.id);
-                    } else { /* alertなど */ }
+                // 穴/飛び地追加モードの処理 (onMouseDownと同様)
+               const targetPolygon = this._editingViewModel.getTargetPolygon();
+               const currentSubMode = this._editingViewModel.getAddingSubMode();
+
+               if (!targetPolygon) {
+                   const clickedFeature = this._findClosestFeature(worldPoint);
+                   if (clickedFeature instanceof DomainPolygon) {
+                       this._editingViewModel.startAddingHoleOrEnclave(clickedFeature);
+                       this._viewModel.selectFeature(clickedFeature.id);
+                   } else { /* alertなど */ }
+               } else if (currentSubMode === null) {
+                    // 最初のクリックでサブモード決定
+                    // (onMouseDown と同様の検証ロジック)
+                     const world = this._viewModel.getWorld();
+                     if (!world || !world.vertices) return;
+                     const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+                     const isInside = this._isPointInsidePolygon(worldPoint, targetPolygon, verticesMap);
+                     const isOnBoundary = this._isPointNearPolygonBoundary(worldPoint, targetPolygon, verticesMap);
+                     // 他ポリゴンチェックも必要
+                     if (!isOnBoundary /* && !isInOtherPolygon && !isOnOtherBoundary */) {
+                        if (isInside) {
+                             this._editingViewModel.setAddingSubMode('hole');
+                             this._handleAddPoint(worldPoint);
+                        } else {
+                             this._editingViewModel.setAddingSubMode('enclave');
+                             this._handleAddPoint(worldPoint);
+                        }
+                     }
                } else {
-                    this._handleAddPoint(worldPoint);
+                   // 2点目以降の追加
+                    // (onMouseDown と同様の検証ロジック)
+                    // ...
+                     let isValidClick = false; // 仮
+                     if (isValidClick) this._handleAddPoint(worldPoint);
                }
-           } else {
+           } else { // 通常の編集モード
                const clickedVertex = this._findClosestVertex(worldPoint);
                if (clickedVertex) {
                    // タッチでは常に単一選択 -> ドラッグ開始
@@ -1203,6 +1319,7 @@ _onWheel(event) {
 
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
+    const subMode = this._editingViewModel.getAddingSubMode();
 
     if (event.key === 'Escape') {
        event.preventDefault();
@@ -1213,8 +1330,8 @@ _onWheel(event) {
        }
        // 他のキャンセル処理
        else if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
-         this._handleCancelClick(); // 追加/穴追加キャンセル
-         console.log("Add/Hole operation cancelled by ESC.");
+         this._handleCancelClick(); // 追加/穴/飛び地追加キャンセル
+         console.log("Add/Hole/Enclave operation cancelled by ESC.");
        } else if (mode === 'edit' && (this._viewModel.getSelectedFeatureId() || this._viewModel.getSelectedVertexIds().size > 0)) { // 修正: 選択状態のチェック
          this._viewModel.clearSelection();
          console.log("Selection cleared by ESC.");
@@ -1227,35 +1344,29 @@ _onWheel(event) {
          console.log("Mode set to 'view' by ESC.");
        }
     } else if (event.key === 'Enter') {
-        // 地物追加中 または 穴追加中のEnterキーで確定
-        if (((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) && this._editingViewModel.getAddingPoints().length > 0) {
+        // 地物追加中 または 穴/飛び地追加中のEnterキーで確定
+        if (((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole' && subMode)) && this._editingViewModel.getAddingPoints().length > 0) {
             event.preventDefault();
             this._handleConfirmClick();
-            console.log("Add/Hole operation confirmed by Enter.");
+            console.log("Add/Hole/Enclave operation confirmed by Enter.");
         }
     } else if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) {
        event.preventDefault();
       const selectedVertexIds = this._viewModel.getSelectedVertexIds(); // 修正: 頂点IDのSetを取得
       const selectedFeatureId = this._viewModel.getSelectedFeatureId(); // 修正: 地物IDを取得
 
-      // ★★★ ログ追加 ▼▼▼
       console.log(`[MapView._onKeyDown Delete] Mode: ${mode}`);
       console.log(`[MapView._onKeyDown Delete] Selected Vertex IDs (before check):`, Array.from(selectedVertexIds));
       console.log(`[MapView._onKeyDown Delete] Selected Feature ID (before check):`, selectedFeatureId);
-      // ★★★ ログ追加 ▲▲▲
 
       if (mode === 'edit') {
           if (selectedVertexIds.size > 0) { // 修正: Setのsizeで判定
-              // ★★★ ログ追加 ▼▼▼
               console.log(`[MapView._onKeyDown Delete] Condition TRUE: selectedVertexIds.size > 0`);
-              // ★★★ ログ追加 ▲▲▲
               const vertexIdsToDelete = Array.from(selectedVertexIds); // 修正: Setから配列へ
               console.log("Deleting selected vertices:", vertexIdsToDelete);
               this._editingViewModel.deleteVertices(vertexIdsToDelete);
           } else if (selectedFeatureId) { // 修正: IDで判定
-              // ★★★ ログ追加 ▼▼▼
               console.log(`[MapView._onKeyDown Delete] Condition FALSE: selectedVertexIds.size === 0, selectedFeatureId exists.`);
-              // ★★★ ログ追加 ▲▲▲
               console.log(`[MapView] No vertices selected, deleting feature: ${selectedFeatureId}`);
               // アンドゥ用に削除前の地物データを取得する必要がある
               const featureToDelete = this._viewModel.getWorld()?.features.find(f => f.id === selectedFeatureId);
@@ -1265,9 +1376,7 @@ _onWheel(event) {
                    console.error(`[MapView] Feature with ID ${selectedFeatureId} not found for deletion.`);
               }
           } else {
-               // ★★★ ログ追加 ▼▼▼
                console.log(`[MapView._onKeyDown Delete] Condition FALSE: selectedVertexIds.size === 0, selectedFeatureId is NULL.`);
-               // ★★★ ログ追加 ▲▲▲
                console.log("[MapView] Delete key pressed, but nothing selected.");
           }
       }
@@ -1369,23 +1478,22 @@ _onWheel(event) {
 
       let closestFeature = null;
       let minDistanceSq = this._clickToleranceSq;
+      const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
 
       for (const feature of features) {
-           // Ensure feature is a valid object before proceeding
            if (!feature || typeof feature !== 'object') {
-               // console.warn("Invalid feature data encountered in _findClosestFeature:", feature);
                continue;
            }
 
           let distanceSq = Infinity;
           const featureVertices = feature.vertexIds
-              ?.map(id => world.vertices.find(v => v.id === id))
-              .filter(v => v && typeof v.x === 'number' && typeof v.y === 'number'); // Add validation
+              ?.map(id => verticesMap.get(id))
+              .filter(v => v && typeof v.x === 'number' && typeof v.y === 'number');
 
-          const isPolygon = feature.constructor?.name === 'Polygon'; // Use constructor name as fallback
+          const isPolygon = feature.constructor?.name === 'Polygon';
 
           if (!featureVertices && !(isPolygon && feature.isMultiPolygon)) {
-              continue; // MultiPolygon以外で頂点がない場合はスキップ
+              continue;
           }
 
           if (feature instanceof DomainPoint || feature.constructor?.name === 'Point') {
@@ -1397,7 +1505,6 @@ _onWheel(event) {
           } else if (feature instanceof DomainLine || feature.constructor?.name === 'Line') {
                if (featureVertices?.length >= 2) {
                    for (let i = 0; i < featureVertices.length - 1; i++) {
-                       // Ensure vertices are valid before calculation
                        if (featureVertices[i] && featureVertices[i+1]) {
                          const segmentDistSq = this._viewModel._geometryService.distancePointSegmentSq(
                              worldPoint, featureVertices[i], featureVertices[i + 1]
@@ -1407,39 +1514,7 @@ _onWheel(event) {
                    }
                }
           } else if (isPolygon) {
-              // Check for holes and subPolygons even if main vertices are missing for MultiPolygon
-              const checkPolygonProximity = (polyVertices) => {
-                  let polyDistSq = Infinity;
-                  if (polyVertices?.length >= 3) {
-                      if (this._viewModel._geometryService.isPointInPolygon(worldPoint, polyVertices)) {
-                          polyDistSq = 0; // Inside the polygon
-                      } else {
-                          // Calculate distance to edges
-                          const closedVertices = [...polyVertices, polyVertices[0]];
-                          for (let i = 0; i < closedVertices.length - 1; i++) {
-                              if (closedVertices[i] && closedVertices[i+1]) {
-                                 polyDistSq = Math.min(polyDistSq, this._viewModel._geometryService.distancePointSegmentSq(
-                                     worldPoint, closedVertices[i], closedVertices[i + 1]
-                                 ));
-                              }
-                          }
-                      }
-                  }
-                  return polyDistSq;
-              };
-
-              distanceSq = checkPolygonProximity(featureVertices);
-
-              if (feature.isMultiPolygon && feature.subPolygons) {
-                  feature.subPolygons.forEach(sub => {
-                      const subVertices = sub.vertexIds
-                          ?.map(id => world.vertices.find(v => v.id === id))
-                          .filter(v => v && typeof v.x === 'number' && typeof v.y === 'number');
-                      distanceSq = Math.min(distanceSq, checkPolygonProximity(subVertices));
-                      // TODO: Check distance to holes within subPolygons
-                  });
-              }
-              // TODO: Check distance to main holes (feature.holesVertexIds)
+              distanceSq = this._calculateDistanceToPolygon(worldPoint, feature, verticesMap);
           }
 
 
@@ -1611,7 +1686,8 @@ _onWheel(event) {
    */
   _clearTemporaryDrawings(classNamePrefix) {
       if (!this._renderer || !this._renderer._mainGroup) return;
-      const tempElements = this._renderer._mainGroup.querySelectorAll(`.temp-drawing.${classNamePrefix}element, .temp-drawing.${classNamePrefix}feature, .temp-drawing.${classNamePrefix}preview`);
+      const selector = `.temp-drawing.${classNamePrefix}element, .temp-drawing.${classNamePrefix}feature, .temp-drawing.${classNamePrefix}highlight, .temp-drawing.${classNamePrefix}preview`;
+      const tempElements = this._renderer._mainGroup.querySelectorAll(selector);
       tempElements.forEach(el => this._renderer.removeElement(el));
   }
 
@@ -1651,10 +1727,16 @@ _onWheel(event) {
       const mode = this._editingViewModel.getMode();
       const points = this._editingViewModel.getAddingPoints();
       const tool = this._editingViewModel.getTool();
+      const subMode = this._editingViewModel.getAddingSubMode();
       let show = false;
 
-      if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
-          const minPoints = (tool === 'point') ? 1 : (tool === 'line') ? 2 : 3; // 穴もポリゴンと同じ3点
+      if (mode === 'add' && tool) {
+          const minPoints = (tool === 'point') ? 1 : (tool === 'line') ? 2 : 3;
+          if (points.length >= minPoints) {
+              show = true;
+          }
+      } else if (mode === 'edit' && tool === 'add-hole' && subMode) { // サブモード決定後
+          const minPoints = 3; // 穴も飛び地も最低3点
           if (points.length >= minPoints) {
               show = true;
           }
@@ -1671,6 +1753,7 @@ _onWheel(event) {
       const mode = this._editingViewModel.getMode();
       const tool = this._editingViewModel.getTool();
       const points = this._editingViewModel.getAddingPoints();
+      const subMode = this._editingViewModel.getAddingSubMode();
 
       if (mode === 'add' && tool) {
           const minPoints = (tool === 'point') ? 1 : (tool === 'line') ? 2 : 3;
@@ -1681,9 +1764,13 @@ _onWheel(event) {
           }
       } else if (mode === 'edit' && tool === 'add-hole') {
            if (points.length >= 3) {
-               this._editingViewModel.confirmAddHole(); // 穴追加を確定
+               if (subMode === 'hole') {
+                   this._editingViewModel.confirmAddHole(); // 穴追加を確定
+               } else if (subMode === 'enclave') {
+                   this._editingViewModel.confirmAddEnclave(); // 飛び地追加を確定
+               }
            } else {
-               alert('穴を作成するには、少なくとも3つの頂点が必要です。');
+               alert('穴または飛び地を作成するには、少なくとも3つの頂点が必要です。');
            }
       }
   }
@@ -1825,4 +1912,154 @@ _onWheel(event) {
       }
   }
 
+    /**
+     * 点がポリゴンの境界線近くにあるか判定
+     * @param {object} point - ワールド座標 {x, y}
+     * @param {DomainPolygon} polygon - 対象ポリゴン
+     * @param {Map<string, Vertex>} verticesMap - 頂点IDと頂点データのMap
+     * @returns {boolean}
+     * @private
+     */
+    _isPointNearPolygonBoundary(point, polygon, verticesMap) {
+        const geometryService = this._viewModel._geometryService;
+        const toleranceSq = this._clickToleranceSq;
+
+        // 外周境界チェック
+        if (polygon.vertexIds && polygon.vertexIds.length >= 2) {
+            const outerVertices = polygon.vertexIds.map(id => verticesMap.get(id)).filter(Boolean);
+            if (geometryService.isPointOnPolygonBoundary(point, outerVertices, toleranceSq)) {
+                return true;
+            }
+        }
+
+        // 穴境界チェック
+        if (polygon.holesVertexIds) {
+            for (const holeIds of polygon.holesVertexIds) {
+                if (holeIds.length >= 2) {
+                    const holeVertices = holeIds.map(id => verticesMap.get(id)).filter(Boolean);
+                    if (geometryService.isPointOnPolygonBoundary(point, holeVertices, toleranceSq)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 飛び地境界チェック (MultiPolygonの場合)
+        if (polygon.isMultiPolygon && polygon.subPolygons) {
+            for (const subPoly of polygon.subPolygons) {
+                 if (subPoly.vertexIds && subPoly.vertexIds.length >= 2) {
+                    const subVertices = subPoly.vertexIds.map(id => verticesMap.get(id)).filter(Boolean);
+                    if (geometryService.isPointOnPolygonBoundary(point, subVertices, toleranceSq)) {
+                         return true;
+                    }
+                 }
+                 // TODO: 飛び地の穴の境界もチェック
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 点がポリゴン内部（穴を除く）にあるか判定
+     * @param {object} point - ワールド座標 {x, y}
+     * @param {DomainPolygon} polygon - 対象ポリゴン
+     * @param {Map<string, Vertex>} verticesMap - 頂点IDと頂点データのMap
+     * @returns {boolean}
+     * @private
+     */
+    _isPointInsidePolygon(point, polygon, verticesMap) {
+        const geometryService = this._viewModel._geometryService;
+
+        let isInside = false;
+
+        // 外周内部か判定
+        if (polygon.vertexIds && polygon.vertexIds.length >= 3) {
+             const outerVertices = polygon.vertexIds.map(id => verticesMap.get(id)).filter(Boolean);
+             if (outerVertices.length >= 3 && geometryService.isPointInPolygon(point, outerVertices)) {
+                 isInside = true;
+             }
+        }
+
+        // 飛び地内部か判定 (MultiPolygonの場合)
+        if (!isInside && polygon.isMultiPolygon && polygon.subPolygons) {
+            for (const subPoly of polygon.subPolygons) {
+                if (subPoly.vertexIds && subPoly.vertexIds.length >= 3) {
+                    const subVertices = subPoly.vertexIds.map(id => verticesMap.get(id)).filter(Boolean);
+                    if (subVertices.length >= 3 && geometryService.isPointInPolygon(point, subVertices)) {
+                         isInside = true;
+                         break; // いずれかの飛び地に入っていればOK
+                    }
+                }
+            }
+        }
+
+        // 内部にいても、穴の中なら対象外
+        if (isInside && polygon.holesVertexIds) {
+            for (const holeIds of polygon.holesVertexIds) {
+                 if (holeIds.length >= 3) {
+                    const holeVertices = holeIds.map(id => verticesMap.get(id)).filter(Boolean);
+                    if (holeVertices.length >= 3 && geometryService.isPointInPolygon(point, holeVertices)) {
+                         isInside = false; // 穴の中なので除外
+                         break;
+                    }
+                 }
+            }
+        }
+        // TODO: 飛び地内の穴も考慮
+
+        return isInside;
+    }
+
+     /**
+      * 点からポリゴンまでの最短距離の二乗を計算
+      * @param {object} point - ワールド座標 {x, y}
+      * @param {DomainPolygon} polygon - 対象ポリゴン
+      * @param {Map<string, Vertex>} verticesMap - 頂点IDと頂点データのMap
+      * @returns {number} 最短距離の二乗
+      * @private
+      */
+     _calculateDistanceToPolygon(point, polygon, verticesMap) {
+         const geometryService = this._viewModel._geometryService;
+         let minDistanceSq = Infinity;
+
+         const calculateMinDistToRing = (vertexIds) => {
+             if (!vertexIds || vertexIds.length < 2) return Infinity;
+             const vertices = vertexIds.map(id => verticesMap.get(id)).filter(Boolean);
+             if (vertices.length < 2) return Infinity;
+
+             const closedVertices = [...vertices, vertices[0]];
+             let minDistSq = Infinity;
+             for (let i = 0; i < closedVertices.length - 1; i++) {
+                 const a = closedVertices[i];
+                 const b = closedVertices[i + 1];
+                 if (a && b) {
+                     minDistSq = Math.min(minDistSq, geometryService.distancePointSegmentSq(point, a, b));
+                 }
+             }
+             return minDistSq;
+         };
+
+         // 外周までの距離
+         if (polygon.vertexIds) {
+             minDistanceSq = Math.min(minDistanceSq, calculateMinDistToRing(polygon.vertexIds));
+         }
+
+         // 飛び地までの距離 (MultiPolygonの場合)
+         if (polygon.isMultiPolygon && polygon.subPolygons) {
+             polygon.subPolygons.forEach(sub => {
+                 minDistanceSq = Math.min(minDistanceSq, calculateMinDistToRing(sub.vertexIds));
+             });
+         }
+
+         // 点がポリゴン内部にある場合は距離0
+         if (this._isPointInsidePolygon(point, polygon, verticesMap)) {
+             return 0;
+         }
+
+         // 穴までの距離 (ポリゴン外部にいる場合、穴は考慮不要？ 仕様確認)
+         // 仕様上、外部の点から穴までの距離は考慮しない。
+
+         return minDistanceSq;
+     }
 }
