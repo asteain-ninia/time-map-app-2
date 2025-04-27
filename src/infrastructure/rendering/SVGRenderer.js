@@ -545,12 +545,31 @@ _renderGrid(viewport) {
     const invertY = true; // Y座標を反転させるフラグ
 
     if (polygon.isMultiPolygon) {
+      // --- ↓↓↓ 修正: 本土の描画処理を追加 ↓↓↓ ---
+      if (polygon.vertexIds && polygon.vertexIds.length > 0) {
+        const polyVertices = polygon.vertexIds.map(id => vertices.find(v => v.id === id));
+        if (!polyVertices.some(v => !v) && polyVertices.length >= 3) {
+          // 本土の外周と穴を描画
+          const path = this._createPolygonPath(polyVertices, polygon.holesVertexIds, vertices, viewport, invertY);
+          path.setAttribute("fill", fill);
+          path.setAttribute("stroke", stroke);
+          path.setAttribute("stroke-width", strokeWidth);
+          path.setAttribute("fill-opacity", fillOpacity);
+          path.setAttribute("fill-rule", "evenodd");
+          group.appendChild(path);
+        } else {
+            console.warn(`Polygon ${polygon.id} is marked as MultiPolygon but has invalid main vertices.`);
+        }
+      }
+      // --- ↑↑↑ 修正: 本土の描画処理を追加 ↑↑↑ ---
+
       // 飛び地の描画
       for (const subPoly of polygon.subPolygons) {
         const subVertices = subPoly.vertexIds.map(id => vertices.find(v => v.id === id));
         if (subVertices.some(v => !v) || subVertices.length < 3) continue;
 
-        const path = this._createPolygonPath(subVertices, subPoly.holesVertexIds, vertices, viewport, invertY); // invertYフラグを渡す
+        // 飛び地の外周と穴を描画
+        const path = this._createPolygonPath(subVertices, subPoly.holesVertexIds, vertices, viewport, invertY);
         path.setAttribute("fill", fill);
         path.setAttribute("stroke", stroke);
         path.setAttribute("stroke-width", strokeWidth);
@@ -583,15 +602,17 @@ _renderGrid(viewport) {
       let vertexCount = 0;
       let targetVertices = null;
 
-      if (polygon.isMultiPolygon && polygon.subPolygons.length > 0) {
-          targetVertices = polygon.subPolygons[0].vertexIds
-              .map(id => vertices.find(v => v.id === id))
-              .filter(v => v);
-      } else if (polygon.vertexIds && polygon.vertexIds.length > 0) {
+      // --- 修正: MultiPolygonの本土も中心計算の対象に ---
+      if (polygon.vertexIds && polygon.vertexIds.length > 0) {
           targetVertices = polygon.vertexIds
               .map(id => vertices.find(v => v.id === id))
               .filter(v => v);
+      } else if (polygon.isMultiPolygon && polygon.subPolygons.length > 0) {
+          targetVertices = polygon.subPolygons[0].vertexIds
+              .map(id => vertices.find(v => v.id === id))
+              .filter(v => v);
       }
+      // --- 修正終わり ---
 
       if (targetVertices && targetVertices.length > 0) {
           vertexCount = targetVertices.length;
@@ -697,7 +718,7 @@ _renderGrid(viewport) {
     return worldY;
   }
 
-  /**
+/**
  * スクリーン座標から世界座標へのX変換
  * @param {number} svgX - SVG要素上のX座標
  * @param {Object} viewport - ビューポート情報
