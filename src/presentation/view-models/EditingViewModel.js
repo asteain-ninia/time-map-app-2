@@ -485,12 +485,31 @@ _deserializeFromHistory(data) {
 
       const polygonId = this._targetPolygon.id;
       const holePoints = [...this._addingPoints]; // コピーを作成
+      // アンドゥ用に更新前の状態を保存 (プレーン)
+      const polygonBeforeUpdatePlain = this._serializeForHistory(this._targetPolygon);
+      // 暫定: addedVerticesDataを空で初期化
+      const addedVerticesData = [];
 
       try {
           // addHoleToPolygon は内部メソッドだが、ここで直接UseCaseを呼ぶのではなく、
           // 状態管理の一環として addHoleToPolygon を呼ぶ形は維持する
+          // 注意: addHoleToPolygonは頂点ID生成ロジックを含むため、理想的にはUseCaseで完結させるべき
           const updatedPolygon = await this.addHoleToPolygon(polygonId, holePoints);
-          // addHoleToPolygon 内で状態クリアと履歴追加が行われる
+
+          // アンドゥ履歴に追加
+          // UseCaseが頂点IDを返すように修正後、addedVerticesDataも正しく設定する
+          const updatedPolygonPlain = this._serializeForHistory(updatedPolygon);
+          this._addToHistory({
+              type: 'addHole',
+              polygonId,
+              oldHolesVertexIds: polygonBeforeUpdatePlain?.holesVertexIds || [], // 更新前の穴(プレーン)
+              newHolesVertexIds: updatedPolygonPlain?.holesVertexIds || [], // 更新後の穴(プレーン)
+              addedVerticesData: addedVerticesData // 暫定: 空配列
+          });
+
+          // イベント発行
+          this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
+          this._clearAddingState(); // 成功時に状態クリア
           this.setTool('select'); // 成功したらツールをデフォルトに戻す
           return updatedPolygon;
       } catch (error) {
@@ -914,18 +933,6 @@ _deserializeFromHistory(data) {
 
       const newHolesVertexIdsPlain = this._serializeForHistory({ holesVertexIds: updatedPolygon.holesVertexIds })?.holesVertexIds || []; // プレーンで保存
 
-      // confirmAddHole がこれを呼ぶ場合、履歴が二重登録される可能性。confirm側で履歴追加する。
-      // 外部から直接呼ばれた場合のみ履歴登録すべきだが、そのケースは現状ないはず。
-      // _addToHistory({
-      //   type: 'addHole',
-      //   polygonId,
-      //   oldHolesVertexIds: oldHolesVertexIdsPlain, // 更新前のプレーンデータ
-      //   newHolesVertexIds: newHolesVertexIdsPlain, // 更新後のプレーンデータ
-      //   addedVerticesData: addedVerticesData // 追加された頂点のプレーンデータ
-      // });
-
-      // this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
-      // this._clearAddingState(); // confirmAddHole側で行う
 
       return updatedPolygon;
     } catch (error) {
