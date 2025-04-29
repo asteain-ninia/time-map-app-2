@@ -1,4 +1,3 @@
-
 import { Point } from '../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../domain/entities/Line.js'; // Line は他の箇所で使用されている可能性があるためエイリアス
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js'; // Polygon も同様にエイリアス
@@ -24,8 +23,9 @@ export class EditingViewModel {
     this._mode = 'view'; // 'view', 'add', 'edit'
     this._tool = null; // 'point', 'line', 'polygon', 'select', 'add-hole', ...
     this._addingPoints = []; // 追加中の点の配列 (地物追加または穴/飛び地追加用)
-    this._targetPolygonIdForHole = null; // 穴/飛び地追加対象のポリゴンID (互換性のため残すが、_targetPolygon を優先)
+    this._targetPolygonIdForHole = null; // 互換性のため残すが、_targetPolygon を優先
     this._targetPolygon = null; // 穴/飛び地追加対象のポリゴンインスタンス
+    this._targetSubPolygonIndex = null; // 穴追加対象の飛び地インデックス (null=本土)
     this._addingSubMode = null; // 穴/飛び地追加のサブモード ('hole' or 'enclave')
     this._temporaryElements = []; // 一時的な表示要素 (MapViewで描画)
     this._draggingVerticesInfo = new Map(); // ドラッグ中の頂点情報 Map<vertexId, { originalPosition, currentPosition }>
@@ -146,7 +146,14 @@ export class EditingViewModel {
         return serializeProperty(object);
     } else if (object instanceof TimePoint) {
         return { _constructorName: 'TimePoint', ...serializeTimePoint(object) };
-    } else {
+    } else if (object._constructorName === 'SubPolygon') { // 仮の飛び地データ用
+         return {
+             _constructorName: 'SubPolygon',
+             vertexIds: Array.isArray(object.vertexIds) ? [...object.vertexIds] : [],
+             holesVertexIds: Array.isArray(object.holesVertexIds) ? object.holesVertexIds.map(hole => [...hole]) : []
+         };
+    }
+     else {
         console.warn("Unsupported object type for history serialization:", object);
         // 安全策としてJSONシリアライズを試みる（ただし推奨されない）
         try {
@@ -210,6 +217,11 @@ _deserializeFromHistory(data) {
                     data.isMultiPolygon || false,
                     subPolygons
                 );
+            case 'SubPolygon': // 仮の飛び地データ用
+                 return { // インスタンスではなくプレーンオブジェクトを返す
+                     vertexIds: data.vertexIds || [],
+                     holesVertexIds: data.holesVertexIds || []
+                 };
             default:
                 console.warn(`Unsupported constructor name for history deserialization: ${constructorName}`);
                 return null;
@@ -296,9 +308,11 @@ _deserializeFromHistory(data) {
           this._targetPolygonIdForHole = polygonInstance.id; // 互換性のためIDも設定
           this._targetPolygon = polygonInstance; // インスタンスを保持
           this._addingSubMode = null; // サブモードはクリックで決定
+          this._targetSubPolygonIndex = null; // 対象インデックスもリセット
           this._clearAddingPoints(); // 既存の点をクリア
-          this._notifyObservers('addingHoleTarget'); // targetPolygonも通知すべきだがキーがない
+          this._notifyObservers('targetPolygon'); // ターゲットポリゴン変更を通知
           this._notifyObservers('addingSubMode');
+          this._notifyObservers('targetSubPolygonIndex'); // インデックス変更を通知
       } else {
           console.warn("startAddingHoleOrEnclave called when tool is not 'add-hole'.");
       }
@@ -333,13 +347,35 @@ _deserializeFromHistory(data) {
   }
 
   /**
+   * 穴追加対象の飛び地インデックスを設定 (MapViewから呼び出される)
+   * @param {number | null} index - 飛び地のインデックス (本土の場合は null)
+   * @private internal use by MapView
+   */
+  setTargetSubPolygonIndex(index) {
+      if (this._targetSubPolygonIndex !== index) {
+          this._targetSubPolygonIndex = index;
+          this._notifyObservers('targetSubPolygonIndex');
+      }
+  }
+
+  /**
+   * 穴追加対象の飛び地インデックスを取得
+   * @returns {number | null}
+   */
+  getTargetSubPolygonIndex() {
+      return this._targetSubPolygonIndex;
+  }
+
+
+  /**
    * 点を追加（地物追加または穴/飛び地追加モード用）
    * @param {Object} point - 追加する点 { x, y }
    */
   addPoint(point) {
     // 'add' モード または ('edit' モード & 'add-hole' ツール & サブモード設定済み) の場合に追加
     const isAddingFeature = this._mode === 'add' && this._tool;
-    const isAddingHoleOrEnclave = this._mode === 'edit' && this._tool === 'add-hole' && this._addingSubMode;
+    // サブモードが null でも最初の点は追加できるようにする (null -> hole/enclave の遷移のため)
+    const isAddingHoleOrEnclave = this._mode === 'edit' && this._tool === 'add-hole' && this._targetPolygon;
 
     if (isAddingFeature || isAddingHoleOrEnclave) {
         // ドラッグ中は追加しない（誤操作防止）
@@ -347,7 +383,7 @@ _deserializeFromHistory(data) {
         this._addingPoints.push(point);
         this._notifyObservers('addingPoints');
     } else {
-        console.warn("Cannot add point in current mode/tool/subMode:", this._mode, this._tool, this._addingSubMode);
+        console.warn("Cannot add point in current mode/tool/target:", this._mode, this._tool, !!this._targetPolygon);
     }
   }
 
@@ -360,16 +396,22 @@ _deserializeFromHistory(data) {
 
     if ((isAddingFeature || isAddingHoleOrEnclave) && this._addingPoints.length > 0) {
       this._addingPoints.pop();
-      // 点がなくなったらサブモードもリセット
-      if (this._addingPoints.length === 0 && this._addingSubMode) {
-          this.setAddingSubMode(null);
+      // 点がなくなったらサブモードとターゲットインデックスもリセット
+      if (this._addingPoints.length === 0) {
+          if (this._addingSubMode !== null) {
+              this.setAddingSubMode(null);
+          }
+          if (this._targetSubPolygonIndex !== null) {
+              this.setTargetSubPolygonIndex(null); // インデックスもリセット
+          }
+          // ターゲットポリゴン自体はツールが add-hole である限り維持
       }
       this._notifyObservers('addingPoints');
     }
   }
 
   /**
-   * 追加中の状態をクリア (点、ターゲット、サブモード)
+   * 追加中の状態をクリア (点、ターゲット、サブモード、インデックス)
    * @private
    */
   _clearAddingState() {
@@ -381,14 +423,18 @@ _deserializeFromHistory(data) {
     if (this._targetPolygonIdForHole !== null) {
         this._targetPolygonIdForHole = null;
         this._targetPolygon = null;
-        changed = true;
+        changed = true; // targetPolygon の変更も通知する
     }
     if (this._addingSubMode !== null) {
         this._addingSubMode = null;
         changed = true;
     }
+    if (this._targetSubPolygonIndex !== null) { // インデックスもクリア
+        this._targetSubPolygonIndex = null;
+        changed = true;
+    }
     if (changed) {
-        this._notifyObservers('addingPoints'); // 複数状態をまとめて通知
+        this._notifyObservers('addingState'); // 関連状態をまとめて通知
     }
   }
 
@@ -398,8 +444,10 @@ _deserializeFromHistory(data) {
    * @private
    */
   _clearAddingPoints() {
-    this._addingPoints = [];
-    this._notifyObservers('addingPoints');
+    if (this._addingPoints.length > 0) {
+        this._addingPoints = [];
+        this._notifyObservers('addingPoints');
+    }
   }
 
   /**
@@ -427,7 +475,8 @@ _deserializeFromHistory(data) {
 
     try {
       let feature;
-      const geometryData = { vertices: this._addingPoints };
+      // _processGeometryは頂点生成のみに使い、UseCaseには座標を渡す
+      const geometryData = { vertices: [...this._addingPoints] }; // 座標のコピーを渡す
 
       switch (this._tool) {
         case 'point':
@@ -449,7 +498,7 @@ _deserializeFromHistory(data) {
       }
 
       // 操作履歴に追加 (プレーンオブジェクトを保存)
-      const addedVerticesData = await this._getVerticesByIds(feature.vertexIds); // worldから取得
+      const addedVerticesData = await this._getVerticesByIds(feature.vertexIds); // UseCaseから返されたインスタンスのIDを使う
       this._addToHistory({
         type: 'add',
         featureId: feature.id,
@@ -475,36 +524,64 @@ _deserializeFromHistory(data) {
    * @returns {Promise<Object|null>} 更新されたポリゴン、または失敗時にnull
    */
   async confirmAddHole() {
+      // サブモードが 'hole' であること、対象ポリゴンがあること、点が3つ以上あることを確認
       if (this._mode !== 'edit' || this._tool !== 'add-hole' || this._addingSubMode !== 'hole' || !this._targetPolygon || this._addingPoints.length < 3) {
           console.error('穴の追加確定の条件を満たしていません。', { mode: this._mode, tool: this._tool, subMode: this._addingSubMode, target: !!this._targetPolygon, points: this._addingPoints.length });
           this._clearAddingState(); // 状態をクリア
-          // ツールは add-hole のままにするか、select に戻すか検討 -> selectに戻す
           this.setTool('select');
           return null;
       }
 
       const polygonId = this._targetPolygon.id;
-      const holePoints = [...this._addingPoints]; // コピーを作成
+      const holePoints = [...this._addingPoints]; // 穴の頂点座標
+      const targetSubIndex = this._targetSubPolygonIndex; // 対象が本土か飛び地か
+
       // アンドゥ用に更新前の状態を保存 (プレーン)
       const polygonBeforeUpdatePlain = this._serializeForHistory(this._targetPolygon);
-      // 暫定: addedVerticesDataを空で初期化
-      const addedVerticesData = [];
+      const oldHoles = targetSubIndex === null
+          ? polygonBeforeUpdatePlain?.holesVertexIds || []
+          : polygonBeforeUpdatePlain?.subPolygons?.[targetSubIndex]?.holesVertexIds || [];
 
       try {
-          // addHoleToPolygon は内部メソッドだが、ここで直接UseCaseを呼ぶのではなく、
-          // 状態管理の一環として addHoleToPolygon を呼ぶ形は維持する
-          // 注意: addHoleToPolygonは頂点ID生成ロジックを含むため、理想的にはUseCaseで完結させるべき
-          const updatedPolygon = await this.addHoleToPolygon(polygonId, holePoints);
+          // UseCaseに渡す情報を組み立てる
+          let geometryUpdate = {};
+          if (targetSubIndex === null) { // 本土への穴追加
+              // 新しい穴の頂点座標を渡す (ID生成はUseCaseが行う)
+              geometryUpdate = { holes: [holePoints] };
+          } else { // 飛び地への穴追加
+              // 新しい穴の頂点座標と対象インデックスを渡す
+              geometryUpdate = {
+                  targetSubPolygonIndex: targetSubIndex,
+                  newHolesForSubPolygon: [holePoints] // UseCaseは座標の配列の配列を期待
+              };
+          }
+
+          // UseCaseを呼び出してポリゴンを更新
+          const updatedPolygon = await this._editFeatureUseCase.updateFeature(
+              polygonId,
+              { geometry: geometryUpdate }
+          );
 
           // アンドゥ履歴に追加
-          // UseCaseが頂点IDを返すように修正後、addedVerticesDataも正しく設定する
+          // 更新後のポリゴンから追加された穴の頂点IDを取得する必要がある
           const updatedPolygonPlain = this._serializeForHistory(updatedPolygon);
+          const newHoles = targetSubIndex === null
+              ? updatedPolygonPlain?.holesVertexIds || []
+              : updatedPolygonPlain?.subPolygons?.[targetSubIndex]?.holesVertexIds || [];
+          // 注意: 追加された穴の頂点IDを正確に特定するのは難しい場合がある
+          //     -> UseCaseが追加した頂点IDを返すようにするのが理想
+          //     -> ここでは簡易的に、更新前後の差分から追加されたIDを推測する (不安定)
+          const addedHoleVertexIds = this._findAddedIds(oldHoles.flat(), newHoles.flat());
+          const addedVerticesData = await this._getVerticesByIds(addedHoleVertexIds);
+
+
           this._addToHistory({
               type: 'addHole',
               polygonId,
-              oldHolesVertexIds: polygonBeforeUpdatePlain?.holesVertexIds || [], // 更新前の穴(プレーン)
-              newHolesVertexIds: updatedPolygonPlain?.holesVertexIds || [], // 更新後の穴(プレーン)
-              addedVerticesData: addedVerticesData // 暫定: 空配列
+              targetSubPolygonIndex: targetSubIndex, // 対象インデックスも保存
+              oldHolesVertexIds: oldHoles, // 更新前の穴(プレーン)
+              newHolesVertexIds: newHoles, // 更新後の穴(プレーン)
+              addedVerticesData: addedVerticesData // 追加された頂点データ(プレーン)
           });
 
           // イベント発行
@@ -526,6 +603,7 @@ _deserializeFromHistory(data) {
    * @returns {Promise<Object|null>} 更新されたポリゴン、または失敗時にnull
    */
   async confirmAddEnclave() {
+      // サブモードが 'enclave' であること、対象ポリゴンがあること、点が3つ以上あることを確認
       if (this._mode !== 'edit' || this._tool !== 'add-hole' || this._addingSubMode !== 'enclave' || !this._targetPolygon || this._addingPoints.length < 3) {
           console.error('飛び地の追加確定の条件を満たしていません。', { mode: this._mode, tool: this._tool, subMode: this._addingSubMode, target: !!this._targetPolygon, points: this._addingPoints.length });
           this._clearAddingState();
@@ -534,32 +612,39 @@ _deserializeFromHistory(data) {
       }
 
       const polygonId = this._targetPolygon.id;
-      const enclavePoints = [...this._addingPoints]; // コピーを作成
+      const enclavePoints = [...this._addingPoints]; // 飛び地の頂点座標
+
+      // アンドゥ用に更新前の状態を保存 (プレーン)
+      const polygonBeforeUpdatePlain = this._serializeForHistory(this._targetPolygon);
 
       try {
           // 1. UseCaseに渡すための情報を準備
+          // 新しい飛び地の頂点座標を渡す (ID生成はUseCaseが行う)
           const geometryUpdate = { newSubPolygonVertices: enclavePoints };
 
           // 2. UseCaseを呼び出してポリゴンを更新
-          // updateFeature は新しい頂点IDの生成とポリゴンデータへの追加を行う
           const updatedPolygon = await this._editFeatureUseCase.updateFeature(
               polygonId,
               { geometry: geometryUpdate }
           );
 
           // 3. 操作履歴に追加
-          // UseCaseから返された更新後のポリゴンデータから、追加された飛び地の情報を取得する必要がある
-          const addedSubPolygonIndex = updatedPolygon.subPolygons.length - 1; // 最後に追加されたと仮定
-          const addedSubPolygonData = updatedPolygon.subPolygons[addedSubPolygonIndex];
+          // 更新後のポリゴンから追加された飛び地の情報を取得
+          const updatedPolygonPlain = this._serializeForHistory(updatedPolygon);
+          const addedSubPolygonIndex = updatedPolygonPlain.subPolygons.length - 1; // 最後に追加されたと仮定
+          const addedSubPolygonData = updatedPolygonPlain.subPolygons[addedSubPolygonIndex];
+
+          // 追加された頂点データを取得
           const addedVerticesData = await this._getVerticesByIds(addedSubPolygonData.vertexIds);
 
           this._addToHistory({
               type: 'addEnclave',
               polygonId: polygonId,
-              addedSubPolygon: this._serializeForHistory({ ...addedSubPolygonData, _constructorName: 'SubPolygon'}), // 仮のクラス名
-              addedVerticesData: addedVerticesData,
-              oldIsMultiPolygon: this._targetPolygon.isMultiPolygon, // 元がMultiPolygonだったか
-              oldSubPolygons: this._targetPolygon.subPolygons.map(sub => this._serializeForHistory({ ...sub, _constructorName: 'SubPolygon'})) // 元の飛び地
+              addedSubPolygonIndex: addedSubPolygonIndex, // 追加されたインデックス
+              addedSubPolygon: addedSubPolygonData, // 追加された飛び地データ (プレーン)
+              addedVerticesData: addedVerticesData, // 追加された頂点データ (プレーン)
+              oldIsMultiPolygon: polygonBeforeUpdatePlain.isMultiPolygon, // 元がMultiPolygonだったか
+              oldSubPolygons: polygonBeforeUpdatePlain.subPolygons // 元の飛び地 (プレーン)
           });
 
           // 4. 状態クリアとイベント発行
@@ -678,8 +763,8 @@ _deserializeFromHistory(data) {
                for (const [vertexId, info] of dragInfoCopy.entries()) {
                    historyData.updates.push({
                        vertexId: vertexId,
-                       oldPosition: info.originalPosition,
-                       newPosition: info.currentPosition
+                       oldPosition: this._serializeForHistory({ _constructorName: 'Vertex', ...info.originalPosition, id: vertexId }), // プレーンで保存
+                       newPosition: this._serializeForHistory({ _constructorName: 'Vertex', ...info.currentPosition, id: vertexId }) // プレーンで保存
                    });
                }
                this._addToHistory(historyData);
@@ -879,67 +964,41 @@ _deserializeFromHistory(data) {
   }
 
   /**
-   * ポリゴンに穴を追加 (内部処理)
+   * ポリゴンに穴を追加 (内部処理用 - 通常はconfirmAddHole経由)
    * @param {string} polygonId - ポリゴンID
    * @param {Array} holePoints - 穴の頂点配列 [{x, y}, ...]
+   * @param {number | null} targetSubIndex - 対象の飛び地インデックス (本土はnull)
    * @returns {Promise<Object>} 更新されたポリゴンインスタンス
-   * @private アンドゥ/リドゥから呼び出される場合があるため残すが、基本はconfirmAddHole経由
+   * @private このメソッドはアンドゥ/リドゥから直接呼び出される可能性を考慮
    */
-  async addHoleToPolygon(polygonId, holePoints) {
-    try {
-      if (holePoints.length < 3) {
-        throw new Error('穴は少なくとも3つの点が必要です');
-      }
-
-      const worldRepository = this._editFeatureUseCase._worldRepository;
-      let world = await worldRepository.getWorld(); // Use let for potential reassignment
-
-      const polygonIndex = world.features.findIndex(f => f.id === polygonId && f instanceof DomainPolygon);
-      if (polygonIndex === -1) throw new Error(`ポリゴンが見つかりません: ${polygonId}`);
-      const polygon = world.features[polygonIndex];
-
-      // UseCase が新しい頂点を生成し、IDを返すようにするべきだが、現状はViewModelが生成
-      const newHoleVertexIds = [];
-      const addedVerticesData = []; // 追加された頂点のプレーンデータ
-      let verticesChanged = false;
-      for (const point of holePoints) {
-          const vertexId = this._editFeatureUseCase._generateId('vertex');
-          const vertexData = { _constructorName: 'Vertex', id: vertexId, x: point.x, y: point.y };
-          addedVerticesData.push(vertexData);
-          newHoleVertexIds.push(vertexId);
-          // UseCaseに頂点追加を依頼する方が理想的
-          if (!world.vertices.some(v => v.id === vertexId)) {
-             world.vertices.push({ id: vertexId, x: point.x, y: point.y });
-             verticesChanged = true;
+  async addHoleToPolygon(polygonId, holePoints, targetSubIndex = null) {
+      try {
+          if (holePoints.length < 3) {
+              throw new Error('穴は少なくとも3つの点が必要です');
           }
+
+          // UseCaseに渡す情報を組み立てる
+          let geometryUpdate = {};
+          if (targetSubIndex === null) { // 本土への穴追加
+              geometryUpdate = { holes: [holePoints] };
+          } else { // 飛び地への穴追加
+              geometryUpdate = {
+                  targetSubPolygonIndex: targetSubIndex,
+                  newHolesForSubPolygon: [holePoints]
+              };
+          }
+
+          // UseCaseを呼び出してポリゴンを更新
+          const updatedPolygon = await this._editFeatureUseCase.updateFeature(
+              polygonId,
+              { geometry: geometryUpdate }
+          );
+          return updatedPolygon;
+      } catch (error) {
+          console.error('穴の追加(内部処理)に失敗しました', error);
+          this._clearAddingState(); // 失敗時も状態クリア
+          throw error;
       }
-      if (verticesChanged) {
-          await worldRepository.saveWorld(world); // Save added vertices first
-          world = await worldRepository.getWorld(); // Reload world state
-      }
-
-      // 古い穴情報を取得 (アンドゥ用、更新前のインスタンスから取得)
-      const polygonBeforeUpdate = world.features.find(f => f.id === polygonId); // Reloaded polygon
-      const oldHolesVertexIdsPlain = this._serializeForHistory({ holesVertexIds: polygonBeforeUpdate.holesVertexIds })?.holesVertexIds || [];
-
-      // 穴を追加
-      const newHolesVertexIdsWithNewOne = [...polygonBeforeUpdate.holesVertexIds, newHoleVertexIds];
-
-      // ポリゴンを更新 (更新対象の geometry を渡す)
-      const updatedPolygon = await this._editFeatureUseCase.updateFeature(
-        polygonId,
-        { geometry: { holesVertexIds: newHolesVertexIdsWithNewOne } } // geometry オブジェクトで渡す
-      );
-
-      const newHolesVertexIdsPlain = this._serializeForHistory({ holesVertexIds: updatedPolygon.holesVertexIds })?.holesVertexIds || []; // プレーンで保存
-
-
-      return updatedPolygon;
-    } catch (error) {
-      console.error('穴の追加に失敗しました', error);
-      this._clearAddingState();
-      throw error;
-    }
   }
 
 
@@ -976,9 +1035,8 @@ _deserializeFromHistory(data) {
    */
   async undo() {
     if (this._undoStack.length === 0) return;
-    // ドラッグ中の場合はキャンセル
+    // ドラッグ中/追加中はキャンセル
     if (this._draggingVerticesInfo.size > 0) this._resetDraggingState();
-    // 追加中の場合はキャンセル
     if (this._addingPoints.length > 0 || this._addingSubMode) this._clearAddingState();
 
 
@@ -1005,9 +1063,8 @@ _deserializeFromHistory(data) {
    */
   async redo() {
     if (this._redoStack.length === 0) return;
-     // ドラッグ中の場合はキャンセル
+     // ドラッグ中/追加中はキャンセル
     if (this._draggingVerticesInfo.size > 0) this._resetDraggingState();
-     // 追加中の場合はキャンセル
     if (this._addingPoints.length > 0 || this._addingSubMode) this._clearAddingState();
 
     const operation = this._redoStack.pop();
@@ -1060,9 +1117,10 @@ _deserializeFromHistory(data) {
       case 'add':
         // 地物と頂点を復元 (プレーンからインスタンス生成)
         if (operation.addedVerticesData) {
-            operation.addedVerticesData.forEach(vData => {
-                if (!world.vertices.some(wv => wv.id === vData.id)) {
-                    world.vertices.push(vData); // UseCaseはプレーンを期待
+            operation.addedVerticesData.forEach(vDataPlain => {
+                const vData = this._deserializeFromHistory(vDataPlain); // Vertexインスタンスに
+                if (vData && !world.vertices.some(wv => wv.id === vData.id)) {
+                    world.vertices.push({ id: vData.id, x: vData.x, y: vData.y }); // リポジトリはプレーンを期待
                     worldChanged = true;
                 }
             });
@@ -1072,7 +1130,6 @@ _deserializeFromHistory(data) {
         if (operation.featureData) {
             const featureInstance = this._deserializeFromHistory(operation.featureData);
             if (featureInstance) {
-                 // UseCase経由で追加する方が望ましいが、ID衝突などを避けるため直接追加
                  world = await worldRepo.getWorld(); // 最新状態を取得
                  if (!world.features.some(f => f.id === featureInstance.id)) {
                      world.features.push(featureInstance);
@@ -1096,7 +1153,8 @@ _deserializeFromHistory(data) {
       case 'moveVertices':
         const redoUpdates = operation.updates.map(u => ({
             vertexId: u.vertexId,
-            newPosition: u.newPosition
+            // 履歴からプレーンな座標を取り出す
+            newPosition: { x: u.newPosition.x, y: u.newPosition.y }
         }));
         await this._editFeatureUseCase.moveVertices(redoUpdates);
         redoUpdates.forEach(update => {
@@ -1116,9 +1174,10 @@ _deserializeFromHistory(data) {
          // 追加された頂点をまず復元
          let verticesAddedHole = false;
          if (operation.addedVerticesData) {
-             operation.addedVerticesData.forEach(vData => {
-                 if (!world.vertices.some(wv => wv.id === vData.id)) {
-                     world.vertices.push(vData); // UseCaseはプレーンを期待
+             operation.addedVerticesData.forEach(vDataPlain => {
+                 const vData = this._deserializeFromHistory(vDataPlain);
+                 if (vData && !world.vertices.some(wv => wv.id === vData.id)) {
+                     world.vertices.push({ id: vData.id, x: vData.x, y: vData.y });
                      verticesAddedHole = true;
                  }
              });
@@ -1127,9 +1186,43 @@ _deserializeFromHistory(data) {
              await worldRepo.saveWorld(world); // Save added vertices first
          }
          // ポリゴンに穴情報を復元
+         let geometryUpdateHole = {};
+         if (operation.targetSubPolygonIndex === null) { // 本土の穴
+             geometryUpdateHole = { holesVertexIds: operation.newHolesVertexIds };
+         } else { // 飛び地の穴
+             // UseCase は newHolesVertexIdsForSubPolygon を期待するが、
+             // Redo 時には既に ID が振られている newHolesVertexIds を使って
+             // withSubPolygonHoles を呼ぶ必要がある。
+             // -> UseCase 側でこの Redo パターンに対応するか、
+             //    ViewModel が addHoleToPolygon を直接呼ぶか。
+             //    ここでは UseCase 修正前提で進める（ただし現状のUseCaseは未対応）
+             //    暫定策: UseCase が対応するまで Redo は期待通りに動かない可能性
+             // geometryUpdateHole = {
+             //    targetSubPolygonIndex: operation.targetSubPolygonIndex,
+             //    // UseCase が newHolesVertexIdsForSubPolygon (座標) でなく
+             //    //   holesVertexIdsForSubPolygon (ID) を受け取れるようにする必要あり
+             //    holesVertexIdsForSubPolygon: operation.newHolesVertexIds
+             // };
+             // 暫定的に、更新後の穴配列全体を渡す
+              world = await worldRepo.getWorld();
+              const targetPolygonHole = world.features.find(f => f.id === operation.polygonId);
+              if (targetPolygonHole instanceof DomainPolygon) {
+                  const updatedSubPolygons = targetPolygonHole.subPolygons.map((sub, index) => {
+                      if (index === operation.targetSubPolygonIndex) {
+                          return { ...sub, holesVertexIds: operation.newHolesVertexIds };
+                      }
+                      return sub;
+                  });
+                  geometryUpdateHole = { subPolygons: updatedSubPolygons };
+              } else {
+                   console.error("Redo addHole (sub): Target polygon not found or invalid.");
+                   break; // エラー処理
+              }
+         }
+
          const updatedPolygonHole = await this._editFeatureUseCase.updateFeature(
            operation.polygonId,
-           { geometry: { holesVertexIds: operation.newHolesVertexIds } }
+           { geometry: geometryUpdateHole }
          );
          this._eventBus.publish('FeatureUpdated', { feature: updatedPolygonHole });
         break;
@@ -1138,9 +1231,10 @@ _deserializeFromHistory(data) {
          // 追加された頂点をまず復元
          let verticesAddedEnclave = false;
          if (operation.addedVerticesData) {
-             operation.addedVerticesData.forEach(vData => {
-                 if (!world.vertices.some(wv => wv.id === vData.id)) {
-                     world.vertices.push(vData); // UseCaseはプレーンを期待
+             operation.addedVerticesData.forEach(vDataPlain => {
+                const vData = this._deserializeFromHistory(vDataPlain);
+                 if (vData && !world.vertices.some(wv => wv.id === vData.id)) {
+                     world.vertices.push({ id: vData.id, x: vData.x, y: vData.y });
                      verticesAddedEnclave = true;
                  }
              });
@@ -1154,7 +1248,15 @@ _deserializeFromHistory(data) {
          const targetPolygonEnclave = world.features.find(f => f.id === operation.polygonId);
          if (targetPolygonEnclave instanceof DomainPolygon) {
              const currentSubPolygons = targetPolygonEnclave.subPolygons || [];
-             const newSubPolygons = [...currentSubPolygons, enclaveToAddPlain];
+             // 履歴から取得したプレーンオブジェクトをそのまま追加
+             const newSubPolygons = [...currentSubPolygons];
+             // 正しいインデックスに挿入または末尾に追加
+             if(operation.addedSubPolygonIndex !== undefined && operation.addedSubPolygonIndex >= 0) {
+                 newSubPolygons.splice(operation.addedSubPolygonIndex, 0, enclaveToAddPlain);
+             } else {
+                 newSubPolygons.push(enclaveToAddPlain);
+             }
+
              const updatedPolygonEnclave = await this._editFeatureUseCase.updateFeature(
                  operation.polygonId,
                  { geometry: { isMultiPolygon: true, subPolygons: newSubPolygons } }
@@ -1192,9 +1294,10 @@ _deserializeFromHistory(data) {
       case 'delete':
         // 削除された頂点を復元
         if (operation.verticesToRestoreData) {
-            operation.verticesToRestoreData.forEach(vData => {
-                if (!world.vertices.some(wv => wv.id === vData.id)) {
-                    world.vertices.push(vData); // プレーンオブジェクトを追加
+            operation.verticesToRestoreData.forEach(vDataPlain => {
+                const vData = this._deserializeFromHistory(vDataPlain);
+                if (vData && !world.vertices.some(wv => wv.id === vData.id)) {
+                    world.vertices.push({ id: vData.id, x: vData.x, y: vData.y });
                     worldChanged = true;
                 }
             });
@@ -1218,9 +1321,10 @@ _deserializeFromHistory(data) {
       case 'deleteVertices':
         // 1. 関連する頂点を復元
         if (operation.verticesToRestoreData) {
-            operation.verticesToRestoreData.forEach(vData => {
-                if (!world.vertices.some(v => v.id === vData.id)) {
-                    world.vertices.push(vData); // プレーンオブジェクトを追加
+            operation.verticesToRestoreData.forEach(vDataPlain => {
+                const vData = this._deserializeFromHistory(vDataPlain);
+                if (vData && !world.vertices.some(wv => wv.id === vData.id)) {
+                    world.vertices.push({ id: vData.id, x: vData.x, y: vData.y });
                     worldChanged = true;
                 }
             });
@@ -1242,7 +1346,19 @@ _deserializeFromHistory(data) {
                 const wasDeleted = operation.deletedFeatureIds?.includes(featureInstance.id);
 
                 if (index !== -1) { // 地物が存在する場合 (更新されたケース)
-                    if (!world.features[index].equals(featureInstance)) { // 状態が変わっていれば更新
+                    // equals があれば使うが、なければプロパティ比較などで代用検討
+                    const currentFeature = world.features[index];
+                    let areEqual = false;
+                    if(typeof currentFeature.equals === 'function') {
+                        areEqual = currentFeature.equals(featureInstance);
+                    } else {
+                        // 簡易比較 (JSON比較は循環参照などで失敗する可能性あり)
+                        // areEqual = JSON.stringify(currentFeature) === JSON.stringify(featureInstance);
+                        // IDが同じならとりあえず置き換える、という方針も
+                        areEqual = false; // 常に更新とみなす
+                    }
+
+                    if (!areEqual) { // 状態が変わっていれば更新
                         world.features[index] = featureInstance; // インスタンスで置き換え
                         featuresUpdated = true;
                         this._eventBus.publish('FeatureUpdated', { feature: featureInstance });
@@ -1265,7 +1381,8 @@ _deserializeFromHistory(data) {
       case 'moveVertices':
           const undoUpdates = operation.updates.map(u => ({
               vertexId: u.vertexId,
-              newPosition: u.oldPosition // 古い位置に戻す
+              // 履歴からプレーンな座標を取り出す
+              newPosition: { x: u.oldPosition.x, y: u.oldPosition.y } // 古い位置に戻す
           }));
           await this._editFeatureUseCase.moveVertices(undoUpdates);
           undoUpdates.forEach(update => {
@@ -1283,19 +1400,44 @@ _deserializeFromHistory(data) {
 
       case 'addHole':
          // ポリゴンの穴情報を元に戻す
+         let geometryUpdateUndoHole = {};
+         if (operation.targetSubPolygonIndex === null) { // 本土の穴
+             geometryUpdateUndoHole = { holesVertexIds: operation.oldHolesVertexIds };
+         } else { // 飛び地の穴
+             // UseCase 側でこの Undo パターンに対応するか、ViewModel が直接操作するか。
+             // 暫定的に、更新前の穴配列全体を渡す
+              world = await worldRepo.getWorld();
+              const targetPolygonUndoHole = world.features.find(f => f.id === operation.polygonId);
+              if (targetPolygonUndoHole instanceof DomainPolygon) {
+                  const updatedSubPolygonsUndo = targetPolygonUndoHole.subPolygons.map((sub, index) => {
+                      if (index === operation.targetSubPolygonIndex) {
+                          return { ...sub, holesVertexIds: operation.oldHolesVertexIds };
+                      }
+                      return sub;
+                  });
+                  geometryUpdateUndoHole = { subPolygons: updatedSubPolygonsUndo };
+              } else {
+                  console.error("Undo addHole (sub): Target polygon not found or invalid.");
+                  break; // エラー処理
+              }
+         }
          const polygonHoleUndo = await this._editFeatureUseCase.updateFeature(
            operation.polygonId,
-           { geometry: { holesVertexIds: operation.oldHolesVertexIds } }
+           { geometry: geometryUpdateUndoHole }
          );
          this._eventBus.publish('FeatureUpdated', { feature: polygonHoleUndo });
 
          // 穴追加時に作成された頂点も削除 (他の地物で使われていない場合)
          if (operation.addedVerticesData) {
-             // UseCaseのdeleteVerticesを呼ぶ方が堅牢
              const vertexIdsToRemove = operation.addedVerticesData.map(v => v.id);
-             await this._editFeatureUseCase.deleteVertices(vertexIdsToRemove);
-             // deleteVertices内でイベント発行とworld保存が行われるはず
-             worldChanged = true;
+             // 削除前に world.vertices に存在するか確認する方が安全
+             world = await worldRepo.getWorld();
+             const existingVertexIdsToRemove = vertexIdsToRemove.filter(id => world.vertices.some(v => v.id === id));
+             if (existingVertexIdsToRemove.length > 0) {
+                 await this._editFeatureUseCase.deleteVertices(existingVertexIdsToRemove);
+                 // deleteVertices内でイベント発行とworld保存が行われるはず
+                 worldChanged = true;
+             }
          }
         break;
 
@@ -1310,19 +1452,19 @@ _deserializeFromHistory(data) {
           // 飛び地追加時に作成された頂点を削除
           if (operation.addedVerticesData) {
               const vertexIdsToRemoveEnclave = operation.addedVerticesData.map(v => v.id);
-              await this._editFeatureUseCase.deleteVertices(vertexIdsToRemoveEnclave);
-              worldChanged = true;
+              // 削除前に world.vertices に存在するか確認
+              world = await worldRepo.getWorld();
+              const existingVertexIdsToRemoveEnclave = vertexIdsToRemoveEnclave.filter(id => world.vertices.some(v => v.id === id));
+               if (existingVertexIdsToRemoveEnclave.length > 0) {
+                  await this._editFeatureUseCase.deleteVertices(existingVertexIdsToRemoveEnclave);
+                  worldChanged = true;
+               }
           }
           break;
 
       default:
         console.warn(`未対応の操作タイプ (Undo): ${operation.type}`);
     }
-
-    // Note: UseCase内でWorldが保存される場合が多いが、逆操作で明示的にWorldを変更した場合は保存が必要な場合がある
-    // if (worldChanged) {
-    //   await worldRepo.saveWorld(world);
-    // }
   }
 
 
@@ -1343,7 +1485,7 @@ _deserializeFromHistory(data) {
         return vertexIds
             .map(id => verticesMap.get(id))
             .filter(Boolean)
-            .map(v => this._serializeForHistory(v)); // プレーンオブジェクトで返す
+            .map(v => this._serializeForHistory({ _constructorName: 'Vertex', ...v })); // プレーンオブジェクトで返す
     } catch (error) {
         console.error("Error fetching vertices by IDs:", error);
         return [];
@@ -1363,8 +1505,11 @@ _deserializeFromHistory(data) {
     if (feature instanceof DomainPolygon) {
         feature.holesVertexIds?.flat().forEach(id => vertexIds.add(id));
         if(feature.isMultiPolygon && feature.subPolygons) {
-            feature.subPolygons.forEach(sub => sub.vertexIds?.forEach(id => vertexIds.add(id)));
-            // TODO: MultiPolygonの穴の頂点も考慮
+            feature.subPolygons.forEach(sub => {
+                sub.vertexIds?.forEach(id => vertexIds.add(id));
+                // TODO: MultiPolygonの穴の頂点も考慮
+                 sub.holesVertexIds?.flat().forEach(id => vertexIds.add(id));
+            });
         }
     }
     return await this._getVerticesByIds(Array.from(vertexIds));
@@ -1438,12 +1583,12 @@ _deserializeFromHistory(data) {
         return this._tool;
       case 'addingPoints':
         return this._addingPoints;
-      case 'addingHoleTarget': // 互換性のため残すが、targetPolygon を使うべき
-        return this._targetPolygonIdForHole;
-      case 'targetPolygon':
+      case 'targetPolygon': // キー名変更
         return this._targetPolygon;
       case 'addingSubMode':
         return this._addingSubMode;
+      case 'targetSubPolygonIndex': // 穴追加対象インデックス
+        return this._targetSubPolygonIndex;
       case 'temporaryElements':
         return this._temporaryElements;
       case 'draggingVertices': // 変更: draggingVertex -> draggingVertices
@@ -1453,8 +1598,27 @@ _deserializeFromHistory(data) {
           canUndo: this.canUndo(),
           canRedo: this.canRedo()
         };
+      case 'addingState': // 関連状態をまとめて通知
+        return {
+          addingPoints: this._addingPoints,
+          targetPolygon: this._targetPolygon,
+          addingSubMode: this._addingSubMode,
+          targetSubPolygonIndex: this._targetSubPolygonIndex
+        };
       default:
         return null;
     }
+  }
+
+  /**
+   * 配列Bにあって配列Aにない要素を見つけるヘルパー
+   * @param {Array} arrayA - 元の配列
+   * @param {Array} arrayB - 新しい配列
+   * @returns {Array} 追加された要素の配列
+   * @private
+   */
+  _findAddedIds(arrayA, arrayB) {
+      const setA = new Set(arrayA);
+      return arrayB.filter(item => !setA.has(item));
   }
 }

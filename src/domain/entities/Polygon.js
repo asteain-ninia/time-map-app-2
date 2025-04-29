@@ -14,7 +14,7 @@ export class Polygon extends Feature {
    * @param {string} parentId - 上位領域ID（最上位の場合は "0"）
    * @param {string[]} childIds - 下位領域IDの配列
    * @param {boolean} isMultiPolygon - 飛び地を持つ複合ポリゴンかどうか
-   * @param {Object[]} subPolygons - 飛び地ポリゴン情報の配列（isMultiPolygonがtrueの場合）
+   * @param {Object[]} subPolygons - 飛び地ポリゴン情報の配列（isMultiPolygonがtrueの場合） { vertexIds: string[], holesVertexIds: string[][] }
    */
   constructor(id, vertexIds, properties, layerId, holesVertexIds = [], parentId = "0", childIds = [], isMultiPolygon = false, subPolygons = []) {
     // vertexIdsがnullでも空配列としてsuperに渡す (Featureは空配列を受け付ける想定)
@@ -24,14 +24,27 @@ export class Polygon extends Feature {
     this._parentId = parentId;
     this._childIds = [...childIds];
     this._isMultiPolygon = isMultiPolygon;
-    // isMultiPolygon が false でも subPolygons が渡される場合があるため、フラグで判定
-    this._subPolygons = isMultiPolygon ? [...subPolygons] : [];
+    // isMultiPolygon が false でも subPolygons が渡される場合があるため、フラグで判定し、各要素をコピー
+    this._subPolygons = isMultiPolygon
+        ? subPolygons.map(sub => ({
+            vertexIds: [...(sub.vertexIds || [])],
+            holesVertexIds: (sub.holesVertexIds || []).map(hole => [...hole])
+          }))
+        : [];
+
 
     // 不変性を保証
     this._holesVertexIds.forEach(hole => Object.freeze(hole));
     Object.freeze(this._holesVertexIds);
     Object.freeze(this._childIds);
+    this._subPolygons.forEach(sub => {
+        Object.freeze(sub.vertexIds);
+        sub.holesVertexIds.forEach(hole => Object.freeze(hole));
+        Object.freeze(sub.holesVertexIds);
+        Object.freeze(sub); // subPolygonオブジェクト自体も凍結
+    });
     Object.freeze(this._subPolygons);
+
 
     // 面情報の検証
     if (vertexIds && vertexIds.length > 0) {
@@ -57,17 +70,16 @@ export class Polygon extends Feature {
 
     // 飛び地の検証
     if (isMultiPolygon) {
-      // MultiPolygonの場合、本体(vertexIds)とsubPolygonsの合計で1つ以上あれば良い (上記 constructor 内のチェックで担保)
-      // const totalPolygons = (this.hasDirectGeometry() ? 1 : 0) + this._subPolygons.length;
-      // if (totalPolygons < 1) { // 修正：本体か飛び地のどちらかがあればOK
-      //      throw new Error('MultiPolygon must represent at least one distinct polygon area');
-      // }
-
-      this._subPolygons.forEach(subPoly => {
+      this._subPolygons.forEach((subPoly, index) => {
         if (!subPoly.vertexIds || subPoly.vertexIds.length < 3) {
-          throw new Error('Each sub-polygon must have at least three vertices');
+          throw new Error(`Each sub-polygon (index ${index}) must have at least three vertices`);
         }
-        // TODO: 飛び地の穴の検証も追加
+        // 飛び地の穴の検証
+        (subPoly.holesVertexIds || []).forEach((hole, holeIndex) => {
+            if (!hole || hole.length < 3) {
+                 throw new Error(`Hole (index ${holeIndex}) in sub-polygon (index ${index}) must have at least three vertices`);
+            }
+        });
       });
     }
   }
@@ -77,7 +89,8 @@ export class Polygon extends Feature {
    * @returns {string[][]} 穴の頂点ID配列の配列
    */
   get holesVertexIds() {
-    return this._holesVertexIds;
+    // 不変性を保つためディープコピーを返す
+    return this._holesVertexIds.map(hole => [...hole]);
   }
 
   /**
@@ -93,7 +106,7 @@ export class Polygon extends Feature {
    * @returns {string[]} 下位領域IDの配列
    */
   get childIds() {
-    return this._childIds;
+    return [...this._childIds];
   }
 
   /**
@@ -106,10 +119,14 @@ export class Polygon extends Feature {
 
   /**
    * 飛び地ポリゴン情報の配列を取得
-   * @returns {Object[]} 飛び地情報の配列
+   * @returns {Object[]} 飛び地情報の配列 { vertexIds: string[], holesVertexIds: string[][] }
    */
   get subPolygons() {
-    return this._subPolygons;
+    // 不変性を保つためディープコピーを返す
+    return this._subPolygons.map(sub => ({
+        vertexIds: [...sub.vertexIds],
+        holesVertexIds: sub.holesVertexIds.map(hole => [...hole])
+    }));
   }
 
   /**
@@ -170,17 +187,40 @@ export class Polygon extends Feature {
   }
 
   /**
+   * 新しいレイヤーIDで新インスタンスを作成 (Featureクラスのメソッドをオーバーライド)
+   * @param {string} layerId - 新しいレイヤーID
+   * @returns {Polygon} 新しい面情報オブジェクト
+   */
+  withLayerId(layerId) {
+    return new Polygon(
+      this._id,
+      this._vertexIds,
+      this._properties,
+      layerId, // 新しいレイヤーIDを使用
+      this._holesVertexIds,
+      this._parentId,
+      this._childIds,
+      this._isMultiPolygon,
+      this._subPolygons
+    );
+  }
+
+  /**
    * 新しい穴の頂点IDの配列で新インスタンスを作成
    * @param {string[][]} holesVertexIds - 新しい穴の頂点IDの配列の配列
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withHolesVertexIds(holesVertexIds) {
+    // 状態が変わらない場合は元のインスタンスを返す (イミュータブル最適化)
+    if (JSON.stringify(this._holesVertexIds) === JSON.stringify(holesVertexIds)) {
+        return this;
+    }
     return new Polygon(
       this._id,
       this._vertexIds,
       this._properties,
       this._layerId,
-      holesVertexIds,
+      holesVertexIds, // 新しい穴情報を使用
       this._parentId,
       this._childIds,
       this._isMultiPolygon,
@@ -194,13 +234,14 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withParentId(parentId) {
+    if (this._parentId === parentId) return this; // 変化なし
     return new Polygon(
       this._id,
       this._vertexIds,
       this._properties,
       this._layerId,
       this._holesVertexIds,
-      parentId,
+      parentId, // 新しい親IDを使用
       this._childIds,
       this._isMultiPolygon,
       this._subPolygons
@@ -213,6 +254,10 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withChildIds(childIds) {
+    // 状態が変わらない場合は元のインスタンスを返す (イミュータブル最適化)
+    if (this._childIds.length === childIds.length && this._childIds.every((id, i) => id === childIds[i])) {
+        return this;
+    }
     return new Polygon(
       this._id,
       this._vertexIds,
@@ -220,7 +265,7 @@ export class Polygon extends Feature {
       this._layerId,
       this._holesVertexIds,
       this._parentId,
-      childIds,
+      childIds, // 新しい子ID配列を使用
       this._isMultiPolygon,
       this._subPolygons
     );
@@ -252,12 +297,18 @@ export class Polygon extends Feature {
   /**
    * 飛び地情報を更新した新インスタンスを作成
    * @param {boolean} isMultiPolygon - 飛び地を持つかどうか
-   * @param {Object[]} subPolygons - 新しい飛び地情報の配列
+   * @param {Object[]} subPolygons - 新しい飛び地情報の配列 { vertexIds: string[], holesVertexIds: string[][] }
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withMultiPolygonData(isMultiPolygon, subPolygons = []) {
     // isMultiPolygon フラグに合わせて subPolygons を調整
-    const finalSubPolygons = isMultiPolygon ? subPolygons : [];
+    const finalSubPolygons = isMultiPolygon
+      ? subPolygons.map(sub => ({ // deep copy
+          vertexIds: [...(sub.vertexIds || [])],
+          holesVertexIds: (sub.holesVertexIds || []).map(hole => [...hole])
+        }))
+      : [];
+
     // 状態が変わらない場合は元のインスタンスを返す (イミュータブル最適化)
     if (this._isMultiPolygon === isMultiPolygon &&
         JSON.stringify(this._subPolygons) === JSON.stringify(finalSubPolygons)) {
@@ -277,16 +328,63 @@ export class Polygon extends Feature {
   }
 
   /**
+   * 特定の飛び地の穴情報を更新した新インスタンスを作成
+   * @param {number} subPolygonIndex - 穴を更新する飛び地のインデックス
+   * @param {string[][]} newHolesVertexIds - 新しい穴情報の配列
+   * @returns {Polygon} 新しい面情報オブジェクト
+   */
+  withSubPolygonHoles(subPolygonIndex, newHolesVertexIds) {
+    if (!this._isMultiPolygon || subPolygonIndex < 0 || subPolygonIndex >= this._subPolygons.length) {
+      console.warn(`Invalid subPolygonIndex ${subPolygonIndex} or polygon is not a MultiPolygon.`);
+      return this; // 不正な場合は変更しない
+    }
+
+    // 新しい飛び地配列を作成
+    const updatedSubPolygons = this._subPolygons.map((sub, index) => {
+        if (index === subPolygonIndex) {
+            // 対象の飛び地の穴情報を更新 (deep copy)
+            return {
+                ...sub, // vertexIds はそのまま
+                holesVertexIds: newHolesVertexIds.map(hole => [...hole])
+            };
+        }
+        return sub; // 他の飛び地はそのまま
+    });
+
+    // 状態が変わらないかチェック (簡易的にJSON比較)
+    if (JSON.stringify(this._subPolygons[subPolygonIndex].holesVertexIds) === JSON.stringify(newHolesVertexIds)) {
+        return this;
+    }
+
+    // 新しいインスタンスを生成
+    return new Polygon(
+      this._id,
+      this._vertexIds,
+      this._properties,
+      this._layerId,
+      this._holesVertexIds,
+      this._parentId,
+      this._childIds,
+      this._isMultiPolygon,
+      updatedSubPolygons // 更新された飛び地情報を使用
+    );
+  }
+
+
+  /**
    * 新しい面情報を作成するファクトリーメソッド
    * @param {string} id - 一意のID
    * @param {Property[]} properties - プロパティの配列
-   * @param {Object} geometry - 形状情報 { vertexIds: string[] | null, holesVertexIds?: string[][], parentId?: string, isMultiPolygon?: boolean, subPolygons?: Object[], childIds?: string[] }
+   * @param {Object} geometry - 形状情報 { vertexIds?: string[] | null, holesVertexIds?: string[][], parentId?: string, isMultiPolygon?: boolean, subPolygons?: Object[], childIds?: string[] }
    * @param {string} layerId - レイヤーID
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   static create(id, properties, geometry, layerId) {
     // geometry.vertexIds が undefined でも null でも空配列として扱う
-    const vertexIds = geometry.vertexIds || [];
+    const vertexIds = geometry.vertexIds || null; // 下位領域を持つ場合を考慮し null 許容
+    const subPolygons = geometry.subPolygons || [];
+    const isMulti = geometry.isMultiPolygon !== undefined ? geometry.isMultiPolygon : (subPolygons.length > 0 || !vertexIds); // subPolygonsがあればMulti、vertexIdsがなければMulti(子がなければエラーになるがそれはコンストラクタで)
+
     return new Polygon(
       id,
       vertexIds,
@@ -295,8 +393,8 @@ export class Polygon extends Feature {
       geometry.holesVertexIds || [],
       geometry.parentId || "0",
       geometry.childIds || [],
-      geometry.isMultiPolygon || false,
-      geometry.subPolygons || []
+      isMulti, // isMultiPolygonを渡す
+      subPolygons // subPolygonsを渡す
     );
   }
 }
