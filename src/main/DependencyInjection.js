@@ -12,7 +12,15 @@ import { GeometryService } from '../domain/services/GeometryService';
 import { TimeService } from '../domain/services/TimeService';
 import { LayerService } from '../domain/services/LayerService';
 
+// 元のEditFeatureUseCase（ファサード）をインポート
 import { EditFeatureUseCase } from '../application/usecases/EditFeatureUseCase';
+// --- ここから分割されたUseCase/Service ---
+// import { AddFeatureUseCase } from '../application/usecases/feature/AddFeatureUseCase';
+// import { UpdateFeatureUseCase } from '../application/usecases/feature/UpdateFeatureUseCase';
+// import { DeleteFeatureUseCase } from '../application/usecases/feature/DeleteFeatureUseCase';
+// import { VertexEditUseCase } from '../application/usecases/feature/VertexEditUseCase';
+import { IPolygonEditService } from '../application/services/IPolygonEditService'; // インターフェースをインポート
+// --- ここまで分割されたUseCase/Service ---
 import { NavigateTimeUseCase } from '../application/usecases/NavigateTimeUseCase';
 import { ManageLayersUseCase } from '../application/usecases/ManageLayersUseCase';
 
@@ -70,28 +78,15 @@ export class DependencyInjection {
    * @private
    */
   _registerInfrastructureServices() {
-    // 基本サービス
-    this._container.logger = new Logger(3); // INFO レベルで初期化
+    this._container.logger = new Logger(3);
     this._container.configManager = new ConfigManager();
-
-    // 永続化サービス
     this._container.fileSystem = new FileSystem();
     this._container.jsonSerializer = new JSONSerializer();
     this._container.worldRepository = new JSONWorldRepository(
       this._container.fileSystem,
       this._container.jsonSerializer
     );
-
-    // レンダリングサービス
-    this._container.viewportManager = new ViewportManager({
-      width: 800,
-      height: 600,
-      minZoom: 0.1,
-      maxZoom: 10,
-      zoom: 0.5, // 初期ズームを小さめに設定
-      x: 0, // 初期中心位置を調整
-      y: 0 // 初期中心位置を調整
-    });
+    this._container.viewportManager = new ViewportManager({ /* ... options ... */ });
   }
 
   /**
@@ -109,15 +104,30 @@ export class DependencyInjection {
    * @private
    */
   _registerApplicationServices() {
-    // イベントバス
     this._container.eventBus = new EventBus();
 
-    // ユースケース
+    // --- PolygonEditServiceのダミー実装 (フェーズ2で実実装に置き換え) ---
+    // IPolygonEditService を継承する形でダミー実装を提供
+    class DummyPolygonEditService extends IPolygonEditService {
+        async validatePolygonRings(polygon, world) { console.warn("DummyPolygonEditService.validatePolygonRings called"); }
+        async addRingToPolygon(polygonId, ringData) { console.warn("DummyPolygonEditService.addRingToPolygon called"); return null; }
+        async removeRingFromPolygon(polygonId, ringId) { console.warn("DummyPolygonEditService.removeRingFromPolygon called"); return null; }
+        async updateRingVertices(polygonId, ringId, newVertexIds) { console.warn("DummyPolygonEditService.updateRingVertices called"); return null; }
+        async updatePolygonGeometry(currentPolygon, geometryUpdates, world) { console.warn("DummyPolygonEditService.updatePolygonGeometry called"); return currentPolygon; } // 現状の動作を維持
+        async splitPolygon(polygonId, divisionData) { console.warn("DummyPolygonEditService.splitPolygon called"); return { newPolygons: [] }; }
+    }
+    this._container.polygonEditService = new DummyPolygonEditService();
+    // --- ここまでダミー実装 ---
+
+    // ファサードの EditFeatureUseCase を登録し、必要なサービスを注入
     this._container.editFeatureUseCase = new EditFeatureUseCase(
       this._container.worldRepository,
       this._container.geometryService,
-      this._container.layerService
+      this._container.layerService,
+      this._container.polygonEditService // 注入
     );
+    // 注意: 分割されたUseCase (AddFeatureUseCaseなど) は EditFeatureUseCase 内部で
+    //       インスタンス化されるため、ここでは登録不要。
 
     this._container.navigateTimeUseCase = new NavigateTimeUseCase(
       this._container.timeService
@@ -143,79 +153,65 @@ export class DependencyInjection {
     toolbarContainer,
     sidebarContainer
   ) {
-    // ビューモデル
-    // EditingViewModel を先に生成
+    // --- 変更なし ---
+    // ViewModel, Renderer, View, Controller の生成
+    // EditingViewModel は EditFeatureUseCase (ファサード) を受け取る
+    // MapViewModel は EditFeatureUseCase (ファサード) を受け取る
+    // SidebarView は EditingViewModel を受け取る
+    // ... (元のコードと同じ) ...
     this._container.editingViewModel = new EditingViewModel(
-      this._container.editFeatureUseCase,
+      this._container.editFeatureUseCase, // ファサードを注入
       this._container.eventBus
     );
-
     this._container.mapViewModel = new MapViewModel(
-      this._container.editFeatureUseCase,
+      this._container.editFeatureUseCase, // ファサードを注入
       this._container.navigateTimeUseCase,
       this._container.manageLayersUseCase,
       this._container.geometryService,
       this._container.eventBus
-      // Note: MapViewModelはEditingViewModelに依存しないように修正済み (のはず)
     );
-
     this._container.timelineViewModel = new TimelineViewModel(
       this._container.navigateTimeUseCase,
       this._container.eventBus
     );
-
-    // レンダラー
     this._container.renderer = new SVGRenderer(
       mapContainer,
       { width: mapContainer.clientWidth, height: mapContainer.clientHeight }
     );
-
-    // ビュー
     this._container.mapView = new MapView(
       mapContainer,
       this._container.mapViewModel,
-      this._container.editingViewModel, // MapViewにはEditingViewModelを渡す
+      this._container.editingViewModel,
       this._container.viewportManager,
       this._container.renderer,
       this._container.configManager
     );
-
     this._container.timelineView = new TimelineView(
       timelineContainer,
       this._container.timelineViewModel
     );
-
     this._container.toolbarView = new ToolbarView(
       toolbarContainer,
       this._container.editingViewModel,
       this._container.mapView
     );
-
     this._container.sidebarView = new SidebarView(
       sidebarContainer,
       this._container.mapViewModel,
       this._container.manageLayersUseCase,
-      // --- 修正箇所 ---
-      // EditFeatureUseCaseではなくEditingViewModelを注入する
-      // this._container.editFeatureUseCase,
-      this._container.editingViewModel,
-      // --- 修正箇所おわり ---
+      this._container.editingViewModel, // EditingViewModel を注入
       this._container.eventBus
     );
-
-    // コントローラ
     this._container.mapController = new MapController(
       this._container.mapView,
       this._container.mapViewModel,
       this._container.editingViewModel,
       this._container.viewportManager
     );
-
     this._container.timelineController = new TimelineController(
       this._container.timelineView,
       this._container.timelineViewModel
     );
-
     this._container.toolController = new ToolController(
       this._container.toolbarView,
       this._container.editingViewModel
