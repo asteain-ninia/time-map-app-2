@@ -90,6 +90,8 @@ export class MapView {
     // イベントリスナー設定 (EventHandlerに委譲)
     this._eventHandler.setupEventListeners();
 
+    window.addEventListener('resize', this._handleResize.bind(this)); // MapViewのメソッドをバインド
+
     // ViewModel等の購読
     this._viewModel.addObserver(this._onViewModelChanged.bind(this));
     this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this));
@@ -97,7 +99,7 @@ export class MapView {
 
     // 初期ズームと初回レンダリング
     requestAnimationFrame(() => {
-        this._eventHandler._onResize(); // リサイズハンドラを呼んで初期ズーム設定
+        this._handleResize();
         this._render();
     });
   }
@@ -195,6 +197,25 @@ export class MapView {
 
     // 3. UI更新
     this._updateActionButtonsVisibility();
+  }
+
+  /**
+   * リサイズのハンドラ
+   * @private
+   */
+   _handleResize() {
+    const rect = this._container.getBoundingClientRect();
+    const width = Math.floor(rect.width);
+    const height = Math.floor(rect.height);
+
+    // Check if dimensions are valid before updating
+    if (width > 0 && height > 0) {
+        this._renderer.resize(width, height);
+        this._viewportManager.resize(width, height);
+        // this._render(); // resize が viewportManager 経由で _onViewportChanged -> _render をトリガーするはず
+    } else {
+        console.warn("MapView: Invalid container dimensions on resize.", { width, height });
+    }
   }
 
   // --- Public Methods (ToolbarViewなどから呼び出される) ---
