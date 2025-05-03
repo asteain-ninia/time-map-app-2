@@ -1,100 +1,96 @@
 import { Feature } from './Feature.js';
+import { Property } from '../value-objects/Property.js';
+// Vertex は直接使わないが、概念として関連
 
 /**
- * 面情報を表すエンティティ
+ * リングの構造定義 (インターフェースの代わり)
+ * @typedef {object} Ring
+ * @property {string} id - リングの一意なID (例: "ring-1234567890-123")
+ * @property {string[]} vertexIds - 頂点IDの配列 (順序付き、最低3点)
+ * @property {boolean} isOuter - これが外周リングか穴リングか (true: 外周, false: 穴)
+ * @property {string | null} parentId - このリングを直接含む外周リングのID (ポリゴンの最外周リングまたは飛び地外周リングの場合はnull)
+ */
+
+/**
+ * 面情報を表すエンティティ (リングベース構造)
  */
 export class Polygon extends Feature {
+  /** @type {ReadonlyArray<Ring>} */
+  _rings;
+  /** @type {string} */
+  _parentId; // ドメイン階層における親ポリゴンのID
+  /** @type {ReadonlyArray<string>} */
+  _childIds; // ドメイン階層における子ポリゴンのID配列
+
   /**
-   * 面情報オブジェクトを作成
+   * 面情報オブジェクトを作成 (リングベース)
    * @param {string} id - 一意のID
-   * @param {string[]|null} vertexIds - 頂点IDの配列（外周、順序付き）またはnull（下位領域による構成時）
    * @param {Property[]} properties - 時間依存プロパティの配列
    * @param {string} layerId - 所属レイヤーID
-   * @param {string[][]} holesVertexIds - 穴の頂点IDの配列の配列
-   * @param {string} parentId - 上位領域ID（最上位の場合は "0"）
-   * @param {string[]} childIds - 下位領域IDの配列
-   * @param {boolean} isMultiPolygon - 飛び地を持つ複合ポリゴンかどうか
-   * @param {Object[]} subPolygons - 飛び地ポリゴン情報の配列（isMultiPolygonがtrueの場合） { vertexIds: string[], holesVertexIds: string[][] }
+   * @param {string} parentId - ドメイン階層における上位領域ID（最上位の場合は "0"）
+   * @param {string[]} childIds - ドメイン階層における下位領域IDの配列
+   * @param {Ring[]} rings - このポリゴンを構成するリングの配列
    */
-  constructor(id, vertexIds, properties, layerId, holesVertexIds = [], parentId = "0", childIds = [], isMultiPolygon = false, subPolygons = []) {
-    // vertexIdsがnullでも空配列としてsuperに渡す (Featureは空配列を受け付ける想定)
-    super(id, vertexIds || [], properties, layerId);
+  constructor(id, properties, layerId, parentId = "0", childIds = [], rings = []) {
+    // Feature基底クラスのコンストラクタ呼び出し
+    // リングベースでは Feature._vertexIds は直接使わないが、空配列を渡しておく
+    super(id, [], properties, layerId);
 
-    this._holesVertexIds = holesVertexIds.map(hole => [...hole]);
     this._parentId = parentId;
     this._childIds = [...childIds];
-    this._isMultiPolygon = isMultiPolygon;
-    // isMultiPolygon が false でも subPolygons が渡される場合があるため、フラグで判定し、各要素をコピー
-    this._subPolygons = isMultiPolygon
-        ? subPolygons.map(sub => ({
-            vertexIds: [...(sub.vertexIds || [])],
-            holesVertexIds: (sub.holesVertexIds || []).map(hole => [...hole])
-          }))
-        : [];
 
+    // リング配列のディープコピーと不変性の確保
+    this._rings = rings.map(ring => ({
+        id: ring.id,
+        vertexIds: [...ring.vertexIds],
+        isOuter: ring.isOuter,
+        parentId: ring.parentId // null も許容
+    }));
 
-    // 不変性を保証
-    this._holesVertexIds.forEach(hole => Object.freeze(hole));
-    Object.freeze(this._holesVertexIds);
+    // リング配列と各リングの頂点配列を凍結
+    this._rings.forEach(ring => {
+        Object.freeze(ring.vertexIds);
+        Object.freeze(ring); // リングオブジェクト自体も凍結
+    });
+    Object.freeze(this._rings);
     Object.freeze(this._childIds);
-    this._subPolygons.forEach(sub => {
-        Object.freeze(sub.vertexIds);
-        sub.holesVertexIds.forEach(hole => Object.freeze(hole));
-        Object.freeze(sub.holesVertexIds);
-        Object.freeze(sub); // subPolygonオブジェクト自体も凍結
-    });
-    Object.freeze(this._subPolygons);
 
-
-    // 面情報の検証
-    if (vertexIds && vertexIds.length > 0) {
-      // 直接頂点で定義される場合、少なくとも3つの頂点が必要
-      if (vertexIds.length < 3) {
-        throw new Error('Polygon must have at least three vertices');
-      }
-    } else if (!isMultiPolygon && childIds.length === 0) { // MultiPolygonでなく、子もない場合
-        // 頂点がなく、子もなく、MultiPolygonでもない場合はエラー
-         throw new Error('Polygon must either have vertices, child polygons, or be a valid MultiPolygon');
-    } else if (isMultiPolygon && subPolygons.length === 0 && (!vertexIds || vertexIds.length === 0)) {
-        // MultiPolygon だがサブポリゴンも本体の頂点もない場合もエラー
-         throw new Error('MultiPolygon must have at least one sub-polygon or main vertices');
+    // --- 基本的な検証 ---
+    if (this._rings.length === 0 && this._childIds.length === 0) {
+      throw new Error('Polygon must have at least one ring or child polygons.');
     }
+    // リングを持たないが子を持つ場合はOK (形状は子から計算される)
 
-
-    // 穴の検証
-    this._holesVertexIds.forEach(hole => {
-      if (hole.length < 3) {
-        throw new Error('Polygon hole must have at least three vertices');
+    this._rings.forEach((ring, index) => {
+      if (!ring.id) {
+          throw new Error(`Ring at index ${index} must have an ID.`);
       }
+      if (!Array.isArray(ring.vertexIds) || ring.vertexIds.length < 3) {
+        throw new Error(`Ring (id: ${ring.id}) must have at least three vertices.`);
+      }
+      if (typeof ring.isOuter !== 'boolean') {
+          throw new Error(`Ring (id: ${ring.id}) must have an 'isOuter' boolean property.`);
+      }
+      if (ring.parentId !== null && typeof ring.parentId !== 'string') {
+           throw new Error(`Ring (id: ${ring.id}) parentId must be a string or null.`);
+      }
+      // parentId が null で isOuter=false (穴) は不正だが、
+      // 完全な検証は PolygonEditService で行うこととし、ここでは基本的な型と構造のみチェック
     });
-
-    // 飛び地の検証
-    if (isMultiPolygon) {
-      this._subPolygons.forEach((subPoly, index) => {
-        if (!subPoly.vertexIds || subPoly.vertexIds.length < 3) {
-          throw new Error(`Each sub-polygon (index ${index}) must have at least three vertices`);
-        }
-        // 飛び地の穴の検証
-        (subPoly.holesVertexIds || []).forEach((hole, holeIndex) => {
-            if (!hole || hole.length < 3) {
-                 throw new Error(`Hole (index ${holeIndex}) in sub-polygon (index ${index}) must have at least three vertices`);
-            }
-        });
-      });
-    }
   }
 
   /**
-   * 穴の頂点IDの配列の配列を取得
-   * @returns {string[][]} 穴の頂点ID配列の配列
+   * このポリゴンを構成するリングの配列を取得 (読み取り専用)
+   * @returns {ReadonlyArray<Ring>} リングの配列
    */
-  get holesVertexIds() {
-    // 不変性を保つためディープコピーを返す
-    return this._holesVertexIds.map(hole => [...hole]);
+  get rings() {
+    // 不変性を保つためディープコピーを返すのが理想だが、パフォーマンス考慮でReadOnlyを返す
+    // (コンストラクタで凍結済み)
+    return this._rings;
   }
 
   /**
-   * 上位領域IDを取得
+   * ドメイン階層における上位領域IDを取得
    * @returns {string} 上位領域ID
    */
   get parentId() {
@@ -102,31 +98,11 @@ export class Polygon extends Feature {
   }
 
   /**
-   * 下位領域IDの配列を取得
-   * @returns {string[]} 下位領域IDの配列
+   * ドメイン階層における下位領域IDの配列を取得 (読み取り専用コピー)
+   * @returns {ReadonlyArray<string>} 下位領域IDの配列
    */
   get childIds() {
-    return [...this._childIds];
-  }
-
-  /**
-   * 飛び地を持つ複合ポリゴンかどうかを取得
-   * @returns {boolean} 飛び地を持つならtrue
-   */
-  get isMultiPolygon() {
-    return this._isMultiPolygon;
-  }
-
-  /**
-   * 飛び地ポリゴン情報の配列を取得
-   * @returns {Object[]} 飛び地情報の配列 { vertexIds: string[], holesVertexIds: string[][] }
-   */
-  get subPolygons() {
-    // 不変性を保つためディープコピーを返す
-    return this._subPolygons.map(sub => ({
-        vertexIds: [...sub.vertexIds],
-        holesVertexIds: sub.holesVertexIds.map(hole => [...hole])
-    }));
+    return this._childIds; // 凍結済みなのでコピー不要
   }
 
   /**
@@ -138,32 +114,25 @@ export class Polygon extends Feature {
   }
 
   /**
-   * 形状が直接頂点で定義されるかどうかを判定
-   * @returns {boolean} 直接頂点で定義されるならtrue
+   * ポリゴンが直接的な形状（リング）を持つか判定
+   * @returns {boolean} 1つ以上のリングを持つならtrue
    */
-  hasDirectGeometry() {
-    // vertexIds が null または空配列でないことを確認
-    return Array.isArray(this._vertexIds) && this._vertexIds.length > 0;
+  hasShapeRings() {
+      return this._rings.length > 0;
   }
 
+  // --- Featureクラスから継承したメソッドのオーバーライド ---
+
   /**
-   * 新しい頂点IDの配列で新インスタンスを作成 (Featureクラスのメソッドをオーバーライド)
-   * @param {string[] | null} vertexIds - 新しい外周頂点IDの配列、またはnull
-   * @returns {Polygon} 新しい面情報オブジェクト
+   * @deprecated リングベース構造ではこのメソッドは直接使用せず、リング操作メソッド(addRing/removeRing/updateRingVertices等)を使用してください。
+   *             プロパティやレイヤーIDの更新には withProperties, withLayerId を使用してください。
    */
   withVertexIds(vertexIds) {
-      // Polygon固有のプロパティを含めて新しいインスタンスを生成
-      return new Polygon(
-          this._id,
-          vertexIds, // 新しい頂点ID配列を使用
-          this._properties,
-          this._layerId,
-          this._holesVertexIds, // 穴情報はそのまま引き継ぐ
-          this._parentId,
-          this._childIds,
-          this._isMultiPolygon,
-          this._subPolygons // 飛び地情報もそのまま引き継ぐ
-      );
+      console.warn("Polygon.withVertexIds is deprecated. Use ring manipulation methods instead.");
+      // このメソッドはリング構造では意味をなさないため、現状維持またはエラーを投げる
+      // (もし Feature 基底クラスがこれを要求するなら、エラーにするか、
+      //  特定の外周リングを更新するなどの特殊な意味付けが必要)
+      return this; // 何も変更しない
   }
 
   /**
@@ -172,17 +141,14 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withProperties(properties) {
-    // Polygon固有のプロパティを含めて新しいインスタンスを生成
+    // リング構造や他のPolygon固有プロパティは維持
     return new Polygon(
       this._id,
-      this._vertexIds, // 元の頂点IDを引き継ぐ
-      properties,      // 新しいプロパティ配列を使用
-      this._layerId,   // 元のレイヤーIDを引き継ぐ
-      this._holesVertexIds, // 元の穴情報を引き継ぐ
-      this._parentId,       // 元の親IDを引き継ぐ
-      this._childIds,       // 元の子ID配列を引き継ぐ
-      this._isMultiPolygon, // 元のMultiPolygonフラグを引き継ぐ
-      this._subPolygons     // 元の飛び地情報を引き継ぐ
+      properties, // 新しいプロパティ
+      this._layerId,
+      this._parentId,
+      this._childIds,
+      this._rings // リングはそのまま引き継ぐ
     );
   }
 
@@ -192,41 +158,101 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withLayerId(layerId) {
+    // リング構造や他のPolygon固有プロパティは維持
     return new Polygon(
       this._id,
-      this._vertexIds,
       this._properties,
-      layerId, // 新しいレイヤーIDを使用
-      this._holesVertexIds,
+      layerId, // 新しいレイヤーID
       this._parentId,
       this._childIds,
-      this._isMultiPolygon,
-      this._subPolygons
+      this._rings // リングはそのまま引き継ぐ
     );
   }
 
+  // --- 新しいリング操作メソッド (例) ---
+  // PolygonEditService から呼び出されることを想定。
+  // これらのメソッドは Polygon の不変性を保つ。
+
   /**
-   * 新しい穴の頂点IDの配列で新インスタンスを作成
-   * @param {string[][]} holesVertexIds - 新しい穴の頂点IDの配列の配列
-   * @returns {Polygon} 新しい面情報オブジェクト
+   * 新しいリング配列でインスタンスを生成する内部ヘルパー
+   * @param {Ring[]} newRings
+   * @returns {Polygon}
+   * @private
    */
-  withHolesVertexIds(holesVertexIds) {
-    // 状態が変わらない場合は元のインスタンスを返す (イミュータブル最適化)
-    if (JSON.stringify(this._holesVertexIds) === JSON.stringify(holesVertexIds)) {
-        return this;
-    }
-    return new Polygon(
-      this._id,
-      this._vertexIds,
-      this._properties,
-      this._layerId,
-      holesVertexIds, // 新しい穴情報を使用
-      this._parentId,
-      this._childIds,
-      this._isMultiPolygon,
-      this._subPolygons
-    );
+   _withRings(newRings) {
+       // TODO: ここで基本的なリング構造の検証を行うべき
+       // (PolygonEditServiceでの完全な検証とは別に)
+       return new Polygon(
+           this._id, this._properties, this._layerId,
+           this._parentId, this._childIds, newRings
+       );
+   }
+
+  /**
+   * 特定のリングの頂点配列を更新した新しいPolygonインスタンスを返す
+   * @param {string} ringId - 更新するリングのID
+   * @param {string[]} newVertexIds - 新しい頂点ID配列
+   * @returns {Polygon} 更新されたPolygonインスタンス
+   * @throws {Error} ringIdが見つからない場合や newVertexIds が不正な場合
+   */
+  withUpdatedRingVertices(ringId, newVertexIds) {
+      if (!Array.isArray(newVertexIds) || newVertexIds.length < 3) {
+          throw new Error("New vertex IDs must be an array with at least 3 elements.");
+      }
+      const ringIndex = this._rings.findIndex(r => r.id === ringId);
+      if (ringIndex === -1) {
+          throw new Error(`Ring with id ${ringId} not found in polygon ${this.id}.`);
+      }
+      const newRings = this._rings.map((ring, index) => {
+          if (index === ringIndex) {
+              // 対象リングの vertexIds を更新した新しいオブジェクトを返す
+              return { ...ring, vertexIds: [...newVertexIds] };
+          }
+          return ring; // 他のリングはそのまま
+      });
+      return this._withRings(newRings); // 新しいリング配列でインスタンス生成
   }
+
+   /**
+    * 新しいリングを追加した新しいPolygonインスタンスを返す
+    * @param {Ring} newRing - 追加するリングオブジェクト
+    * @returns {Polygon} 更新されたPolygonインスタンス
+    * @throws {Error} リングIDが重複する場合など
+    */
+   withAddedRing(newRing) {
+       if (!newRing || !newRing.id || !Array.isArray(newRing.vertexIds) || typeof newRing.isOuter !== 'boolean') {
+           throw new Error("Invalid ring data provided.");
+       }
+       if (this._rings.some(r => r.id === newRing.id)) {
+           throw new Error(`Ring with id ${newRing.id} already exists in polygon ${this.id}.`);
+       }
+       // parentId の存在チェックなどは Service 層で行う前提
+       const newRings = [...this._rings, newRing];
+       return this._withRings(newRings);
+   }
+
+   /**
+    * 特定のリングを削除した新しいPolygonインスタンスを返す
+    * @param {string} ringIdToRemove - 削除するリングのID
+    * @returns {Polygon} 更新されたPolygonインスタンス
+    * @throws {Error} ringIdが見つからない場合、または削除により子リングの親がなくなる場合（Serviceで処理すべき）
+    */
+   withRemovedRing(ringIdToRemove) {
+       const ringExists = this._rings.some(r => r.id === ringIdToRemove);
+       if (!ringExists) {
+           console.warn(`Ring with id ${ringIdToRemove} not found in polygon ${this.id}. Returning original polygon.`);
+           return this; // 見つからない場合は変更しない
+       }
+       // 削除対象が親となっている子リングがないかチェック (本来はServiceで)
+       const hasDependentChildren = this._rings.some(r => r.parentId === ringIdToRemove);
+       if (hasDependentChildren) {
+           throw new Error(`Cannot remove ring ${ringIdToRemove} because other rings depend on it.`);
+       }
+       const newRings = this._rings.filter(r => r.id !== ringIdToRemove);
+       return this._withRings(newRings);
+   }
+
+  // --- ドメイン階層操作メソッド ---
 
   /**
    * 新しい上位領域IDで新インスタンスを作成
@@ -234,40 +260,11 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withParentId(parentId) {
-    if (this._parentId === parentId) return this; // 変化なし
+    if (this._parentId === parentId) return this;
     return new Polygon(
-      this._id,
-      this._vertexIds,
-      this._properties,
-      this._layerId,
-      this._holesVertexIds,
-      parentId, // 新しい親IDを使用
-      this._childIds,
-      this._isMultiPolygon,
-      this._subPolygons
-    );
-  }
-
-  /**
-   * 新しい下位領域IDの配列で新インスタンスを作成
-   * @param {string[]} childIds - 新しい下位領域IDの配列
-   * @returns {Polygon} 新しい面情報オブジェクト
-   */
-  withChildIds(childIds) {
-    // 状態が変わらない場合は元のインスタンスを返す (イミュータブル最適化)
-    if (this._childIds.length === childIds.length && this._childIds.every((id, i) => id === childIds[i])) {
-        return this;
-    }
-    return new Polygon(
-      this._id,
-      this._vertexIds,
-      this._properties,
-      this._layerId,
-      this._holesVertexIds,
-      this._parentId,
-      childIds, // 新しい子ID配列を使用
-      this._isMultiPolygon,
-      this._subPolygons
+      this._id, this._properties, this._layerId,
+      parentId, // 新しい親ID
+      this._childIds, this._rings
     );
   }
 
@@ -277,9 +274,13 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   addChildId(childId) {
-    // 重複チェック
     if (this._childIds.includes(childId)) return this;
-    return this.withChildIds([...this._childIds, childId]);
+    return new Polygon(
+      this._id, this._properties, this._layerId,
+      this._parentId,
+      [...this._childIds, childId], // 子ID追加
+      this._rings
+    );
   }
 
   /**
@@ -289,112 +290,85 @@ export class Polygon extends Feature {
    */
   removeChildId(childId) {
     const newChildIds = this._childIds.filter(id => id !== childId);
-    // 変化がなければ元のインスタンスを返す (イミュータブル最適化)
     if (newChildIds.length === this._childIds.length) return this;
-    return this.withChildIds(newChildIds);
+    return new Polygon(
+      this._id, this._properties, this._layerId,
+      this._parentId,
+      newChildIds, // 子ID削除
+      this._rings
+    );
+  }
+
+
+  // --- 古いメソッド (非推奨化) ---
+
+  /**
+   * @deprecated リングベース構造では非推奨。代わりに Polygon.rings を使用してください。
+   */
+  get holesVertexIds() {
+    console.warn("Polygon.holesVertexIds getter is deprecated. Use polygon.rings instead.");
+    // 最上位の穴リングの頂点ID配列を返す（簡易的な互換性のため）
+    return this._rings.filter(r => !r.isOuter && r.parentId === null).map(r => r.vertexIds);
   }
 
   /**
-   * 飛び地情報を更新した新インスタンスを作成
-   * @param {boolean} isMultiPolygon - 飛び地を持つかどうか
-   * @param {Object[]} subPolygons - 新しい飛び地情報の配列 { vertexIds: string[], holesVertexIds: string[][] }
-   * @returns {Polygon} 新しい面情報オブジェクト
+   * @deprecated リングベース構造では非推奨。代わりに Polygon.rings を使用してください。
+   */
+  get isMultiPolygon() {
+    console.warn("Polygon.isMultiPolygon getter is deprecated. Use polygon.rings instead.");
+    // 複数の最上位外周リングがある場合に true を返す（簡易的な互換性のため）
+    return this._rings.filter(r => r.isOuter && r.parentId === null).length > 1;
+  }
+
+  /**
+   * @deprecated リングベース構造では非推奨。代わりに Polygon.rings を使用してください。
+   */
+  get subPolygons() {
+    console.warn("Polygon.subPolygons getter is deprecated. Use polygon.rings instead.");
+    // 最上位の飛び地リング（と、それにネストするリング全て）を旧形式に変換して返すのは複雑なため、空配列を返す
+    return [];
+  }
+
+   /**
+    * @deprecated リングベース構造では非推奨。代わりに hasShapeRings() を使用してください。
+    */
+   hasDirectGeometry() {
+      console.warn("Polygon.hasDirectGeometry is deprecated. Use hasShapeRings() instead.");
+      return this.hasShapeRings();
+   }
+
+  /**
+   * @deprecated リングベース構造では非推奨。PolygonEditServiceを使用してリングを操作してください。
+   */
+  withHolesVertexIds(holesVertexIds) {
+    console.warn("Polygon.withHolesVertexIds is deprecated. Use ring manipulation methods via PolygonEditService instead.");
+    return this; // 何もしない
+  }
+
+  /**
+   * @deprecated リングベース構造では非推奨。PolygonEditServiceを使用してリングを操作してください。
    */
   withMultiPolygonData(isMultiPolygon, subPolygons = []) {
-    // isMultiPolygon フラグに合わせて subPolygons を調整
-    const finalSubPolygons = isMultiPolygon
-      ? subPolygons.map(sub => ({ // deep copy
-          vertexIds: [...(sub.vertexIds || [])],
-          holesVertexIds: (sub.holesVertexIds || []).map(hole => [...hole])
-        }))
-      : [];
-
-    // 状態が変わらない場合は元のインスタンスを返す (イミュータブル最適化)
-    if (this._isMultiPolygon === isMultiPolygon &&
-        JSON.stringify(this._subPolygons) === JSON.stringify(finalSubPolygons)) {
-      return this;
-    }
-    return new Polygon(
-      this._id,
-      this._vertexIds,
-      this._properties,
-      this._layerId,
-      this._holesVertexIds,
-      this._parentId,
-      this._childIds,
-      isMultiPolygon,
-      finalSubPolygons // 調整後の飛び地情報を使用
-    );
+    console.warn("Polygon.withMultiPolygonData is deprecated. Use ring manipulation methods via PolygonEditService instead.");
+    return this; // 何もしない
   }
 
   /**
-   * 特定の飛び地の穴情報を更新した新インスタンスを作成
-   * @param {number} subPolygonIndex - 穴を更新する飛び地のインデックス
-   * @param {string[][]} newHolesVertexIds - 新しい穴情報の配列
-   * @returns {Polygon} 新しい面情報オブジェクト
+   * @deprecated リングベース構造では非推奨。PolygonEditServiceを使用してリングを操作してください。
    */
   withSubPolygonHoles(subPolygonIndex, newHolesVertexIds) {
-    if (!this._isMultiPolygon || subPolygonIndex < 0 || subPolygonIndex >= this._subPolygons.length) {
-      console.warn(`Invalid subPolygonIndex ${subPolygonIndex} or polygon is not a MultiPolygon.`);
-      return this; // 不正な場合は変更しない
-    }
-
-    // 新しい飛び地配列を作成
-    const updatedSubPolygons = this._subPolygons.map((sub, index) => {
-        if (index === subPolygonIndex) {
-            // 対象の飛び地の穴情報を更新 (deep copy)
-            return {
-                ...sub, // vertexIds はそのまま
-                holesVertexIds: newHolesVertexIds.map(hole => [...hole])
-            };
-        }
-        return sub; // 他の飛び地はそのまま
-    });
-
-    // 状態が変わらないかチェック (簡易的にJSON比較)
-    if (JSON.stringify(this._subPolygons[subPolygonIndex].holesVertexIds) === JSON.stringify(newHolesVertexIds)) {
-        return this;
-    }
-
-    // 新しいインスタンスを生成
-    return new Polygon(
-      this._id,
-      this._vertexIds,
-      this._properties,
-      this._layerId,
-      this._holesVertexIds,
-      this._parentId,
-      this._childIds,
-      this._isMultiPolygon,
-      updatedSubPolygons // 更新された飛び地情報を使用
-    );
+      console.warn("Polygon.withSubPolygonHoles is deprecated. Use ring manipulation methods via PolygonEditService instead.");
+      return this; // 何もしない
   }
 
-
   /**
-   * 新しい面情報を作成するファクトリーメソッド
-   * @param {string} id - 一意のID
-   * @param {Property[]} properties - プロパティの配列
-   * @param {Object} geometry - 形状情報 { vertexIds?: string[] | null, holesVertexIds?: string[][], parentId?: string, isMultiPolygon?: boolean, subPolygons?: Object[], childIds?: string[] }
-   * @param {string} layerId - レイヤーID
-   * @returns {Polygon} 新しい面情報オブジェクト
+   * @deprecated リングベース構造では、PolygonEditService を使用して Polygon インスタンスを生成してください。
    */
   static create(id, properties, geometry, layerId) {
-    // geometry.vertexIds が undefined でも null でも空配列として扱う
-    const vertexIds = geometry.vertexIds || null; // 下位領域を持つ場合を考慮し null 許容
-    const subPolygons = geometry.subPolygons || [];
-    const isMulti = geometry.isMultiPolygon !== undefined ? geometry.isMultiPolygon : (subPolygons.length > 0 || !vertexIds); // subPolygonsがあればMulti、vertexIdsがなければMulti(子がなければエラーになるがそれはコンストラクタで)
-
-    return new Polygon(
-      id,
-      vertexIds,
-      properties,
-      layerId,
-      geometry.holesVertexIds || [],
-      geometry.parentId || "0",
-      geometry.childIds || [],
-      isMulti, // isMultiPolygonを渡す
-      subPolygons // subPolygonsを渡す
-    );
+    console.error("Polygon.create is deprecated. Use the Polygon constructor directly after preparing the 'rings' array using PolygonEditService or similar logic.");
+    // このメソッドで古い geometry から rings を生成するのは複雑すぎるため、エラーにするか、
+    // 最低限の互換性（外周のみ）を提供する。ここではエラーを投げる。
+    throw new Error("Polygon.create is deprecated. Please use the constructor with a pre-built 'rings' array.");
+    // return new Polygon(id, properties, layerId, geometry.parentId || "0", geometry.childIds || [], []);
   }
 }
