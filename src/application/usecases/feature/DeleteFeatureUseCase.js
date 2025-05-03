@@ -1,3 +1,5 @@
+// src\application\usecases\feature\DeleteFeatureUseCase.js
+
 import { Polygon } from '../../../domain/entities/Polygon';
 
 /**
@@ -37,19 +39,33 @@ export class DeleteFeatureUseCase {
 
     // 削除対象の全頂点IDを収集
     const vertexIdsToCheck = new Set();
-    if (feature.vertexIds) feature.vertexIds.forEach(id => vertexIdsToCheck.add(id));
     if (feature instanceof Polygon) {
-        (feature.holesVertexIds || []).forEach(hole => hole.forEach(id => vertexIdsToCheck.add(id)));
-        if(feature.isMultiPolygon && feature.subPolygons) {
-            feature.subPolygons.forEach(sub => {
-                (sub.vertexIds || []).forEach(id => vertexIdsToCheck.add(id));
-                (sub.holesVertexIds || []).forEach(hole => hole.forEach(id => vertexIdsToCheck.add(id)));
+        // リングベースのポリゴンから頂点IDを収集
+        if (feature.rings && Array.isArray(feature.rings)) {
+            feature.rings.forEach(ring => {
+                if (ring.vertexIds && Array.isArray(ring.vertexIds)) {
+                    ring.vertexIds.forEach(id => vertexIdsToCheck.add(id));
+                }
             });
         }
+        // 古い形式へのフォールバック (一時的、移行完了後は削除)
+        else if (feature.vertexIds || feature.holesVertexIds || feature.subPolygons) {
+             console.warn(`Polygon ${feature.id} might be using deprecated properties during deletion.`);
+             if (feature.vertexIds) feature.vertexIds.forEach(id => vertexIdsToCheck.add(id));
+             (feature.holesVertexIds || []).forEach(hole => hole.forEach(id => vertexIdsToCheck.add(id)));
+             if (feature.isMultiPolygon && feature.subPolygons) {
+                 feature.subPolygons.forEach(sub => {
+                     (sub.vertexIds || []).forEach(id => vertexIdsToCheck.add(id));
+                     (sub.holesVertexIds || []).forEach(hole => hole.forEach(id => vertexIdsToCheck.add(id)));
+                 });
+             }
+        }
+    } else if (feature.vertexIds) { // Point or Line
+        feature.vertexIds.forEach(id => vertexIdsToCheck.add(id));
     }
 
 
-    // ポリゴンの依存関係チェックと処理
+    //ポリゴンの依存関係チェックと処理 (ここはリングベース移行後も基本構造は同じ)
     if (feature instanceof Polygon) {
       // 下位領域チェック
       if (feature.hasChildren()) {
@@ -60,6 +76,7 @@ export class DeleteFeatureUseCase {
         const parentIndex = world.features.findIndex(f => f.id === feature.parentId);
         if (parentIndex !== -1) {
           const parent = world.features[parentIndex];
+          // 親がPolygonインスタンスで、removeChildIdメソッドを持つか確認
           if (parent instanceof Polygon && typeof parent.removeChildId === 'function') {
             const updatedParent = parent.removeChildId(featureId);
             world.features[parentIndex] = updatedParent;

@@ -1,3 +1,5 @@
+// src\infrastructure\persistence\JSONSerializer.js
+
 import { Vertex } from '../../domain/entities/Vertex';
 import { Point } from '../../domain/entities/Point';
 import { Line } from '../../domain/entities/Line';
@@ -17,7 +19,7 @@ export class JSONSerializer {
    */
   serialize(world) {
     const data = {
-      version: "1.0",
+      version: "1.1-ringbased", // バージョン更新 (リングベース移行)
       layers: world.layers.map(layer => this._serializeLayer(layer)),
       vertices: world.vertices.map(vertex => this._serializeVertex(vertex)),
       points: [],
@@ -25,7 +27,7 @@ export class JSONSerializer {
       polygons: [],
       metadata: world.metadata || {}
     };
-    
+
     // 地理オブジェクトを種類別に分類
     for (const feature of world.features) {
       if (feature instanceof Point) {
@@ -36,7 +38,7 @@ export class JSONSerializer {
         data.polygons.push(this._serializePolygon(feature));
       }
     }
-    
+
     return JSON.stringify(data, null, 2);
   }
 
@@ -47,51 +49,53 @@ export class JSONSerializer {
    */
   deserialize(json) {
     const data = JSON.parse(json);
-    
+
     // バージョンチェック
-    if (!data.version || data.version !== "1.0") {
-      console.warn(`Warning: Unknown data version ${data.version}`);
+    // リングベース対応バージョン 1.1 以降を期待
+    if (!data.version || !data.version.startsWith("1.1")) {
+      console.warn(`Warning: Data version ${data.version} might not be fully compatible with ring-based polygons.`);
+      // ここでデータ移行ロジックを入れることも可能だが、今回は警告のみ
     }
-    
+
     const world = {
       // レイヤーの復元
       layers: (data.layers || []).map(layer => this._deserializeLayer(layer)),
-      
+
       // 頂点の復元
       vertices: (data.vertices || []).map(vertex => this._deserializeVertex(vertex)),
-      
-      // の復元（空の配列で初期化）
+
+      // 地物の復元（空の配列で初期化）
       features: [],
-      
+
       // メタデータの復元
       metadata: data.metadata || {}
     };
-    
+
     // 点情報の復元
     if (data.points) {
       for (const pointData of data.points) {
         world.features.push(this._deserializePoint(pointData));
       }
     }
-    
+
     // 線情報の復元
     if (data.lines) {
       for (const lineData of data.lines) {
         world.features.push(this._deserializeLine(lineData));
       }
     }
-    
+
     // 面情報の復元
     if (data.polygons) {
       for (const polygonData of data.polygons) {
         world.features.push(this._deserializePolygon(polygonData));
       }
     }
-    
+
     return world;
   }
 
-  // 以下、個別のシリアライズ/デシリアライズメソッド
+  // --- 個別シリアライズ/デシリアライズメソッド (Point, Line, Vertex, Layer, TimePoint, Property は変更なし) ---
 
   /**
    * 頂点をシリアライズ
@@ -127,15 +131,15 @@ export class JSONSerializer {
     const result = {
       year: timePoint.year
     };
-    
+
     if (timePoint.month !== null) {
       result.month = timePoint.month;
     }
-    
+
     if (timePoint.day !== null) {
       result.day = timePoint.day;
     }
-    
+
     return result;
   }
 
@@ -164,23 +168,19 @@ export class JSONSerializer {
       timePoint: this._serializeTimePoint(property.timePoint),
       name: property.name,
       description: property.description,
-      ...property.getAttributes()
+      attributes: property.getAttributes() // 修正: ...展開をやめ、メソッド経由で取得
     };
-    
-    if (property.startTime) {
-      result.timeRange = {
-        start: this._serializeTimePoint(property.startTime)
-      };
-      
+
+    if (property.startTime || property.endTime) { // startかendどちらかがあればtimeRangeを作る
+      result.timeRange = {};
+      if (property.startTime) {
+        result.timeRange.start = this._serializeTimePoint(property.startTime);
+      }
       if (property.endTime) {
         result.timeRange.end = this._serializeTimePoint(property.endTime);
       }
-    } else if (property.endTime) {
-      result.timeRange = {
-        end: this._serializeTimePoint(property.endTime)
-      };
     }
-    
+
     return result;
   }
 
@@ -192,29 +192,33 @@ export class JSONSerializer {
    */
   _deserializeProperty(data) {
     const timePoint = this._deserializeTimePoint(data.timePoint);
-    
+
     // 基本属性と追加属性を分離
-    const { timePoint: tp, timeRange, name, description, ...attributes } = data;
-    
+    // 修正: attributes フィールドを直接参照するように変更
+    const { timePoint: tp, timeRange, name, description, attributes, ...legacyAttributes } = data;
+
+    // timeRange より前の古い形式の属性も attributes にマージする（互換性のため）
+    const mergedAttributes = { ...legacyAttributes, ...(attributes || {}) };
+
     // 時間範囲の処理
     let startTime = null;
     let endTime = null;
-    
+
     if (timeRange) {
       if (timeRange.start) {
         startTime = this._deserializeTimePoint(timeRange.start);
       }
-      
+
       if (timeRange.end) {
         endTime = this._deserializeTimePoint(timeRange.end);
       }
     }
-    
+
     return new Property(
       timePoint,
       name,
       description,
-      attributes,
+      mergedAttributes, // マージした属性を渡す
       startTime,
       endTime
     );
@@ -248,8 +252,8 @@ export class JSONSerializer {
       data.id,
       data.name,
       data.order,
-      data.visible,
-      data.opacity,
+      data.visible !== undefined ? data.visible : true, // visibleのデフォルト値をtrueに
+      data.opacity !== undefined ? data.opacity : 1.0,   // opacityのデフォルト値を1.0に
       data.description || ""
     );
   }
@@ -278,8 +282,8 @@ export class JSONSerializer {
   _deserializePoint(data) {
     return new Point(
       data.id,
-      data.vertexIds,
-      data.properties.map(prop => this._deserializeProperty(prop)),
+      data.vertexIds || [], // 念のためデフォルト値
+      (data.properties || []).map(prop => this._deserializeProperty(prop)), // propertiesがなくてもエラーにならないように
       data.layerId
     );
   }
@@ -308,14 +312,14 @@ export class JSONSerializer {
   _deserializeLine(data) {
     return new Line(
       data.id,
-      data.vertexIds,
-      data.properties.map(prop => this._deserializeProperty(prop)),
+      data.vertexIds || [], // 念のためデフォルト値
+      (data.properties || []).map(prop => this._deserializeProperty(prop)), // propertiesがなくてもエラーにならないように
       data.layerId
     );
   }
 
   /**
-   * 面情報をシリアライズ
+   * 面情報をシリアライズ (リングベース対応)
    * @param {Polygon} polygon - 面情報
    * @returns {Object} シリアライズされた面情報
    * @private
@@ -323,42 +327,54 @@ export class JSONSerializer {
   _serializePolygon(polygon) {
     const result = {
       id: polygon.id,
-      vertexIds: polygon.vertexIds && polygon.vertexIds.length > 0 ? [...polygon.vertexIds] : null,
-      holesVertexIds: polygon.holesVertexIds.map(hole => [...hole]),
       properties: polygon.properties.map(prop => this._serializeProperty(prop)),
       layerId: polygon.layerId,
       parentId: polygon.parentId,
       childIds: [...polygon.childIds],
-      isMultiPolygon: polygon.isMultiPolygon
+      // 新しいリング構造をシリアライズ
+      rings: polygon.rings.map(ring => ({
+        id: ring.id,
+        vertexIds: [...ring.vertexIds], // 頂点IDをコピー
+        isOuter: ring.isOuter,
+        parentId: ring.parentId // nullもそのまま保存
+      }))
+      // 古い形式のプロパティは削除
+      // vertexIds: ...,
+      // holesVertexIds: ...,
+      // isMultiPolygon: ...,
+      // subPolygons: ...
     };
-    
-    if (polygon.isMultiPolygon) {
-      result.subPolygons = polygon.subPolygons.map(subPoly => ({
-        vertexIds: [...subPoly.vertexIds],
-        holesVertexIds: subPoly.holesVertexIds.map(hole => [...hole])
-      }));
-    }
-    
     return result;
   }
 
   /**
-   * 面情報をデシリアライズ
+   * 面情報をデシリアライズ (リングベース対応)
    * @param {Object} data - シリアライズされた面情報
    * @returns {Polygon} 面情報
    * @private
    */
   _deserializePolygon(data) {
+    // リング配列を読み込む (存在しない場合は空配列)
+    const rings = (data.rings || []).map(ringData => ({
+      id: ringData.id,
+      vertexIds: ringData.vertexIds || [], // 念のためデフォルト値
+      isOuter: ringData.isOuter,
+      parentId: ringData.parentId // nullもそのまま読み込む
+    }));
+
+    // Polygon コンストラクタを呼び出す
     return new Polygon(
       data.id,
-      data.vertexIds || [],
-      data.properties.map(prop => this._deserializeProperty(prop)),
+      (data.properties || []).map(prop => this._deserializeProperty(prop)), // propertiesがなくてもエラーにならないように
       data.layerId,
-      data.holesVertexIds || [],
-      data.parentId || "0",
-      data.childIds || [],
-      data.isMultiPolygon || false,
-      data.subPolygons || []
+      data.parentId || "0", // parentIdがなければ "0"
+      data.childIds || [], // childIdsがなければ []
+      rings // 読み込んだリング配列
+      // 古い形式の引数は不要
+      // data.vertexIds || [],
+      // data.holesVertexIds || [],
+      // data.isMultiPolygon || false,
+      // data.subPolygons || []
     );
   }
 }

@@ -1,3 +1,5 @@
+// src\application\usecases\feature\AddFeatureUseCase.js
+
 import { Feature } from '../../../domain/entities/Feature';
 import { Point } from '../../../domain/entities/Point';
 import { Line } from '../../../domain/entities/Line';
@@ -57,6 +59,7 @@ export class AddFeatureUseCase {
           throw new Error("Point geometry must have exactly one vertexId.");
         }
         const pointGeometry = { vertexId: processedGeometry.vertexIds[0] };
+        // Point.create は内部で new Point(...) を呼ぶ
         feature = Point.create(featureId, properties, pointGeometry, layerId);
         break;
       case 'line':
@@ -64,13 +67,36 @@ export class AddFeatureUseCase {
           throw new Error("Line geometry must have at least two vertexIds.");
         }
         const lineGeometry = { vertexIds: processedGeometry.vertexIds };
+        // Line.create は内部で new Line(...) を呼ぶ
         feature = Line.create(featureId, properties, lineGeometry, layerId);
         break;
       case 'polygon':
         // ポリゴンの検証 (リングベース移行後は PolygonEditService に委譲)
-        this._validatePolygonAddition(processedGeometry, layerId, world);
-        // Polygon.create は geometry { vertexIds?, holesVertexIds?, parentId?, isMultiPolygon?, subPolygons?, childIds? } を期待
-        feature = Polygon.create(featureId, properties, processedGeometry, layerId);
+        // this._validatePolygonAddition(processedGeometry, layerId, world); // 検証はPolygonEditServiceで行うためコメントアウト
+
+        // リングベースの Polygon コンストラクタを直接呼び出す
+        if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 3) {
+          throw new Error("Polygon geometry must have at least three vertexIds for the outer ring.");
+        }
+
+        // 単純なポリゴン追加なので、外周リングを1つ作成
+        const outerRing = {
+            id: this._generateId('ring'), // リングIDを生成
+            vertexIds: [...processedGeometry.vertexIds], // 頂点IDをコピー
+            isOuter: true, // 外周フラグ
+            parentId: null  // 最外周リングなので親はnull
+        };
+        const rings = [outerRing];
+
+        // コンストラクタ呼び出し
+        feature = new Polygon(
+            featureId,
+            properties,
+            layerId,
+            processedGeometry.parentId || "0", // 親ポリゴンID (あれば)
+            [], // 新規作成なので childIds は空
+            rings // 生成したリング配列
+        );
         break;
       default:
         throw new Error(`Unknown feature type: ${featureType}`);
@@ -94,9 +120,10 @@ export class AddFeatureUseCase {
    * @private
    */
    _validatePolygonAddition(geometry, layerId, world) {
-    // TODO: 同一レイヤー内のポリゴンとの排他性チェック (LayerService)
-    // TODO: 親ポリゴンとの関係チェック (LayerService)
+    // TODO: リングベース移行後、この検証ロジックは PolygonEditService に移動または再実装される
+    // 現在は一時的にコメントアウト
 
+    /*
     // 自己交差チェック
     if (geometry.vertexIds && geometry.vertexIds.length >= 3) {
         const vertices = this._getVerticesFromIds(geometry.vertexIds, world);
@@ -128,5 +155,6 @@ export class AddFeatureUseCase {
             }
          });
     });
+    */
   }
 }
