@@ -1,3 +1,5 @@
+// src\presentation\views\map\MapViewRendererHelper.js
+
 import { Point as DomainPoint } from '../../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../../domain/entities/Polygon.js';
@@ -47,20 +49,24 @@ export class MapViewRendererHelper {
     const viewport = this._viewportManager.getViewport();
     const world = this._viewModel.getWorld();
     const currentTime = this._viewModel.getCurrentTime();
-    if (!world) return;
+    if (!world || !world.vertices) return; // verticesの存在チェック追加
     const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo();
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // Mapを作成
+
     const getVertexPos = (vertexId) => {
         const dragInfo = draggingVerticesInfo.get(vertexId);
         if (dragInfo) return dragInfo.currentPosition;
-        const v = world.vertices.find(wv => wv.id === vertexId);
+        const v = verticesMap.get(vertexId); // Mapから取得
         return v ? { x: v.x, y: v.y } : null;
     };
+
     const drawHighlightLine = (vertices, style) => {
         if (vertices && vertices.length >= 2) {
             const elem = this._renderer.drawLine(vertices, style, viewport);
             if (elem) this._selectionElements.push(elem);
         }
     };
+
     const drawHighlightClosedLine = (vertices, style) => {
         if (vertices && vertices.length >= 3) {
              drawHighlightLine([...vertices, vertices[0]], style);
@@ -72,35 +78,25 @@ export class MapViewRendererHelper {
         const feature = this._viewModel.getFeatures().find(f => f.id === selectedFeatureId);
         if (feature && feature.existsAt(currentTime)) {
             const style = { stroke: '#00ffff', strokeWidth: 4, fill: 'none', strokeDasharray: '4,4' };
-            let vertices = feature.vertexIds ? feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean) : [];
 
-            if (feature instanceof DomainPoint && vertices.length === 1) {
-                const elem = this._renderer.drawPoint(vertices[0].x, vertices[0].y, { radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'}, viewport);
-                 if (elem) this._selectionElements.push(elem);
+            if (feature instanceof DomainPoint) {
+                const vertexPos = getVertexPos(feature.vertexId);
+                if (vertexPos) {
+                    const elem = this._renderer.drawPoint(vertexPos.x, vertexPos.y, { radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'}, viewport);
+                    if (elem) this._selectionElements.push(elem);
+                }
             } else if (feature instanceof DomainLine) {
+                const vertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
                 drawHighlightLine(vertices, style);
             } else if (feature instanceof DomainPolygon) {
-                // リングベース移行後:
+                // ★ リングベースで描画
                 if (feature.rings && Array.isArray(feature.rings)) {
                     feature.rings.forEach(ring => {
                          const ringVertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
                          drawHighlightClosedLine(ringVertices, style);
                     });
-                } else { // 移行前フォールバック
-                    drawHighlightClosedLine(vertices, style); // 外周
-                    (feature.subPolygons || []).forEach(sub => { // 飛び地
-                        const subVertices = (sub.vertexIds || []).map(id => getVertexPos(id)).filter(Boolean);
-                        drawHighlightClosedLine(subVertices, style);
-                        (sub.holesVertexIds || []).forEach(holeIds => { // 飛び地の穴
-                            const holeVertices = holeIds.map(id => getVertexPos(id)).filter(Boolean);
-                            drawHighlightClosedLine(holeVertices, style);
-                        });
-                    });
-                    (feature.holesVertexIds || []).forEach(holeIds => { // 本土の穴
-                        const holeVertices = holeIds.map(id => getVertexPos(id)).filter(Boolean);
-                        drawHighlightClosedLine(holeVertices, style);
-                    });
                 }
+                // 古い形式へのフォールバックは削除
             }
         }
     }
@@ -109,37 +105,25 @@ export class MapViewRendererHelper {
         const feature = this._viewModel.getFeatures().find(f => f.id === highlightedFeatureId);
         if (feature && feature.existsAt(currentTime)) {
             const style = { stroke: '#0088aa', strokeWidth: 2, fill: 'none', strokeDasharray: '2,2' };
-            let vertices = feature.vertexIds ? feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean) : [];
 
             if (feature instanceof DomainLine) {
+                const vertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
                 drawHighlightLine(vertices, style);
             } else if (feature instanceof DomainPolygon) {
-                 if (feature.rings && Array.isArray(feature.rings)) { // リングベース
+                 // ★ リングベースで描画
+                 if (feature.rings && Array.isArray(feature.rings)) {
                     feature.rings.forEach(ring => {
                          const ringVertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
                          drawHighlightClosedLine(ringVertices, style);
                     });
-                 } else { // フォールバック
-                    drawHighlightClosedLine(vertices, style);
-                    (feature.subPolygons || []).forEach(sub => {
-                        const subVertices = (sub.vertexIds || []).map(id => getVertexPos(id)).filter(Boolean);
-                        drawHighlightClosedLine(subVertices, style);
-                        (sub.holesVertexIds || []).forEach(holeIds => {
-                            const holeVertices = holeIds.map(id => getVertexPos(id)).filter(Boolean);
-                            drawHighlightClosedLine(holeVertices, style);
-                        });
-                    });
-                    (feature.holesVertexIds || []).forEach(holeIds => {
-                        const holeVertices = holeIds.map(id => getVertexPos(id)).filter(Boolean);
-                        drawHighlightClosedLine(holeVertices, style);
-                    });
                  }
+                 // 古い形式へのフォールバックは削除
             }
         }
     }
     // 主選択頂点
     selectedVertexIds.forEach(vertexId => {
-        if (draggingVerticesInfo.has(vertexId)) return;
+        if (draggingVerticesInfo.has(vertexId)) return; // ドラッグ中の頂点は別途描画される
         const vertexPos = getVertexPos(vertexId);
         if (vertexPos) {
             const elem = this._renderer.drawPoint(vertexPos.x, vertexPos.y, { radius: 6, fill: '#00ffff', stroke: '#0000ff', strokeWidth: 2 }, viewport);
@@ -163,7 +147,8 @@ export class MapViewRendererHelper {
 
     const world = this._viewModel.getWorld();
     const viewport = this._viewportManager.getViewport();
-    if (!world) return;
+    if (!world || !world.vertices) return; // verticesの存在チェック追加
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // Mapを作成
 
     // ドラッグ中の頂点マーカー
     for (const [vertexId, info] of draggingVerticesInfo.entries()) {
@@ -173,19 +158,18 @@ export class MapViewRendererHelper {
 
     // 影響を受ける地物の仮形状
     const draggedVertexIds = new Set(draggingVerticesInfo.keys());
+    // world.features 全体を対象に影響を受ける地物を探す
     const affectedFeatures = world.features.filter(f => Array.from(draggedVertexIds).some(draggedId => {
-        const isPolygon = f instanceof DomainPolygon || f.constructor?.name === 'Polygon';
-        return (f.vertexIds && f.vertexIds.includes(draggedId)) ||
-               (isPolygon && (f.holesVertexIds || []).some(hole => hole.includes(draggedId))) ||
-               (isPolygon && f.isMultiPolygon && (f.subPolygons || []).some(sub =>
-                   (sub.vertexIds && sub.vertexIds.includes(draggedId)) ||
-                   (sub.holesVertexIds?.some(hole => hole.includes(draggedId)))
-               ));
+        const isPolygon = f instanceof DomainPolygon; // インスタンスで判定
+        // リングベースで判定
+        return (f.vertexIds && f.vertexIds.includes(draggedId)) || // Point, Line
+               (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(draggedId))); // Polygon
     }));
+
     const getVertexPos = (vertexId) => {
         const dragInfo = draggingVerticesInfo.get(vertexId);
         if (dragInfo) return dragInfo.currentPosition;
-        const v = world.vertices.find(wv => wv.id === vertexId);
+        const v = verticesMap.get(vertexId); // Mapから取得
         return v ? { x: v.x, y: v.y } : null;
     };
 
@@ -198,43 +182,18 @@ export class MapViewRendererHelper {
                 if (elem) this._dragPreviewElements.push(elem);
             }
         } else if (feature instanceof DomainPolygon) {
-            // リングベース移行後:
+            // ★ リングベースで仮形状を描画
             if (feature.rings && Array.isArray(feature.rings)) {
                 feature.rings.forEach(ring => {
                     const vertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
                     if (vertices.length >= 3) {
+                        // 閉じた線を描画
                         const elem = this._renderer.drawLine([...vertices, vertices[0]], style, viewport);
                         if (elem) this._dragPreviewElements.push(elem);
                     }
-                });
-            } else { // 移行前フォールバック
-                const outerVertices = (feature.vertexIds || []).map(id => getVertexPos(id)).filter(Boolean);
-                if (outerVertices.length >= 3) {
-                    const elem = this._renderer.drawLine([...outerVertices, outerVertices[0]], style, viewport);
-                    if (elem) this._dragPreviewElements.push(elem);
-                }
-                (feature.holesVertexIds || []).forEach(holeIds => {
-                    const vertices = holeIds.map(id => getVertexPos(id)).filter(Boolean);
-                    if (vertices.length >= 3) {
-                        const elem = this._renderer.drawLine([...vertices, vertices[0]], style, viewport);
-                        if (elem) this._dragPreviewElements.push(elem);
-                    }
-                });
-                (feature.subPolygons || []).forEach(sub => {
-                    const subVertices = (sub.vertexIds || []).map(id => getVertexPos(id)).filter(Boolean);
-                    if (subVertices.length >= 3) {
-                        const elem = this._renderer.drawLine([...subVertices, subVertices[0]], style, viewport);
-                        if (elem) this._dragPreviewElements.push(elem);
-                    }
-                    (sub.holesVertexIds || []).forEach(holeIds => {
-                        const vertices = holeIds.map(id => getVertexPos(id)).filter(Boolean);
-                        if (vertices.length >= 3) {
-                            const elem = this._renderer.drawLine([...vertices, vertices[0]], style, viewport);
-                            if (elem) this._dragPreviewElements.push(elem);
-                        }
-                    });
                 });
             }
+            // 古い形式へのフォールバックは削除
         }
     });
     this._dragPreviewElements.forEach(el => el.classList.add('temp-drawing', 'drag-preview'));
@@ -268,7 +227,7 @@ export class MapViewRendererHelper {
     } else if (mode === 'edit' && tool === 'add-hole') {
         lineStyle = subMode === 'hole' ? { stroke: '#ff00ff', strokeWidth: 3, strokeDasharray: '5,5' }
                   : subMode === 'enclave' ? { stroke: '#ff8800', strokeWidth: 3, strokeDasharray: '5,5' }
-                  : { stroke: '#aaaaaa', strokeWidth: 3, strokeDasharray: '5,5' };
+                  : { stroke: '#aaaaaa', strokeWidth: 3, strokeDasharray: '5,5' }; // サブモード未決定時
     }
 
     if (tool === 'point') {
@@ -277,15 +236,20 @@ export class MapViewRendererHelper {
             if (elem) this._addingElements.push(elem);
         }
     } else if (tool === 'line' || tool === 'polygon' || tool === 'add-hole') {
+        // 線または閉じた形状のプレビュー
         if (addingPoints.length >= 2) {
-            const isClosedShape = tool === 'polygon' || tool === 'add-hole';
-            const pointsToDraw = isClosedShape && addingPoints.length >= 3 ? [...addingPoints, addingPoints[0]] : addingPoints;
+            const isClosedShape = (tool === 'polygon') || (mode === 'edit' && tool === 'add-hole');
+            // 閉じる形状の場合、3点以上で最初の点に戻る線を描画
+            const pointsToDraw = isClosedShape && addingPoints.length >= 3
+                                 ? [...addingPoints, addingPoints[0]]
+                                 : addingPoints;
             if (Object.keys(lineStyle).length > 0) {
                  const elem = this._renderer.drawLine(pointsToDraw, lineStyle, viewport);
                  if (elem) this._addingElements.push(elem);
             }
         }
     }
+    // 追加中の各点を描画
     for (const point of addingPoints) {
        const elem = this._renderer.drawPoint(point.x, point.y, pointStyle, viewport);
        if (elem) this._addingElements.push(elem);
