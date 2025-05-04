@@ -156,7 +156,6 @@ render(world, viewport, currentTime) {
     layerGroup.style.opacity = layer.opacity;
 
     // このレイヤーに属する地物をフィルタリング
-    // TODO: 将来的に地物のループ描画もここで行う
     const layerFeatures = world.features.filter(f =>
       f.layerId === layer.id && f.existsAt(currentTime)
     );
@@ -516,17 +515,23 @@ _renderGrid(viewport) {
   }
 
   /**
-   * 面情報を描画
-   * @param {Polygon} polygon - 面情報
+   * 面情報を描画 (リングベース対応)
+   * @param {Polygon} polygon - 面情報 (リングベース構造を持つ)
    * @param {Vertex[]} vertices - 頂点配列
    * @param {TimePoint} currentTime - 現在の時間点
    * @param {Object} viewport - ビューポート情報
-   * @returns {SVGElement} SVG要素
+   * @returns {SVGElement | null} SVG要素、または描画できない場合はnull
    * @private
    */
   _renderPolygon(polygon, vertices, currentTime, viewport) {
     const property = polygon.getPropertyAt(currentTime);
     if (!property) return null;
+
+    // リングが存在しない場合は描画しない (子ポリゴンのみの場合は描画しないルール)
+    if (!polygon.rings || polygon.rings.length === 0) {
+        // console.log(`Polygon ${polygon.id} has no rings, skipping render.`);
+        return null;
+    }
 
     // グループ要素を作成
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -544,107 +549,85 @@ _renderGrid(viewport) {
 
     const invertY = true; // Y座標を反転させるフラグ
 
-    if (polygon.isMultiPolygon) {
-      // --- ↓↓↓ 修正: 本土の描画処理を追加 ↓↓↓ ---
-      if (polygon.vertexIds && polygon.vertexIds.length > 0) {
-        const polyVertices = polygon.vertexIds.map(id => vertices.find(v => v.id === id));
-        if (!polyVertices.some(v => !v) && polyVertices.length >= 3) {
-          // 本土の外周と穴を描画
-          const path = this._createPolygonPath(polyVertices, polygon.holesVertexIds, vertices, viewport, invertY);
-          path.setAttribute("fill", fill);
-          path.setAttribute("stroke", stroke);
-          path.setAttribute("stroke-width", strokeWidth);
-          path.setAttribute("fill-opacity", fillOpacity);
-          path.setAttribute("fill-rule", "evenodd");
-          group.appendChild(path);
-        } else {
-            console.warn(`Polygon ${polygon.id} is marked as MultiPolygon but has invalid main vertices.`);
+    // パスデータを生成
+    let pathData = "";
+    const verticesMap = new Map(vertices.map(v => [v.id, v])); // 高速参照用
+
+    // polygon.rings をループしてパスデータを構築
+    for (const ring of polygon.rings) {
+        const ringVertices = ring.vertexIds.map(id => verticesMap.get(id)).filter(v => v); // 頂点オブジェクトを取得
+
+        if (ringVertices.length < 3) {
+            console.warn(`Ring ${ring.id} in polygon ${polygon.id} has less than 3 valid vertices. Skipping ring.`);
+            continue; // 3点未満のリングは描画しない
         }
-      }
-      // --- ↑↑↑ 修正: 本土の描画処理を追加 ↑↑↑ ---
 
-      // 飛び地の描画
-      for (const subPoly of polygon.subPolygons) {
-        const subVertices = subPoly.vertexIds.map(id => vertices.find(v => v.id === id));
-        if (subVertices.some(v => !v) || subVertices.length < 3) continue;
+        // パスデータの開始点 (Move To)
+        pathData += ` M ${this._toScreenX(ringVertices[0].x, viewport)} ${invertY ? -this._toScreenY(ringVertices[0].y, viewport) : this._toScreenY(ringVertices[0].y, viewport)}`;
 
-        // 飛び地の外周と穴を描画
-        const path = this._createPolygonPath(subVertices, subPoly.holesVertexIds, vertices, viewport, invertY);
-        path.setAttribute("fill", fill);
-        path.setAttribute("stroke", stroke);
-        path.setAttribute("stroke-width", strokeWidth);
-        path.setAttribute("fill-opacity", fillOpacity);
-        path.setAttribute("fill-rule", "evenodd");
-        group.appendChild(path);
-      }
-    } else if (polygon.vertexIds && polygon.vertexIds.length > 0) {
-      // 通常の多角形
-      const polyVertices = polygon.vertexIds.map(id => vertices.find(v => v.id === id));
-      if (polyVertices.some(v => !v) || polyVertices.length < 3) return null;
+        // 残りの点を結ぶ (Line To)
+        for (let i = 1; i < ringVertices.length; i++) {
+            pathData += ` L ${this._toScreenX(ringVertices[i].x, viewport)} ${invertY ? -this._toScreenY(ringVertices[i].y, viewport) : this._toScreenY(ringVertices[i].y, viewport)}`;
+        }
 
-      const path = this._createPolygonPath(polyVertices, polygon.holesVertexIds, vertices, viewport, invertY); // invertYフラグを渡す
-      path.setAttribute("fill", fill);
-      path.setAttribute("stroke", stroke);
-      path.setAttribute("stroke-width", strokeWidth);
-      path.setAttribute("fill-opacity", fillOpacity);
-      path.setAttribute("fill-rule", "evenodd");
-      group.appendChild(path);
-    } else if (polygon.childIds && polygon.childIds.length > 0) {
-      // 子ポリゴンから構成される多角形の処理
-      // この簡易実装では省略
+        // パスを閉じる (Close Path)
+        pathData += " Z";
     }
+
+    // パス要素を作成して属性を設定
+    const pathElement = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    pathElement.setAttribute("d", pathData);
+    pathElement.setAttribute("fill", fill);
+    pathElement.setAttribute("stroke", stroke);
+    pathElement.setAttribute("stroke-width", strokeWidth);
+    pathElement.setAttribute("fill-opacity", fillOpacity);
+    pathElement.setAttribute("fill-rule", "evenodd"); // 穴を正しく描画するためのルール
+
+    group.appendChild(pathElement);
 
     // ラベルを描画（オプション）
     if (property.name && style.showLabel) {
-      // 多角形の中心を計算（簡易的に最初のサブポリゴンまたは外周の重心）
+      // ポリゴンの中心を計算（簡易的に、最初の最上位外周リングの重心）
+      const firstOuterRing = polygon.rings.find(r => r.isOuter && r.parentId === null);
       let centroidX = 0;
       let centroidY = 0;
       let vertexCount = 0;
-      let targetVertices = null;
 
-      // --- 修正: MultiPolygonの本土も中心計算の対象に ---
-      if (polygon.vertexIds && polygon.vertexIds.length > 0) {
-          targetVertices = polygon.vertexIds
-              .map(id => vertices.find(v => v.id === id))
+      if (firstOuterRing) {
+          const ringVertices = firstOuterRing.vertexIds
+              .map(id => verticesMap.get(id))
               .filter(v => v);
-      } else if (polygon.isMultiPolygon && polygon.subPolygons.length > 0) {
-          targetVertices = polygon.subPolygons[0].vertexIds
-              .map(id => vertices.find(v => v.id === id))
-              .filter(v => v);
-      }
-      // --- 修正終わり ---
 
-      if (targetVertices && targetVertices.length > 0) {
-          vertexCount = targetVertices.length;
-          for (const vertex of targetVertices) {
-              centroidX += vertex.x;
-              centroidY += vertex.y;
+          if (ringVertices.length > 0) {
+              vertexCount = ringVertices.length;
+              for (const vertex of ringVertices) {
+                  centroidX += vertex.x;
+                  centroidY += vertex.y;
+              }
+              centroidX /= vertexCount;
+              centroidY /= vertexCount;
+
+              const svgX = this._toScreenX(centroidX, viewport);
+              const svgY = invertY ? -this._toScreenY(centroidY, viewport) : this._toScreenY(centroidY, viewport);
+
+              const baseFontSize = style.fontSize || 12;
+              // フォントサイズを 1/zoom でスケール
+              const fontSize = Math.max(6 / viewport.zoom, Math.min(20 / viewport.zoom, baseFontSize / viewport.zoom));
+
+              const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+              text.setAttribute("x", svgX);
+              text.setAttribute("y", svgY);
+              text.setAttribute("text-anchor", "middle");
+              text.setAttribute("dominant-baseline", "middle");
+              text.setAttribute("font-size", fontSize);
+              text.setAttribute("fill", style.textColor);
+              text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
+              text.textContent = property.name;
+              // クリックイベントを透過させる
+              text.setAttribute("pointer-events", "none");
+
+              group.appendChild(text);
           }
-      }
-
-      if (vertexCount > 0) {
-        centroidX /= vertexCount;
-        centroidY /= vertexCount;
-        const svgX = this._toScreenX(centroidX, viewport);
-        const svgY = -this._toScreenY(centroidY, viewport); // Y座標反転
-
-         const baseFontSize = style.fontSize || 12;
-         // フォントサイズを 1/zoom でスケール
-         const fontSize = Math.max(6 / viewport.zoom, Math.min(20 / viewport.zoom, baseFontSize / viewport.zoom));
-
-        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        text.setAttribute("x", svgX);
-        text.setAttribute("y", svgY); // Y座標反転
-        text.setAttribute("text-anchor", "middle");
-        text.setAttribute("dominant-baseline", "middle");
-        text.setAttribute("font-size", fontSize); // ズームに応じたフォントサイズ
-        text.setAttribute("fill", style.textColor);
-         text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
-        text.textContent = property.name;
-         // クリックイベントを透過させる
-         text.setAttribute("pointer-events", "none");
-
-        group.appendChild(text);
       }
     }
 
@@ -652,47 +635,11 @@ _renderGrid(viewport) {
   }
 
   /**
-   * 多角形パスを作成
-   * @param {Vertex[]} vertices - 頂点配列
-   * @param {string[][]} holesVertexIds - 穴の頂点IDの配列の配列
-   * @param {Vertex[]} allVertices - すべての頂点
-   * @param {Object} viewport - ビューポート情報
-   * @param {boolean} [invertY=false] - Y座標を反転するかどうか
-   * @returns {SVGElement} パス要素
+   * 多角形パスを作成 (このメソッドは _renderPolygon に統合されたため不要)
+   * @deprecated Use direct path generation within _renderPolygon.
    * @private
    */
-  _createPolygonPath(vertices, holesVertexIds, allVertices, viewport, invertY = false) { // invertYフラグ追加
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    // Y座標取得関数を定義
-    const yCoord = (y) => invertY ? -this._toScreenY(y, viewport) : this._toScreenY(y, viewport);
-
-    // 外周のパスデータ
-    let pathData = `M ${this._toScreenX(vertices[0].x, viewport)} ${yCoord(vertices[0].y)}`;
-    for (let i = 1; i < vertices.length; i++) {
-      pathData += ` L ${this._toScreenX(vertices[i].x, viewport)} ${yCoord(vertices[i].y)}`;
-    }
-
-    pathData += " Z";
-
-    // 穴のパスデータ
-    for (const holeIds of holesVertexIds) {
-      const holeVertices = holeIds.map(id => allVertices.find(v => v.id === id)).filter(v => v);
-
-      if (holeVertices.length > 2) {
-        // SVGの fill-rule: evenodd を使う場合、穴の頂点順序は外周と同じでよい
-        // const reversedHoleVertices = [...holeVertices].reverse(); // 逆順にする必要はない
-        pathData += ` M ${this._toScreenX(holeVertices[0].x, viewport)} ${yCoord(holeVertices[0].y)}`;
-        for (let i = 1; i < holeVertices.length; i++) {
-          pathData += ` L ${this._toScreenX(holeVertices[i].x, viewport)} ${yCoord(holeVertices[i].y)}`;
-        }
-
-        pathData += " Z";
-      }
-    }
-
-    path.setAttribute("d", pathData);
-    return path;
-  }
+  // _createPolygonPath(vertices, holesVertexIds, allVertices, viewport, invertY = false) { ... }
 
   /**
    * 世界座標からスクリーン座標へのX変換 (SVG座標系)

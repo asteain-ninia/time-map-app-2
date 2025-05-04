@@ -1,6 +1,8 @@
+// src\application\usecases\feature\VertexEditUseCase.js
+
 import { Point } from '../../../domain/entities/Point';
 import { Line } from '../../../domain/entities/Line';
-import { Polygon } from '../../../domain/entities/Polygon';
+import { Polygon } from '../../../domain/entities/Polygon'; // ★ Polygon をインポート
 import { Vertex } from '../../../domain/entities/Vertex'; // 比較用
 
 /**
@@ -28,208 +30,177 @@ export class VertexEditUseCase {
    * @returns {Promise<{deletedVertexIds: string[], updatedFeatureIds: string[], deletedFeatureIds: string[]}>} 影響結果
    */
   async deleteVertices(vertexIdsToDelete) {
-    // 元の EditFeatureUseCase.deleteVertices の実装をほぼそのまま移動
     console.log(`[VertexEditUseCase] deleteVertices called with:`, vertexIdsToDelete);
-        if (!vertexIdsToDelete || vertexIdsToDelete.length === 0) {
-            return { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [] };
+    if (!vertexIdsToDelete || vertexIdsToDelete.length === 0) {
+        return { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [] };
+    }
+    const world = await this._worldRepository.getWorld();
+    const verticesToDeleteSet = new Set(vertexIdsToDelete);
+
+    const originalFeatures = world.features;
+    const updatedFeatures = [];
+    const updatedFeatureIds = new Set();
+    const deletedFeatureIds = new Set();
+    const parentUpdatesNeeded = new Map(); // 親ポリゴンの子ID削除用
+
+    // 頂点ID配列から削除対象を除外するヘルパー関数
+    const filterVertexIds = (ids) => ids?.filter(id => !verticesToDeleteSet.has(id)) || [];
+
+    for (const feature of originalFeatures) {
+        let currentFeature = feature;
+        let needsUpdate = false;
+        let featureShouldBeDeleted = false;
+        const logPrefix = `[VertexEditUseCase] Feature ${feature?.id}:`;
+
+        if (!(currentFeature instanceof Point || currentFeature instanceof Line || currentFeature instanceof Polygon)) {
+            console.warn(`${logPrefix} Not a valid domain object instance. Skipping. Type: ${typeof currentFeature}`, currentFeature);
+            updatedFeatures.push(currentFeature); // 有効でない地物はそのまま保持
+            continue;
         }
-        const world = await this._worldRepository.getWorld();
-        const verticesToDeleteSet = new Set(vertexIdsToDelete);
 
-        const originalFeatures = world.features;
-        const updatedFeatures = [];
-        const updatedFeatureIds = new Set();
-        const deletedFeatureIds = new Set();
-        const parentUpdatesNeeded = new Map();
-
-        const filterVertexIds = (ids) => ids?.filter(id => !verticesToDeleteSet.has(id)) || [];
-
-        for (const feature of originalFeatures) {
-            let currentFeature = feature;
-            let needsUpdate = false;
-            let featureShouldBeDeleted = false;
-            const logPrefix = `[VertexEditUseCase] Feature ${feature?.id}:`;
-
-            if (!(currentFeature instanceof Point || currentFeature instanceof Line || currentFeature instanceof Polygon)) {
-                console.warn(`${logPrefix} Not a valid domain object instance. Skipping. Type: ${typeof currentFeature}`, currentFeature);
-                updatedFeatures.push(currentFeature);
-                continue;
+        if (currentFeature instanceof Point) {
+            if (currentFeature.vertexIds.some(id => verticesToDeleteSet.has(id))) {
+                featureShouldBeDeleted = true; // 点は頂点がなくなったら削除
             }
-
-            let newVertexIds = currentFeature.vertexIds;
-            let vertexIdsUpdated = false;
-            if (currentFeature.vertexIds && currentFeature.vertexIds.some(id => verticesToDeleteSet.has(id))) {
-                newVertexIds = filterVertexIds(currentFeature.vertexIds);
-                needsUpdate = true;
-                vertexIdsUpdated = true;
-
-                if (currentFeature instanceof Point && newVertexIds.length === 0) {
-                    featureShouldBeDeleted = true;
-                } else if (currentFeature instanceof Line && newVertexIds.length < 2) {
-                    featureShouldBeDeleted = true;
-                } else if (currentFeature instanceof Polygon && newVertexIds.length < 3) {
-                    const hasOtherParts = (currentFeature.isMultiPolygon && currentFeature.subPolygons?.length > 0) || currentFeature.hasChildren();
-                    if (!hasOtherParts) {
-                       featureShouldBeDeleted = true;
-                    } else {
-                       newVertexIds = null;
-                    }
-                }
-            }
-
-            let newHolesVertexIds = currentFeature instanceof Polygon ? (currentFeature.holesVertexIds || []) : [];
-            let newSubPolygons = currentFeature instanceof Polygon ? (currentFeature.subPolygons || []) : [];
-            let isMultiPolygon = currentFeature instanceof Polygon ? currentFeature.isMultiPolygon : false;
-            let polygonSpecificsUpdated = false;
-
-            if (currentFeature instanceof Polygon && !featureShouldBeDeleted) {
-                const originalHolesStr = JSON.stringify(newHolesVertexIds);
-                const originalSubPolygonsStr = JSON.stringify(newSubPolygons);
-                let holesChanged = false;
-                let subPolygonsChanged = false;
-
-                if (newHolesVertexIds.some(hole => hole.some(id => verticesToDeleteSet.has(id)))) {
-                    const filteredHoles = newHolesVertexIds
-                        .map(hole => filterVertexIds(hole))
-                        .filter(hole => hole.length >= 3);
-                    if (JSON.stringify(filteredHoles) !== originalHolesStr) {
-                        newHolesVertexIds = filteredHoles;
-                        holesChanged = true;
-                    }
-                }
-
-                if (isMultiPolygon && newSubPolygons.some(sub => sub.vertexIds?.some(id => verticesToDeleteSet.has(id)))) {
-                     const filteredSubPolygons = newSubPolygons
-                        .map(sub => {
-                            const filteredSubVertexIds = filterVertexIds(sub.vertexIds);
-                            const filteredSubHoleVertexIds = (sub.holesVertexIds || [])
-                                .map(hole => filterVertexIds(hole))
-                                .filter(hole => hole.length >= 3);
-                            return {
-                                vertexIds: filteredSubVertexIds,
-                                holesVertexIds: filteredSubHoleVertexIds
-                            };
-                        })
-                        .filter(sub => sub.vertexIds && sub.vertexIds.length >= 3);
-                    if (JSON.stringify(filteredSubPolygons) !== originalSubPolygonsStr) {
-                        newSubPolygons = filteredSubPolygons;
-                        subPolygonsChanged = true;
-                    }
-                }
-
-                if (holesChanged || subPolygonsChanged) {
+        } else if (currentFeature instanceof Line) {
+            if (currentFeature.vertexIds.some(id => verticesToDeleteSet.has(id))) {
+                const newVertexIds = filterVertexIds(currentFeature.vertexIds);
+                if (newVertexIds.length < 2) {
+                    featureShouldBeDeleted = true; // 2頂点未満になったら線も削除
+                } else {
+                    // 線インスタンスを更新
+                    currentFeature = currentFeature.withVertexIds(newVertexIds);
                     needsUpdate = true;
-                    polygonSpecificsUpdated = true;
                 }
+            }
+        } else if (currentFeature instanceof Polygon) {
+            let polygonUpdated = false;
+            const originalRings = currentFeature.rings;
+            const newRings = [];
+            const ringsToDelete = [];
 
-                const mainBodyExistsAfterUpdate = vertexIdsUpdated ? (newVertexIds && newVertexIds.length >= 3) : currentFeature.hasDirectGeometry();
-                const totalPartsAfterUpdate = (mainBodyExistsAfterUpdate ? 1 : 0) + newSubPolygons.length;
-
-                if (totalPartsAfterUpdate < 1) {
-                    if (!currentFeature.hasChildren()) {
-                       featureShouldBeDeleted = true;
+            for (const ring of originalRings) {
+                if (ring.vertexIds.some(id => verticesToDeleteSet.has(id))) {
+                    const newRingVertexIds = filterVertexIds(ring.vertexIds);
+                    if (newRingVertexIds.length >= 3) {
+                        // リングの頂点を更新 (Polygonインスタンスは後でまとめて更新)
+                        newRings.push({ ...ring, vertexIds: newRingVertexIds });
+                        polygonUpdated = true;
                     } else {
-                        if (vertexIdsUpdated) newVertexIds = null;
-                        isMultiPolygon = false;
-                        newSubPolygons = [];
-                        needsUpdate = true;
-                        polygonSpecificsUpdated = true;
+                        // リングが無効になった -> このリングは削除対象とする
+                        ringsToDelete.push(ring.id);
+                        polygonUpdated = true; // ポリゴン形状が変更された
+                        // ★注意: このリングが他の穴リングの親だった場合の処理は
+                        // PolygonEditService.removeRingFromPolygon の責務とする。
+                        // ここでは単純に無効なリングを除外する。
+                        // 子リングを持つリングを削除しようとするとremoveRingFromPolygonでエラーになる想定。
+                        // しかし、現状 removeRingFromPolygon を直接呼んでいないので、
+                        // 子が親を失うケースが発生しうる -> 後の検証でエラーになるはず。
+                        // 将来的に、ここで removeRingFromPolygon を呼ぶか、
+                        // PolygonEditService にリング削除を伴う頂点削除メソッドを設けるべきかもしれない。
                     }
                 } else {
-                     const shouldBeMultiPolygon = totalPartsAfterUpdate >= 2 || (totalPartsAfterUpdate === 1 && !mainBodyExistsAfterUpdate);
-                     if (isMultiPolygon !== shouldBeMultiPolygon) {
-                         isMultiPolygon = shouldBeMultiPolygon;
-                         needsUpdate = true;
-                         polygonSpecificsUpdated = true;
-                     }
+                    newRings.push(ring); // 変更なし
                 }
             }
 
-            let finalFeature = currentFeature;
-            if (!featureShouldBeDeleted && needsUpdate) {
-                 try {
-                     let tempFeature = currentFeature;
-                     if (tempFeature instanceof Point) {
-                         if (newVertexIds.length === 0) throw new Error("Point deleted");
-                         finalFeature = tempFeature.withVertexIds(newVertexIds);
-                     } else if (tempFeature instanceof Line) {
-                         if (newVertexIds.length < 2) throw new Error("Line deleted");
-                         finalFeature = tempFeature.withVertexIds(newVertexIds);
-                     } else if (tempFeature instanceof Polygon) {
-                         if (vertexIdsUpdated) {
-                             tempFeature = tempFeature.withVertexIds(newVertexIds);
-                         }
-                         if (polygonSpecificsUpdated) {
-                             tempFeature = tempFeature.withHolesVertexIds(newHolesVertexIds)
-                                                    .withMultiPolygonData(isMultiPolygon, newSubPolygons);
-                         }
-                         finalFeature = tempFeature;
-                     } else {
-                         console.error(`${logPrefix} Cannot update feature: Unknown type or invalid instance state.`);
-                         needsUpdate = false;
-                         finalFeature = currentFeature;
+            if (polygonUpdated) {
+                 // まず頂点ID配列が更新されたリングでポリゴンを更新
+                 let tempPolygon = currentFeature;
+                 for (const ring of newRings) {
+                     const originalRing = originalRings.find(or => or.id === ring.id);
+                     // JSON比較で変更があったか確認（より確実）
+                     if (originalRing && JSON.stringify(originalRing.vertexIds) !== JSON.stringify(ring.vertexIds)) {
+                          try {
+                             tempPolygon = tempPolygon.withUpdatedRingVertices(ring.id, ring.vertexIds);
+                          } catch (updateError) {
+                              console.error(`${logPrefix} Error updating ring vertices for ring ${ring.id}:`, updateError);
+                              // 更新に失敗した場合、このポリゴンをエラー状態として扱うか？
+                              // ここではエラーをログ出力し、処理を続行する。
+                          }
                      }
-                     if (needsUpdate) updatedFeatureIds.add(finalFeature.id);
-                 } catch (e) {
-                      console.error(`${logPrefix} Error updating feature instance:`, e);
-                      featureShouldBeDeleted = true;
                  }
-            } else if (!featureShouldBeDeleted) {
-                finalFeature = currentFeature;
+                 // 次に無効になったリングを削除 (インスタンス更新)
+                 // ★注意: 依存関係チェックは Polygon.withRemovedRing が行う
+                 for (const ringId of ringsToDelete) {
+                     try {
+                         tempPolygon = tempPolygon.withRemovedRing(ringId);
+                     } catch (removeError) {
+                          console.error(`${logPrefix} Error removing invalid ring ${ringId}:`, removeError);
+                          // リング削除に失敗した場合（例: 子リングが依存している）
+                          // ここで処理を中断すべきか？ あるいはエラーのまま進めるか？
+                          // 暫定: エラーをログ出力し、削除されなかったものとして進める
+                     }
+                 }
+                 currentFeature = tempPolygon;
+                 needsUpdate = true;
             }
 
-            if (featureShouldBeDeleted) {
-                deletedFeatureIds.add(finalFeature.id);
-                if (finalFeature.parentId && finalFeature.parentId !== "0") {
-                    if (!parentUpdatesNeeded.has(finalFeature.parentId)) {
-                        parentUpdatesNeeded.set(finalFeature.parentId, []);
-                    }
-                    parentUpdatesNeeded.get(finalFeature.parentId).push(finalFeature.id);
-                }
-            } else {
-                updatedFeatures.push(finalFeature);
+            // リング削除後、ポリゴンが空になったかチェック
+            if (currentFeature.rings.length === 0 && !currentFeature.hasChildren()) {
+                featureShouldBeDeleted = true; // リングも子もないポリゴンは削除
             }
         }
 
-        if (parentUpdatesNeeded.size > 0) {
-            const featuresWithUpdatedParents = [];
-            for(let feature of updatedFeatures) {
-                if (parentUpdatesNeeded.has(feature.id) && feature instanceof Polygon) {
-                   const childrenToRemove = parentUpdatesNeeded.get(feature.id);
-                   let updatedParent = feature;
-                   childrenToRemove.forEach(childId => {
-                       updatedParent = updatedParent.removeChildId(childId);
-                   });
-                   featuresWithUpdatedParents.push(updatedParent);
-                   updatedFeatureIds.add(updatedParent.id);
-                } else {
-                    featuresWithUpdatedParents.push(feature);
+        // 最終的な地物を配列に追加または削除リストへ
+        if (featureShouldBeDeleted) {
+            deletedFeatureIds.add(currentFeature.id);
+            // 親ポリゴンからの子ID削除が必要な場合、情報を記録
+            if (currentFeature instanceof Polygon && currentFeature.parentId && currentFeature.parentId !== "0") {
+                if (!parentUpdatesNeeded.has(currentFeature.parentId)) {
+                    parentUpdatesNeeded.set(currentFeature.parentId, []);
                 }
+                parentUpdatesNeeded.get(currentFeature.parentId).push(currentFeature.id);
             }
-            world.features = featuresWithUpdatedParents;
         } else {
-           world.features = updatedFeatures;
+            updatedFeatures.push(currentFeature);
+            if (needsUpdate) {
+                updatedFeatureIds.add(currentFeature.id);
+            }
         }
+    }
 
+    // 親ポリゴンの子IDリストを更新
+    if (parentUpdatesNeeded.size > 0) {
+        const featuresWithUpdatedParents = [];
+        for (let feature of updatedFeatures) {
+            if (parentUpdatesNeeded.has(feature.id) && feature instanceof Polygon) {
+                const childrenToRemove = parentUpdatesNeeded.get(feature.id);
+                let updatedParent = feature;
+                childrenToRemove.forEach(childId => {
+                    updatedParent = updatedParent.removeChildId(childId); // Polygonの不変メソッドを使用
+                });
+                featuresWithUpdatedParents.push(updatedParent);
+                updatedFeatureIds.add(updatedParent.id); // 親も更新された
+            } else {
+                featuresWithUpdatedParents.push(feature);
+            }
+        }
+        world.features = featuresWithUpdatedParents;
+    } else {
+        world.features = updatedFeatures;
+    }
 
-        const verticesBeforeDelete = world.vertices.length;
-        world.vertices = world.vertices.filter(v => !verticesToDeleteSet.has(v.id));
-        const deletedVertexCount = verticesBeforeDelete - world.vertices.length;
-        console.log(`[VertexEditUseCase] Physically deleted ${deletedVertexCount} vertices from world.vertices.`);
+    // 削除対象の頂点を物理的に削除
+    const verticesBeforeDelete = world.vertices.length;
+    world.vertices = world.vertices.filter(v => !verticesToDeleteSet.has(v.id));
+    const deletedVertexCount = verticesBeforeDelete - world.vertices.length;
+    console.log(`[VertexEditUseCase] Physically deleted ${deletedVertexCount} vertices from world.vertices.`);
 
-        // 不要になった頂点をさらにクリーンアップ (必要であれば EditFeatureUseCase のヘルパーを呼ぶ)
-        // this._cleanupUnusedVertices(world, []); // ここでは呼ばない（deleteFeatureから呼ばれる想定）
+    // 使われなくなった頂点をクリーンアップ (依存関係の解決後に実行)
+    // ★ cleanupUnusedVertices は WorldRepository 保存前に呼び出すべき
+    this._cleanupUnusedVertices(world, vertexIdsToDelete);
 
-        console.log(`[VertexEditUseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
-        await this._worldRepository.saveWorld(world);
+    console.log(`[VertexEditUseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
+    await this._worldRepository.saveWorld(world);
 
-        const result = {
-            deletedVertexIds: Array.from(verticesToDeleteSet),
-            updatedFeatureIds: Array.from(updatedFeatureIds),
-            deletedFeatureIds: Array.from(deletedFeatureIds)
-        };
-        console.log('[VertexEditUseCase] deleteVertices finished. Result:', result);
-        return result;
+    const result = {
+        deletedVertexIds: Array.from(verticesToDeleteSet),
+        updatedFeatureIds: Array.from(updatedFeatureIds),
+        deletedFeatureIds: Array.from(deletedFeatureIds)
+    };
+    console.log('[VertexEditUseCase] deleteVertices finished. Result:', result);
+    return result;
   }
 
   /**
@@ -239,7 +210,6 @@ export class VertexEditUseCase {
    * @returns {Promise<Object>} 更新情報 { vertex, affectedFeatures }
    */
   async moveVertex(vertexId, newPosition) {
-    // 元の EditFeatureUseCase.moveVertex の実装を移動
     const world = await this._worldRepository.getWorld();
     const vertexIndex = world.vertices.findIndex(v => v.id === vertexId);
     if (vertexIndex === -1) throw new Error(`Vertex not found with ID: ${vertexId}`);
@@ -247,13 +217,15 @@ export class VertexEditUseCase {
     const adjustedPosition = this._handleCollisionForVertexMove(vertex, newPosition, world);
     const updatedVertexData = { id: vertex.id, x: adjustedPosition.x, y: adjustedPosition.y };
     world.vertices[vertexIndex] = updatedVertexData;
+
+    // 影響を受ける地物の特定 (リングベース対応)
     const affectedFeatures = world.features.filter(f => {
          if (!f || typeof f !== 'object') return false;
          const isPolygon = f instanceof Polygon || f.constructor?.name === 'Polygon';
-         return (f.vertexIds && f.vertexIds.includes(vertexId)) ||
-                (isPolygon && f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(vertexId))) ||
-                (isPolygon && f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds && sub.vertexIds.includes(vertexId)));
-     }).map(f => f); // 返り値は参照のまま
+         return (f.vertexIds && f.vertexIds.includes(vertexId)) || // Point, Line
+                (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(vertexId))); // Polygon
+     }).map(f => f); // ★ 返り値は参照のまま。不変性が崩れる可能性？ -> ViewModel側でコピーするなど対策が必要か？
+
     await this._worldRepository.saveWorld(world);
     return { vertex: updatedVertexData, affectedFeatures: affectedFeatures };
   }
@@ -264,7 +236,6 @@ export class VertexEditUseCase {
    * @returns {Promise<Object>} 更新情報 { updatedVertices: Object[], affectedFeatures: Object[] }
    */
   async moveVertices(vertexUpdates) {
-     // 元の EditFeatureUseCase.moveVertices の実装を移動
     const world = await this._worldRepository.getWorld();
     const updatedVertices = [];
     const allAffectedFeatureIds = new Set();
@@ -278,22 +249,23 @@ export class VertexEditUseCase {
         console.warn(`Vertex not found with ID during moveVertices: ${vertexId}`);
         continue;
       }
-      // TODO: 衝突検出
+      // TODO: 衝突検出 (複数頂点移動時の衝突検出は複雑)
       const adjustedPosition = newPosition;
       const updatedVertexData = { id: vertexId, x: adjustedPosition.x, y: adjustedPosition.y };
       updatedVerticesMap.set(vertexId, updatedVertexData);
       updatedVertices.push(updatedVertexData);
     }
 
+    // Worldの頂点データを更新
     world.vertices = world.vertices.map(v => updatedVerticesMap.get(v.id) || v);
 
+    // 影響を受ける地物の特定 (リングベース対応)
     world.features.forEach(f => {
       if (!f || typeof f !== 'object') return;
       const isPolygon = f instanceof Polygon || f.constructor?.name === 'Polygon';
       const usesUpdatedVertex = vertexUpdates.some(update =>
-          (f.vertexIds && f.vertexIds.includes(update.vertexId)) ||
-          (isPolygon && f.holesVertexIds?.some(hole => hole.includes(update.vertexId))) ||
-          (isPolygon && f.isMultiPolygon && f.subPolygons?.some(sub => sub.vertexIds?.includes(update.vertexId)))
+          (f.vertexIds && f.vertexIds.includes(update.vertexId)) || // Point, Line
+          (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(update.vertexId))) // Polygon
       );
       if (usesUpdatedVertex) {
         allAffectedFeatureIds.add(f.id);
@@ -312,15 +284,15 @@ export class VertexEditUseCase {
    * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures }
    */
   async shareVertices(vertexId1, vertexId2) {
-    // 元の EditFeatureUseCase.shareVertices の実装を移動
     const world = await this._worldRepository.getWorld();
     const vertex1 = world.vertices.find(v => v.id === vertexId1);
     const vertex2 = world.vertices.find(v => v.id === vertexId2);
     if (!vertex1 || !vertex2) throw new Error('One or both vertices not found');
-    if (vertex1.x === vertex2.x && vertex1.y === vertex2.y) {
-      console.warn(`Vertices ${vertexId1} and ${vertexId2} are already at the same position.`);
-      return null;
-    }
+    // 座標が完全に一致する場合でも処理を進める（IDを統一するため）
+    // if (vertex1.x === vertex2.x && vertex1.y === vertex2.y) {
+    //   console.warn(`Vertices ${vertexId1} and ${vertexId2} are already at the same position.`);
+    //   // return null; // ID統一のために処理を続ける
+    // }
 
     const keptVertexId = this._getOlderVertexId(vertexId1, vertexId2);
     const removedVertexId = keptVertexId === vertexId1 ? vertexId2 : vertexId1;
@@ -328,80 +300,47 @@ export class VertexEditUseCase {
     const removedVertex = keptVertexId === vertexId1 ? vertex2 : vertex1;
     const affectedFeatures = [];
 
+    // world.features を更新
+    const updatedFeatures = [];
     for (let i = 0; i < world.features.length; i++) {
-      let feature = world.features[i];
-      let updated = false;
-      const isValidFeature = feature && typeof feature === 'object';
-      const hasWithVertexIds = isValidFeature && typeof feature.withVertexIds === 'function';
-      const isPolygon = isValidFeature && (feature instanceof Polygon || feature.constructor?.name === 'Polygon');
-      const hasWithHolesVertexIds = isPolygon && typeof feature.withHolesVertexIds === 'function';
-      const hasWithMultiPolygonData = isPolygon && typeof feature.withMultiPolygonData === 'function';
-      const hasWithSubPolygonHoles = isPolygon && typeof feature.withSubPolygonHoles === 'function';
+        let feature = world.features[i];
+        let featureUpdated = false;
 
-      if (hasWithVertexIds && feature.vertexIds && feature.vertexIds.includes(removedVertexId)) {
-        const newVertexIds = feature.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
-        feature = feature.withVertexIds(newVertexIds);
-        updated = true;
-      }
-
-      if (hasWithHolesVertexIds && feature.holesVertexIds && feature.holesVertexIds.length > 0) {
-        let holesUpdated = false;
-        const newHolesVertexIds = feature.holesVertexIds.map(hole => {
-          if (hole.includes(removedVertexId)) {
-            holesUpdated = true;
-            return hole.map(id => id === removedVertexId ? keptVertexId : id);
-          }
-          return hole;
-        });
-        if (holesUpdated) {
-          feature = feature.withHolesVertexIds(newHolesVertexIds);
-          updated = true;
+        if (feature instanceof Point || feature instanceof Line) {
+            if (feature.vertexIds.includes(removedVertexId)) {
+                const newVertexIds = feature.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
+                // 不変性を保つため、新しいインスタンスを生成
+                feature = feature.withVertexIds(newVertexIds);
+                featureUpdated = true;
+            }
+        } else if (feature instanceof Polygon) {
+             let polygonNeedsUpdate = false;
+             let tempPolygon = feature;
+             // リング配列を走査して更新
+             for (const ring of feature.rings) {
+                 if (ring.vertexIds.includes(removedVertexId)) {
+                     const newRingVertexIds = ring.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
+                     // withUpdatedRingVertices を使ってポリゴンインスタンスを更新
+                     tempPolygon = tempPolygon.withUpdatedRingVertices(ring.id, newRingVertexIds);
+                     polygonNeedsUpdate = true;
+                 }
+             }
+             if (polygonNeedsUpdate) {
+                 feature = tempPolygon; // 更新されたインスタンスに差し替え
+                 featureUpdated = true;
+             }
         }
-      }
 
-      if (feature.isMultiPolygon && feature.subPolygons) {
-          let subPolygonsUpdated = false;
-          const newSubPolygons = feature.subPolygons.map((sub, subIndex) => {
-              let subUpdated = false;
-              let newSubVertexIds = sub.vertexIds;
-              let newSubHolesVertexIds = sub.holesVertexIds || [];
-              if (sub.vertexIds && sub.vertexIds.includes(removedVertexId)) {
-                  newSubVertexIds = sub.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
-                  subUpdated = true;
-              }
-              if (hasWithSubPolygonHoles && newSubHolesVertexIds.length > 0) {
-                  let subHolesUpdated = false;
-                  newSubHolesVertexIds = newSubHolesVertexIds.map(hole => {
-                      if (hole.includes(removedVertexId)) {
-                          subHolesUpdated = true;
-                          return hole.map(id => id === removedVertexId ? keptVertexId : id);
-                      }
-                      return hole;
-                  });
-                  if (subHolesUpdated) subUpdated = true;
-              }
-              if (subUpdated) {
-                  subPolygonsUpdated = true;
-                  return { vertexIds: newSubVertexIds, holesVertexIds: newSubHolesVertexIds };
-              }
-              return sub;
-          });
-          if (subPolygonsUpdated) {
-              if (hasWithMultiPolygonData) {
-                  feature = feature.withMultiPolygonData(true, newSubPolygons);
-                  updated = true;
-              } else { console.error(`Feature ${feature.id} is missing withMultiPolygonData method.`); }
-          }
-      }
-
-      if (updated) {
-        world.features[i] = feature;
-        if (!affectedFeatures.some(f => f.id === feature.id)) {
-          affectedFeatures.push(feature);
+        updatedFeatures.push(feature); // 更新されたかどうかにかかわらず追加
+        if (featureUpdated) {
+            if (!affectedFeatures.some(f => f.id === feature.id)) {
+                affectedFeatures.push(feature);
+            }
         }
-      }
     }
+    world.features = updatedFeatures; // 更新後の地物リストで置き換え
 
+    // 削除する頂点をWorldから物理的に削除
     const removedVertexIndex = world.vertices.findIndex(v => v.id === removedVertexId);
     if (removedVertexIndex !== -1) {
         world.vertices.splice(removedVertexIndex, 1);
@@ -418,7 +357,6 @@ export class VertexEditUseCase {
    * @returns {Promise<Object>} 更新情報 { newVertex, updatedFeature }
    */
   async unlinkSharedVertex(vertexId, featureId) {
-    // 元の EditFeatureUseCase.unlinkSharedVertex の実装を移動
     const world = await this._worldRepository.getWorld();
     const vertex = world.vertices.find(v => v.id === vertexId);
     if (!vertex) throw new Error(`Vertex not found with ID: ${vertexId}`);
@@ -427,103 +365,65 @@ export class VertexEditUseCase {
     let feature = world.features[featureIndex];
     if (!feature || typeof feature !== 'object') throw new Error(`Invalid feature object found for ID: ${featureId}`);
 
+    // 対象地物が指定された頂点を使用しているか確認 (リングベース対応)
     const isPolygon = feature instanceof Polygon || feature.constructor?.name === 'Polygon';
-    const usesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) ||
-                     (isPolygon && feature.holesVertexIds?.some(hole => hole.includes(vertexId))) ||
-                     (isPolygon && feature.isMultiPolygon && feature.subPolygons?.some(sub =>
-                         (sub.vertexIds && sub.vertexIds.includes(vertexId)) ||
-                         (sub.holesVertexIds?.some(hole => hole.includes(vertexId)))
-                     ));
+    const usesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) || // Point, Line
+                       (isPolygon && feature.rings?.some(ring => ring.vertexIds.includes(vertexId))); // Polygon
     if (!usesVertex) throw new Error(`Feature ${featureId} does not use vertex with ID: ${vertexId}`);
 
+    // 新しい頂点を作成してWorldに追加
     const newVertexId = this._generateId('vertex');
     const newVertex = { id: newVertexId, x: vertex.x, y: vertex.y }; // プレーンオブジェクト
     world.vertices.push(newVertex);
 
-    let updated = false;
-     const hasWithVertexIds = typeof feature.withVertexIds === 'function';
-     const hasWithHolesVertexIds = isPolygon && typeof feature.withHolesVertexIds === 'function';
-     const hasWithMultiPolygonData = isPolygon && typeof feature.withMultiPolygonData === 'function';
-     const hasWithSubPolygonHoles = isPolygon && typeof feature.withSubPolygonHoles === 'function';
-
-    if (hasWithVertexIds && feature.vertexIds && feature.vertexIds.includes(vertexId)) {
-        const newVertexIds = feature.vertexIds.map(id => id === vertexId ? newVertexId : id);
-        feature = feature.withVertexIds(newVertexIds);
-        updated = true;
-    }
-    if (hasWithHolesVertexIds && feature.holesVertexIds && feature.holesVertexIds.length > 0) {
-      let holesUpdated = false;
-      const newHolesVertexIds = feature.holesVertexIds.map(hole => {
-        if (hole.includes(vertexId)) {
-          holesUpdated = true;
-          return hole.map(id => id === vertexId ? newVertexId : id);
+    // 対象地物の頂点IDを新しいIDに置き換え
+    let featureUpdated = false;
+    if (feature instanceof Point || feature instanceof Line) {
+        if (feature.vertexIds.includes(vertexId)) {
+            const newVertexIds = feature.vertexIds.map(id => id === vertexId ? newVertexId : id);
+            feature = feature.withVertexIds(newVertexIds);
+            featureUpdated = true;
         }
-        return hole;
-      });
-      if (holesUpdated) {
-        feature = feature.withHolesVertexIds(newHolesVertexIds);
-        updated = true;
-      }
-    }
-    if (feature.isMultiPolygon && feature.subPolygons) {
-        let subPolygonsUpdated = false;
-        const newSubPolygons = feature.subPolygons.map((sub, subIndex) => {
-            let subUpdated = false;
-            let newSubVertexIds = sub.vertexIds;
-            let newSubHolesVertexIds = sub.holesVertexIds || [];
-            if (sub.vertexIds && sub.vertexIds.includes(vertexId)) {
-                newSubVertexIds = sub.vertexIds.map(id => id === vertexId ? newVertexId : id);
-                subUpdated = true;
+    } else if (feature instanceof Polygon) {
+        let tempPolygon = feature;
+        for (const ring of feature.rings) {
+            if (ring.vertexIds.includes(vertexId)) {
+                const newRingVertexIds = ring.vertexIds.map(id => id === vertexId ? newVertexId : id);
+                tempPolygon = tempPolygon.withUpdatedRingVertices(ring.id, newRingVertexIds);
+                featureUpdated = true;
             }
-            if (hasWithSubPolygonHoles && newSubHolesVertexIds.length > 0) {
-                 let subHolesUpdated = false;
-                 newSubHolesVertexIds = newSubHolesVertexIds.map(hole => {
-                     if (hole.includes(vertexId)) {
-                         subHolesUpdated = true;
-                         return hole.map(id => id === vertexId ? newVertexId : id);
-                     }
-                     return hole;
-                 });
-                 if (subHolesUpdated) subUpdated = true;
-            }
-            if (subUpdated) {
-                subPolygonsUpdated = true;
-                return { vertexIds: newSubVertexIds, holesVertexIds: newSubHolesVertexIds };
-            }
-            return sub;
-        });
-        if (subPolygonsUpdated) {
-            if (hasWithMultiPolygonData) {
-                feature = feature.withMultiPolygonData(true, newSubPolygons);
-                updated = true;
-            } else { console.error(`Feature ${feature.id} is missing withMultiPolygonData method.`); }
         }
+        feature = tempPolygon; // 更新されたインスタンスに差し替え
     }
 
-    if (updated) {
-      world.features[featureIndex] = feature;
-    } else { console.error(`Failed to update feature ${featureId} during vertex unlink.`); }
+    // 更新された地物をWorldに反映
+    if (featureUpdated) {
+        world.features[featureIndex] = feature;
+    } else {
+        console.error(`Failed to update feature ${featureId} during vertex unlink.`);
+        // エラー発生時、追加した頂点を削除する？ -> ここでは行わない
+    }
 
     await this._worldRepository.saveWorld(world);
+    // 更新後の feature を返す
     return { newVertex: newVertex, updatedFeature: world.features[featureIndex] };
   }
 
   /**
-   * 頂点移動時の衝突処理 (EditFeatureUseCaseから移動)
+   * 頂点移動時の衝突処理 (EditFeatureUseCaseから移動、リングベース対応)
    * @private
    */
   _handleCollisionForVertexMove(vertex, newPosition, world) {
+    // 衝突判定対象となるポリゴンを特定 (リングベース対応)
     const polygons = world.features.filter(f =>
-      f instanceof Polygon &&
-      ((f.vertexIds && f.vertexIds.includes(vertex.id)) ||
-       (f.holesVertexIds && f.holesVertexIds.some(hole => hole.includes(vertex.id))) ||
-       (f.isMultiPolygon && f.subPolygons?.some(sub =>
-           (sub.vertexIds && sub.vertexIds.includes(vertex.id)) ||
-           (sub.holesVertexIds?.some(hole => hole.includes(vertex.id)))
-       )))
+      (f instanceof Polygon || f.constructor?.name === 'Polygon') &&
+      f.rings?.some(ring => ring.vertexIds.includes(vertex.id))
     );
-    if (polygons.length === 0) return newPosition;
+    if (polygons.length === 0) return newPosition; // ポリゴンでなければ衝突判定不要
+
     // TODO: 衝突判定とエッジ滑り処理 (GeometryServiceを利用)
+    // この部分は未実装、現状は衝突を無視して新しい位置をそのまま返す
+    console.warn("_handleCollisionForVertexMove: Collision detection not implemented yet.");
     return newPosition;
   }
 }

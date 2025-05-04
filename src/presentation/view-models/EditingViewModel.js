@@ -132,6 +132,7 @@ export class EditingViewModel {
             parentId: object.parentId,
             childIds: Array.isArray(object.childIds) ? [...object.childIds] : [],
             rings: Array.isArray(object.rings) ? object.rings.map(ring => ({
+                // リングデータはプレーンオブジェクトとして保存（_constructorName不要）
                 id: ring.id,
                 vertexIds: [...ring.vertexIds],
                 isOuter: ring.isOuter,
@@ -143,15 +144,10 @@ export class EditingViewModel {
         return serializeProperty(object);
     } else if (object instanceof TimePoint) {
         return { _constructorName: 'TimePoint', ...serializeTimePoint(object) };
-    } else if (object._constructorName === 'Ring') { // Ringオブジェクトもシリアライズ対象に
-        return {
-            _constructorName: 'Ring',
-            id: object.id,
-            vertexIds: Array.isArray(object.vertexIds) ? [...object.vertexIds] : [],
-            isOuter: object.isOuter,
-            parentId: object.parentId
-        };
     }
+    // Ringオブジェクトは履歴に直接シリアライズする必要はない想定
+    // (Polygonの一部としてプレーンオブジェクトで保存されるため)
+    // else if (object._constructorName === 'Ring') { ... }
      else {
         console.warn("Unsupported object type for history serialization:", object);
         try { return JSON.parse(JSON.stringify(object)); } catch { return null; }
@@ -161,12 +157,22 @@ export class EditingViewModel {
  /**
  * 履歴から読み込んだプレーンオブジェクトを対応するドメインインスタンスにデシリアライズ
  * @param {Object | null} data - シリアライズされたプレーンオブジェクト
- * @returns {Object | null} デシリアライズされたドメインインスタンス、または null
+ * @returns {Object | null} デシリアライズされたドメインインスタンス、またはリングの場合はプレーンオブジェクト、それ以外はnull
  * @private
  */
 _deserializeFromHistory(data) {
-    if (!data || !data._constructorName) return null;
-
+    if (!data) return null;
+    // リングデータは _constructorName を持たない前提で処理を追加
+    if (data.id && Array.isArray(data.vertexIds) && typeof data.isOuter === 'boolean') {
+        return { // リングデータはプレーンオブジェクトとして返す
+            id: data.id,
+            vertexIds: data.vertexIds || [],
+            isOuter: data.isOuter,
+            parentId: data.parentId // nullも許容
+        };
+    }
+    // _constructorName を持つオブジェクトの処理
+    if (!data._constructorName) return null;
     const constructorName = data._constructorName;
 
     try {
@@ -192,7 +198,7 @@ _deserializeFromHistory(data) {
                     data.layerId
                 );
             case 'Polygon':
-                const rings = (data.rings || []).map(ringData => ({
+                const rings = (data.rings || []).map(ringData => ({ // リングはプレーンオブジェクト
                     id: ringData.id,
                     vertexIds: ringData.vertexIds || [],
                     isOuter: ringData.isOuter,
@@ -206,14 +212,7 @@ _deserializeFromHistory(data) {
                     data.childIds || [],
                     rings
                 );
-            case 'Ring': // Ringオブジェクトのデシリアライズ (プレーンオブジェクトとして返す)
-                 return {
-                     // _constructorName は不要
-                     id: data.id,
-                     vertexIds: data.vertexIds || [],
-                     isOuter: data.isOuter,
-                     parentId: data.parentId
-                 };
+            // 'Ring' のケースは不要 (上で処理されるため)
             default:
                 console.warn(`Unsupported constructor name for history deserialization: ${constructorName}`);
                 return null;
@@ -422,7 +421,6 @@ _deserializeFromHistory(data) {
    * @returns {Promise<Object>} 追加された地物インスタンス
    */
   async confirmAddFeature(properties, layerId) {
-    // (このメソッドはステップ2.2でリングベースPolygon生成に対応済みのため変更なし)
     if (this._mode !== 'add' || !this._tool || this._addingPoints.length === 0) {
       throw new Error('地物の追加状態ではありません');
     }
@@ -454,8 +452,8 @@ _deserializeFromHistory(data) {
         type: 'add',
         featureId: feature.id,
         featureType: this._tool,
-        featureData: this._serializeForHistory(feature),
-        addedVerticesData: addedVerticesData
+        featureData: this._serializeForHistory(feature), // ドメインインスタンスを履歴用にシリアライズ
+        addedVerticesData: addedVerticesData // プレーンオブジェクトの配列
       });
       this._clearAddingState();
       this._eventBus.publish('FeatureAdded', { feature });
@@ -473,7 +471,6 @@ _deserializeFromHistory(data) {
    * @returns {Promise<Object|null>} 更新されたポリゴン、または失敗時にnull
    */
   async confirmAddHole() {
-      // 条件チェック
       if (this._mode !== 'edit' || this._tool !== 'add-hole' || this._addingSubMode !== 'hole' || !this._targetPolygon || !this._targetRingIdForHole || this._addingPoints.length < 3) {
           console.error('穴の追加確定の条件を満たしていません。', { mode: this._mode, tool: this._tool, subMode: this._addingSubMode, target: !!this._targetPolygon, targetRingId: this._targetRingIdForHole, points: this._addingPoints.length });
           this._clearAddingState();
@@ -482,42 +479,33 @@ _deserializeFromHistory(data) {
       }
 
       const polygonId = this._targetPolygon.id;
-      const holePoints = [...this._addingPoints]; // 穴の頂点座標 (座標の配列)
-      const targetRingId = this._targetRingIdForHole; // 親となる外周リングのID
+      const holePoints = [...this._addingPoints];
+      const targetRingId = this._targetRingIdForHole;
 
-      // アンドゥ用に更新前の状態を保存
-      const polygonBeforeUpdatePlain = this._serializeForHistory(this._targetPolygon);
+      const polygonBeforeUpdatePlain = this._serializeForHistory(this._targetPolygon); // 更新前のポリゴンを履歴用に保存
 
       try {
-          // UpdateFeatureUseCase に渡す形式を構築
-          // UseCase側で座標から頂点IDを生成し、リングを追加することを期待
           const geometryUpdate = {
-              // 新しいキー: UseCase側でこれを解釈して PolygonEditService.addRingToPolygon を呼ぶ想定
               newRingCoordinates: [{
-                  points: holePoints, // 頂点座標の配列
-                  isOuter: false,     // 穴なので false
-                  parentId: targetRingId // 親リングIDを指定
+                  points: holePoints,
+                  isOuter: false,
+                  parentId: targetRingId
               }]
-              // 古い形式は削除
-              // newRings: [...] // これはID生成済みを渡す場合に使う (アンドゥ/リドゥなど)
           };
 
-          // UseCaseを呼び出してポリゴンを更新
           const updatedPolygon = await this._editFeatureUseCase.updateFeature(
               polygonId,
               { geometry: geometryUpdate }
           );
 
-          // アンドゥ履歴に追加 (UseCaseの結果から追加された情報を取得)
-          // UseCaseが追加されたリング情報や頂点情報を返すように修正が必要
-          // 暫定的に、更新前後の差分から追加されたリングと頂点を推測する（不安定）
-          const polygonAfterUpdatePlain = this._serializeForHistory(updatedPolygon);
-          const addedRing = polygonAfterUpdatePlain.rings.find(r =>
+          const polygonAfterUpdatePlain = this._serializeForHistory(updatedPolygon); // 更新後のポリゴン
+          // 更新前後のリングリストを比較して追加されたリングを特定
+          const addedRingData = polygonAfterUpdatePlain.rings.find(r =>
               !polygonBeforeUpdatePlain.rings.some(br => br.id === r.id)
           );
           let addedVerticesData = [];
-          if (addedRing) {
-             addedVerticesData = await this._getVerticesByIds(addedRing.vertexIds);
+          if (addedRingData) {
+             addedVerticesData = await this._getVerticesByIds(addedRingData.vertexIds);
           } else {
              console.warn("Could not identify the added ring for undo history.");
           }
@@ -525,12 +513,10 @@ _deserializeFromHistory(data) {
           this._addToHistory({
               type: 'addRing',
               polygonId,
-              // addedRing はプレーンオブジェクトで保存
-              addedRing: addedRing ? this._serializeForHistory({ _constructorName: 'Ring', ...addedRing }) : null,
-              addedVerticesData: addedVerticesData
+              addedRing: addedRingData || null, // ★ プレーンオブジェクトを保存
+              addedVerticesData: addedVerticesData // プレーンオブジェクトの配列
           });
 
-          // イベント発行と状態クリア
           this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
           this._clearAddingState();
           this.setTool('select');
@@ -549,7 +535,6 @@ _deserializeFromHistory(data) {
    * @returns {Promise<Object|null>} 更新されたポリゴン、または失敗時にnull
    */
   async confirmAddEnclave() {
-      // 条件チェック
       if (this._mode !== 'edit' || this._tool !== 'add-hole' || this._addingSubMode !== 'enclave' || !this._targetPolygon || this._addingPoints.length < 3) {
           console.error('飛び地の追加確定の条件を満たしていません。', { mode: this._mode, tool: this._tool, subMode: this._addingSubMode, target: !!this._targetPolygon, points: this._addingPoints.length });
           this._clearAddingState();
@@ -558,35 +543,32 @@ _deserializeFromHistory(data) {
       }
 
       const polygonId = this._targetPolygon.id;
-      const enclavePoints = [...this._addingPoints]; // 飛び地の頂点座標
+      const enclavePoints = [...this._addingPoints];
 
-      // アンドゥ用に更新前の状態を保存
-      const polygonBeforeUpdatePlain = this._serializeForHistory(this._targetPolygon);
+      const polygonBeforeUpdatePlain = this._serializeForHistory(this._targetPolygon); // 更新前のポリゴンを履歴用に保存
 
       try {
-          // UpdateFeatureUseCase に渡す形式を構築
           const geometryUpdate = {
               newRingCoordinates: [{
-                  points: enclavePoints, // 頂点座標の配列
-                  isOuter: true,       // 飛び地の外周なので true
-                  parentId: null       // 最上位のリングなので null
+                  points: enclavePoints,
+                  isOuter: true,
+                  parentId: null
               }]
           };
 
-          // UseCaseを呼び出してポリゴンを更新
           const updatedPolygon = await this._editFeatureUseCase.updateFeature(
               polygonId,
               { geometry: geometryUpdate }
           );
 
-          // アンドゥ履歴に追加 (UseCaseの結果から追加された情報を取得)
-          const polygonAfterUpdatePlain = this._serializeForHistory(updatedPolygon);
-          const addedRing = polygonAfterUpdatePlain.rings.find(r =>
+          const polygonAfterUpdatePlain = this._serializeForHistory(updatedPolygon); // 更新後のポリゴン
+          // 更新前後のリングリストを比較して追加されたリングを特定
+          const addedRingData = polygonAfterUpdatePlain.rings.find(r =>
               !polygonBeforeUpdatePlain.rings.some(br => br.id === r.id)
           );
           let addedVerticesData = [];
-          if (addedRing) {
-             addedVerticesData = await this._getVerticesByIds(addedRing.vertexIds);
+          if (addedRingData) {
+             addedVerticesData = await this._getVerticesByIds(addedRingData.vertexIds);
           } else {
              console.warn("Could not identify the added ring (enclave) for undo history.");
           }
@@ -594,11 +576,10 @@ _deserializeFromHistory(data) {
           this._addToHistory({
               type: 'addRing', // 穴追加と同じタイプ
               polygonId: polygonId,
-              addedRing: addedRing ? this._serializeForHistory({ _constructorName: 'Ring', ...addedRing }) : null,
-              addedVerticesData: addedVerticesData,
+              addedRing: addedRingData || null, // ★ プレーンオブジェクトを保存
+              addedVerticesData: addedVerticesData, // プレーンオブジェクトの配列
           });
 
-          // 状態クリアとイベント発行
           this._clearAddingState();
           this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
           this.setTool('select');
@@ -671,15 +652,23 @@ _deserializeFromHistory(data) {
       }
       if (significantMovement) {
           try {
+              // 履歴用に移動前の頂点データを取得
+              const verticesBeforePlain = [];
+               for (const [vertexId, info] of dragInfoCopy.entries()) {
+                  verticesBeforePlain.push(this._serializeForHistory(new Vertex(vertexId, info.originalPosition.x, info.originalPosition.y)));
+               }
+              // UseCaseを呼び出して頂点を移動
               await this._editFeatureUseCase.moveVertices(vertexUpdates);
+              // 履歴データを生成・追加
                const historyData = { type: 'moveVertices', updates: [] };
                for (const [vertexId, info] of dragInfoCopy.entries()) {
-                   const originalVertex = new Vertex(vertexId, info.originalPosition.x, info.originalPosition.y);
+                   // const originalVertex = new Vertex(vertexId, info.originalPosition.x, info.originalPosition.y);
                    const currentVertex = new Vertex(vertexId, info.currentPosition.x, info.currentPosition.y);
+                   const originalVertexPlain = verticesBeforePlain.find(v => v.id === vertexId);
                    historyData.updates.push({
                        vertexId: vertexId,
-                       oldPosition: this._serializeForHistory(originalVertex),
-                       newPosition: this._serializeForHistory(currentVertex)
+                       oldPosition: originalVertexPlain, // シリアライズ済みの元データ
+                       newPosition: this._serializeForHistory(currentVertex) // シリアライズした新データ
                    });
                }
                this._addToHistory(historyData);
@@ -720,13 +709,13 @@ _deserializeFromHistory(data) {
   async deleteFeature(featureId, feature) {
     if (!feature) { throw new Error("Missing feature data for deletion."); }
     try {
-       const verticesToRestoreData = await this._getVerticesDataForFeature(feature);
+       const verticesToRestoreData = await this._getVerticesDataForFeature(feature); // 参照頂点を履歴用に取得
        await this._editFeatureUseCase.deleteFeature(featureId);
        this._addToHistory({
          type: 'delete',
          featureId,
-         featureData: this._serializeForHistory(feature),
-         verticesToRestoreData: verticesToRestoreData
+         featureData: this._serializeForHistory(feature), // 削除された地物データを履歴用に保存
+         verticesToRestoreData: verticesToRestoreData // 削除された頂点データを履歴用に保存
        });
        this._eventBus.publish('FeatureDeleted', { featureId });
        this._eventBus.publish('ClearSelection');
@@ -747,33 +736,36 @@ _deserializeFromHistory(data) {
         const worldRepository = this._editFeatureUseCase._worldRepository;
         const world = await worldRepository.getWorld();
         const affectedFeaturesBeforePlain = {};
-        const allAffectedVertexIds = new Set();
+        const verticesToRestoreData = await this._getVerticesByIds(vertexIds); // 削除される頂点自身のデータ
+        const deletedVertexIdsSet = new Set(vertexIds);
+
         if (world && world.features) {
             world.features.forEach(f => {
-                 const featureUsesVertex = vertexIds.some(vid =>
-                    (f instanceof DomainPolygon)
-                        ? f.rings?.some(ring => ring.vertexIds.includes(vid))
-                        : f.vertexIds?.includes(vid)
-                 );
+                // リングベースで頂点が含まれるかチェック
+                 const featureUsesVertex = (f instanceof DomainPolygon)
+                     ? f.rings?.some(ring => ring.vertexIds.some(id => deletedVertexIdsSet.has(id)))
+                     : f.vertexIds?.some(id => deletedVertexIdsSet.has(id));
+
                  if (featureUsesVertex) {
+                     // 影響を受ける地物の状態を履歴用に保存
                      affectedFeaturesBeforePlain[f.id] = this._serializeForHistory(f);
-                     if (f instanceof DomainPolygon) {
-                         f.rings?.forEach(ring => ring.vertexIds.forEach(id => allAffectedVertexIds.add(id)));
-                     } else if (f.vertexIds) {
-                         f.vertexIds.forEach(id => allAffectedVertexIds.add(id));
-                     }
                  }
             });
         }
-        const verticesToRestoreData = await this._getVerticesByIds(Array.from(allAffectedVertexIds));
+
+        // UseCaseを呼び出して頂点を削除
         const result = await this._editFeatureUseCase.deleteVertices(vertexIds);
+
+        // 履歴に追加
         this._addToHistory({
             type: 'deleteVertices',
-            deletedVertexIds: vertexIds,
-            verticesToRestoreData: verticesToRestoreData,
-            affectedFeaturesBefore: affectedFeaturesBeforePlain,
-            deletedFeatureIds: result?.deletedFeatureIds || []
+            deletedVertexIds: vertexIds, // 削除された頂点IDリスト
+            verticesToRestoreData: verticesToRestoreData, // 削除された頂点データ(Undo用)
+            affectedFeaturesBefore: affectedFeaturesBeforePlain, // 影響を受けた地物の削除前の状態(Undo用)
+            deletedFeatureIds: result?.deletedFeatureIds || [] // UseCaseによって削除された地物のID
         });
+
+        // イベント発行
         if (result?.deletedFeatureIds?.length > 0) { result.deletedFeatureIds.forEach(id => this._eventBus.publish('FeatureDeleted', { featureId: id })); }
         if (result?.updatedFeatureIds?.length > 0) {
              const updatedWorld = await worldRepository.getWorld();
@@ -803,9 +795,9 @@ _deserializeFromHistory(data) {
       const world = await worldRepository.getWorld();
       const featureBefore = world.features.find(f => f.id === featureId);
       if (!featureBefore) { throw new Error(`Feature not found: ${featureId}`); }
-      const oldPropertiesPlain = featureBefore.properties.map(p => this._serializeForHistory(p)).filter(Boolean);
+      const oldPropertiesPlain = featureBefore.properties.map(p => this._serializeForHistory(p)).filter(Boolean); // 履歴用に古いプロパティを保存
       const feature = await this._editFeatureUseCase.updateFeature(featureId, { properties: newProperties });
-      const newPropertiesPlain = newProperties.map(p => this._serializeForHistory(p)).filter(Boolean);
+      const newPropertiesPlain = newProperties.map(p => this._serializeForHistory(p)).filter(Boolean); // 履歴用に新しいプロパティを保存
       this._addToHistory({ type: 'updateProperties', featureId, oldProperties: oldPropertiesPlain, newProperties: newPropertiesPlain });
       this._eventBus.publish('FeatureUpdated', { feature });
       return feature;
@@ -814,24 +806,6 @@ _deserializeFromHistory(data) {
       throw error;
     }
   }
-
-  /**
-   * アンドゥ/リドゥからリングを追加するための内部ヘルパー (直接呼び出し非推奨)
-   * @param {string} polygonId
-   * @param {object} ringData - リングのプレーンデータ
-   * @returns {Promise<Polygon>}
-   * @deprecated Use _executeOperation/ReverseOperation instead.
-   */
-  /*
-  async addRingToPolygon(polygonId, ringData) {
-      // このメソッドは _executeOperation から呼ばれる想定だったが、UseCase経由に修正
-      console.warn("addRingToPolygon is deprecated for direct use.");
-      // UseCase呼び出しロジックをここに書くのは責務違反
-      // _executeOperation 内で UpdateFeatureUseCase を呼び出すように修正済み
-      return null;
-  }
-  */
-
 
   /**
    * 一時的な表示要素を追加
@@ -874,6 +848,7 @@ _deserializeFromHistory(data) {
       this._redoStack.push(operation);
       this._notifyObservers('history');
       this._eventBus.publish('WorldUpdated');
+      this._eventBus.publish('ClearSelection'); // Undo/Redo後は選択をクリア
     } catch (error) {
       this._undoStack.push(operation); // エラー時は戻す
       console.error('アンドゥに失敗しました', error);
@@ -895,6 +870,7 @@ _deserializeFromHistory(data) {
       this._undoStack.push(operation);
       this._notifyObservers('history');
       this._eventBus.publish('WorldUpdated');
+      this._eventBus.publish('ClearSelection'); // Undo/Redo後は選択をクリア
     } catch (error) {
       this._redoStack.push(operation); // エラー時は戻す
       console.error('リドゥに失敗しました', error);
@@ -926,7 +902,8 @@ _deserializeFromHistory(data) {
     let worldChanged = false;
 
     switch (operation.type) {
-      case 'add':
+      case 'add': // 地物追加のRedo
+        // 1. 必要な頂点を復元
         if (operation.addedVerticesData) {
             operation.addedVerticesData.forEach(vDataPlain => {
                 const vData = this._deserializeFromHistory(vDataPlain);
@@ -935,41 +912,41 @@ _deserializeFromHistory(data) {
                     worldChanged = true;
                 }
             });
+            if (worldChanged) { await worldRepo.saveWorld(world); world = await worldRepo.getWorld(); } // 保存して再取得
         }
-        if (worldChanged) await worldRepo.saveWorld(world);
+        // 2. 地物を復元して追加
         if (operation.featureData) {
             const featureInstance = this._deserializeFromHistory(operation.featureData);
-            if (featureInstance) {
-                 world = await worldRepo.getWorld();
-                 if (!world.features.some(f => f.id === featureInstance.id)) {
-                     world.features.push(featureInstance);
-                     await worldRepo.saveWorld(world);
-                     this._eventBus.publish('FeatureAdded', { feature: featureInstance });
-                 }
+            if (featureInstance && !world.features.some(f => f.id === featureInstance.id)) {
+                 world.features.push(featureInstance);
+                 await worldRepo.saveWorld(world);
+                 this._eventBus.publish('FeatureAdded', { feature: featureInstance });
             }
         }
         break;
-      case 'delete':
+      case 'delete': // 地物削除のRedo
          await this._editFeatureUseCase.deleteFeature(operation.featureId);
+         // deleteFeature がイベント発行と保存を行う
          break;
-      case 'deleteVertices':
+      case 'deleteVertices': // 頂点削除のRedo
           await this._editFeatureUseCase.deleteVertices(operation.deletedVertexIds);
+          // deleteVertices がイベント発行と保存を行う
           break;
-      case 'moveVertices':
-        const redoUpdates = operation.updates.map(u => ({
-            vertexId: u.vertexId,
-            newPosition: { x: u.newPosition.x, y: u.newPosition.y }
-        }));
+      case 'moveVertices': // 頂点移動のRedo
+        const redoUpdates = operation.updates.map(u => {
+            const newPos = this._deserializeFromHistory(u.newPosition); // newPositionはVertexプレーンデータ
+            return { vertexId: u.vertexId, newPosition: { x: newPos.x, y: newPos.y }};
+        });
         await this._editFeatureUseCase.moveVertices(redoUpdates);
-        redoUpdates.forEach(update => { this._eventBus.publish('VertexMoved', { vertexId: update.vertexId, newPosition: update.newPosition }); });
+        // moveVertices がイベント発行と保存を行う
         break;
-      case 'updateProperties':
+      case 'updateProperties': // プロパティ更新のRedo
         const newPropsInstances = operation.newProperties.map(p => this._deserializeFromHistory(p)).filter(Boolean);
         const featureProps = await this._editFeatureUseCase.updateFeature(operation.featureId, { properties: newPropsInstances });
-        this._eventBus.publish('FeatureUpdated', { feature: featureProps });
+        // updateFeature がイベント発行と保存を行う
         break;
-      case 'addRing':
-         // 1. 頂点復元
+      case 'addRing': // リング追加のRedo
+         // 1. 必要な頂点を復元
          let verticesAddedRing = false;
          if (operation.addedVerticesData) {
              operation.addedVerticesData.forEach(vDataPlain => {
@@ -979,43 +956,15 @@ _deserializeFromHistory(data) {
                      verticesAddedRing = true;
                  }
              });
+             if (verticesAddedRing) { await worldRepo.saveWorld(world); world = await worldRepo.getWorld(); }
          }
-         if (verticesAddedRing) { await worldRepo.saveWorld(world); }
-         // 2. リング追加 (UseCase経由)
-         // 履歴からリングデータ(プレーン)を取得し、UseCaseが期待する形式で渡す
-         const ringToAdd = this._deserializeFromHistory(operation.addedRing);
+         // 2. UseCase経由でリングを追加 (ID指定)
+         const ringToAdd = this._deserializeFromHistory(operation.addedRing); // リングプレーンデータを取得
          if (ringToAdd) {
-             const geometryUpdate = {
-                 newRings: [ // UseCaseはID付きのリングデータを期待する
-                     {
-                         vertexIds: ringToAdd.vertexIds,
-                         isOuter: ringToAdd.isOuter,
-                         parentId: ringToAdd.parentId,
-                         // ID は UseCase/Service 内で生成されるので不要？ -> 要確認
-                         // id: ringToAdd.id // IDも渡すか？ PolygonEditService.addRingToPolygon はID生成する...
-                         // -> addRingToPolygon は ID 生成、UseCaseはそれを呼ぶ。
-                         // -> Redo の場合は ID 生成済みなので、UseCaseに直接ID付きデータを渡す？
-                         // -> UpdateFeatureUseCase は PolygonEditService.addRingToPolygon を呼ぶ想定。
-                         //    しかし、履歴データにはIDが含まれている。どう整合性を取るか？
-                         //    暫定案: UseCaseに渡す geometryUpdate に、ID生成済みであることを示すフラグを追加するか、
-                         //           あるいは、ID付きのリングデータを渡せる別の口を用意する。
-                         //           ここでは、既存の newRings (IDなし期待) とは別に、
-                         //           `redoRings: [...]` のようなキーで渡すことを仮定。
-                         //           -> UpdateFeatureUseCase の修正が必要。
-                         //
-                         //           より簡単な方法: Redo時だけ PolygonEditService を直接呼ぶ？ -> 責務違反
-                         //           さらに簡単な方法: Redo 時は現状の UpdateFeatureUseCase 経由では実装できないとし、
-                         //                           一旦 Redo 機能を無効化するか、警告を出す。
-                         //                           -> 今回は警告を出す方針で進め、UseCase修正時に対応。
-                         //                           -> いや、UseCaseにID付きリングを受け取れる口を作るのが本筋。
-                         //                              今回は geometryUpdate に `existingRingData` キーを追加して渡す。
-                         //                              UpdateFeatureUseCase側でこのキーを見て処理を分岐させる。
-                         existingRingData: [ringToAdd] // 既存IDを持つリングデータ
-                     }
-                 ]
-             };
+             // UseCaseに existingRingData で渡す
+             const geometryUpdate = { existingRingData: [ringToAdd] };
              const updatedPolygonRing = await this._editFeatureUseCase.updateFeature(operation.polygonId, { geometry: geometryUpdate });
-             this._eventBus.publish('FeatureUpdated', { feature: updatedPolygonRing });
+             // updateFeature がイベント発行と保存を行う
          } else {
              console.error("Redo addRing: Failed to deserialize ring data from history.");
          }
@@ -1037,10 +986,12 @@ _deserializeFromHistory(data) {
     let worldChanged = false;
 
     switch (operation.type) {
-      case 'add':
+      case 'add': // 地物追加のUndo (地物削除)
         await this._editFeatureUseCase.deleteFeature(operation.featureId);
+        // deleteFeature が関連頂点のクリーンアップ、イベント発行、保存を行う
         break;
-      case 'delete':
+      case 'delete': // 地物削除のUndo (地物復元)
+        // 1. 必要な頂点を復元
         if (operation.verticesToRestoreData) {
             operation.verticesToRestoreData.forEach(vDataPlain => {
                 const vData = this._deserializeFromHistory(vDataPlain);
@@ -1049,21 +1000,20 @@ _deserializeFromHistory(data) {
                     worldChanged = true;
                 }
             });
+            if (worldChanged) { await worldRepo.saveWorld(world); world = await worldRepo.getWorld(); }
         }
-         if (worldChanged) await worldRepo.saveWorld(world);
+        // 2. 地物を復元して追加
         if (operation.featureData) {
             const featureInstance = this._deserializeFromHistory(operation.featureData);
-            if (featureInstance) {
-                 world = await worldRepo.getWorld();
-                 if (!world.features.some(f => f.id === featureInstance.id)) {
-                     world.features.push(featureInstance);
-                     await worldRepo.saveWorld(world);
-                     this._eventBus.publish('FeatureAdded', { feature: featureInstance });
-                 }
+            if (featureInstance && !world.features.some(f => f.id === featureInstance.id)) {
+                 world.features.push(featureInstance);
+                 await worldRepo.saveWorld(world);
+                 this._eventBus.publish('FeatureAdded', { feature: featureInstance });
             }
         }
         break;
-      case 'deleteVertices':
+      case 'deleteVertices': // 頂点削除のUndo (頂点と影響地物の復元)
+        // 1. 削除された頂点を復元
         if (operation.verticesToRestoreData) {
             operation.verticesToRestoreData.forEach(vDataPlain => {
                 const vData = this._deserializeFromHistory(vDataPlain);
@@ -1072,75 +1022,60 @@ _deserializeFromHistory(data) {
                     worldChanged = true;
                 }
             });
+            if (worldChanged) { await worldRepo.saveWorld(world); world = await worldRepo.getWorld(); }
         }
-        if (worldChanged) {
-            await worldRepo.saveWorld(world);
-            world = await worldRepo.getWorld();
-            worldChanged = false;
-        }
+        // 2. 影響を受けた地物の状態を元に戻す
         if (operation.affectedFeaturesBefore) {
             let featuresUpdated = false;
-            Object.values(operation.affectedFeaturesBefore).forEach(featurePlain => {
-                const featureInstance = this._deserializeFromHistory(featurePlain);
-                if (!featureInstance) return;
-                const index = world.features.findIndex(f => f.id === featureInstance.id);
-                const wasDeleted = operation.deletedFeatureIds?.includes(featureInstance.id);
-                if (index !== -1) {
-                    const currentFeature = world.features[index];
-                    let areEqual = false;
-                    if(typeof currentFeature.equals === 'function') { areEqual = currentFeature.equals(featureInstance); }
-                    if (!areEqual) {
-                        world.features[index] = featureInstance;
-                        featuresUpdated = true;
-                        this._eventBus.publish('FeatureUpdated', { feature: featureInstance });
-                    }
-                } else if (wasDeleted) {
-                    world.features.push(featureInstance);
+            for (const featureId in operation.affectedFeaturesBefore) {
+                const featureBeforePlain = operation.affectedFeaturesBefore[featureId];
+                const featureInstance = this._deserializeFromHistory(featureBeforePlain); // 削除前の状態に復元
+                if (!featureInstance) continue;
+
+                const index = world.features.findIndex(f => f.id === featureId);
+                if (index !== -1) { // 地物がまだ存在する場合 (更新されたケース)
+                    world.features[index] = featureInstance;
+                    this._eventBus.publish('FeatureUpdated', { feature: featureInstance });
                     featuresUpdated = true;
+                } else { // 地物が削除されていた場合
+                    world.features.push(featureInstance);
                     this._eventBus.publish('FeatureAdded', { feature: featureInstance });
-                } else {
-                    console.warn(`Undo deleteVertices: Feature ${featureInstance.id} not found but was not marked as deleted.`);
+                    featuresUpdated = true;
                 }
-            });
-            if (featuresUpdated) { await worldRepo.saveWorld(world); worldChanged = true; }
+            }
+            if (featuresUpdated) { await worldRepo.saveWorld(world); }
         }
         break;
-      case 'moveVertices':
-          const undoUpdates = operation.updates.map(u => ({
-              vertexId: u.vertexId,
-              newPosition: { x: u.oldPosition.x, y: u.oldPosition.y }
-          }));
+      case 'moveVertices': // 頂点移動のUndo (元の位置に戻す)
+          const undoUpdates = operation.updates.map(u => {
+              const oldPos = this._deserializeFromHistory(u.oldPosition); // oldPositionはVertexプレーンデータ
+              return { vertexId: u.vertexId, newPosition: { x: oldPos.x, y: oldPos.y }};
+          });
           await this._editFeatureUseCase.moveVertices(undoUpdates);
-          undoUpdates.forEach(update => { this._eventBus.publish('VertexMoved', { vertexId: update.vertexId, newPosition: update.newPosition }); });
+          // moveVertices がイベント発行と保存を行う
           break;
-      case 'updateProperties':
+      case 'updateProperties': // プロパティ更新のUndo (古いプロパティに戻す)
         const oldPropsInstances = operation.oldProperties.map(p => this._deserializeFromHistory(p)).filter(Boolean);
         const featureProps = await this._editFeatureUseCase.updateFeature(operation.featureId, { properties: oldPropsInstances });
-        this._eventBus.publish('FeatureUpdated', { feature: featureProps });
+        // updateFeature がイベント発行と保存を行う
         break;
-      case 'addRing':
-         // 1. リング削除 (UseCase経由)
-         const ringToRemove = this._deserializeFromHistory(operation.addedRing);
+      case 'addRing': // リング追加のUndo (リング削除)
+         const ringToRemove = this._deserializeFromHistory(operation.addedRing); // リングプレーンデータを取得
          if (ringToRemove && ringToRemove.id) {
-             const geometryUpdate = {
-                 removedRingIds: [ringToRemove.id] // 削除するリングIDを渡す
-             };
+             // 1. UseCase経由でリングを削除
+             const geometryUpdate = { removedRingIds: [ringToRemove.id] };
              const polygonRingUndo = await this._editFeatureUseCase.updateFeature(operation.polygonId, { geometry: geometryUpdate });
-             this._eventBus.publish('FeatureUpdated', { feature: polygonRingUndo });
-         } else {
-             console.error("Undo addRing: Failed to get ring ID to remove from history.");
-             break; // エラー処理
-         }
-         // 2. 頂点削除 (他の地物で使われていなければ)
-         if (operation.addedVerticesData) {
-             const vertexIdsToRemove = operation.addedVerticesData.map(v => v.id);
-             world = await worldRepo.getWorld(); // 最新のWorldを取得
-             const existingVertexIdsToRemove = vertexIdsToRemove.filter(id => world.vertices.some(v => v.id === id));
-             if (existingVertexIdsToRemove.length > 0) {
-                 // deleteVertices UseCase を呼び出す
-                 await this._editFeatureUseCase.deleteVertices(existingVertexIdsToRemove);
+             // updateFeature がイベント発行と保存を行う
+
+             // 2. 関連する頂点を削除 (他の地物で使われていなければ)
+             if (operation.addedVerticesData) {
+                 const vertexIdsToRemove = operation.addedVerticesData.map(v => v.id);
+                 // deleteVertices UseCase を呼び出す (内部で未使用かチェックされる)
+                 await this._editFeatureUseCase.deleteVertices(vertexIdsToRemove);
                  // deleteVertices がイベント発行と保存を行う
              }
+         } else {
+             console.error("Undo addRing: Failed to get ring ID to remove from history.");
          }
         break;
       default:
@@ -1165,6 +1100,7 @@ _deserializeFromHistory(data) {
         return vertexIds
             .map(id => verticesMap.get(id))
             .filter(Boolean)
+            // ★ Vertexインスタンスをシリアライズするように修正
             .map(v => this._serializeForHistory(new Vertex(v.id, v.x, v.y)));
     } catch (error) {
         console.error("Error fetching vertices by IDs:", error);
@@ -1248,7 +1184,7 @@ _deserializeFromHistory(data) {
       case 'addingPoints': return this._addingPoints;
       case 'targetPolygon': return this._targetPolygon;
       case 'addingSubMode': return this._addingSubMode;
-      case 'targetRingIdForHole': return this._targetRingIdForHole; // 修正
+      case 'targetRingIdForHole': return this._targetRingIdForHole;
       case 'temporaryElements': return this._temporaryElements;
       case 'draggingVertices': return this._draggingVerticesInfo;
       case 'history': return { canUndo: this.canUndo(), canRedo: this.canRedo() };
@@ -1257,7 +1193,7 @@ _deserializeFromHistory(data) {
           addingPoints: this._addingPoints,
           targetPolygon: this._targetPolygon,
           addingSubMode: this._addingSubMode,
-          targetRingIdForHole: this._targetRingIdForHole // 修正
+          targetRingIdForHole: this._targetRingIdForHole
         };
       default: return null;
     }

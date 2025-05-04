@@ -147,7 +147,7 @@ export class PolygonEditService extends IPolygonEditService {
   }
 
   /**
-   * ポリゴンに新しいリングを追加する
+   * ポリゴンに新しいリングを追加する (IDは内部で生成)
    * @param {string} polygonId - 対象ポリゴンのID
    * @param {object} ringData - 追加するリングの情報 { vertexIds: string[], isOuter: boolean, parentId?: string }
    * @returns {Promise<Polygon>} 更新されたポリゴンインスタンス (保存は呼び出し元で行う)
@@ -169,7 +169,7 @@ export class PolygonEditService extends IPolygonEditService {
         throw new Error("Invalid ringData.parentId. Must be null or a string.");
     }
 
-    const newRingId = this._generateId('ring');
+    const newRingId = this._generateId('ring'); // ★ IDを内部生成
     const newRing = {
         id: newRingId,
         vertexIds: [...ringData.vertexIds],
@@ -178,7 +178,9 @@ export class PolygonEditService extends IPolygonEditService {
     };
 
     try {
+        // ポリゴンエンティティにリングを追加（不変操作）
         const updatedPolygon = currentPolygon.withAddedRing(newRing);
+        // 追加後のポリゴン全体を検証
         await this.validatePolygonRings(updatedPolygon, world);
         return updatedPolygon;
     } catch (error) {
@@ -186,6 +188,58 @@ export class PolygonEditService extends IPolygonEditService {
         throw error;
     }
   }
+
+  /**
+   * ポリゴンにID指定でリングを追加する (主にアンドゥ/リドゥ用)
+   * @param {string} polygonId - 対象ポリゴンのID
+   * @param {object} ringDataWithId - 追加するリングの情報 { id: string, vertexIds: string[], isOuter: boolean, parentId?: string }
+   * @returns {Promise<Polygon>} 更新されたポリゴンインスタンス (保存は呼び出し元で行う)
+   * @throws {Error} ポリゴンが見つからない場合、リングデータが無効な場合、IDが重複する場合
+   */
+  async addRingWithId(polygonId, ringDataWithId) {
+    const world = await this._worldRepository.getWorld();
+    const polygonIndex = world.features.findIndex(f => f.id === polygonId && f instanceof Polygon);
+    if (polygonIndex === -1) {
+      throw new Error(`Polygon with ID ${polygonId} not found.`);
+    }
+    const currentPolygon = world.features[polygonIndex];
+
+    // ringDataWithId の検証 (IDを含む)
+    if (!ringDataWithId || typeof ringDataWithId.id !== 'string' || !ringDataWithId.id ||
+        !Array.isArray(ringDataWithId.vertexIds) || ringDataWithId.vertexIds.length < 3 ||
+        typeof ringDataWithId.isOuter !== 'boolean') {
+      throw new Error("Invalid ring data provided. Requires { id: string, vertexIds: string[], isOuter: boolean, parentId?: string }.");
+    }
+    if (ringDataWithId.parentId !== undefined && ringDataWithId.parentId !== null && typeof ringDataWithId.parentId !== 'string') {
+      throw new Error("Invalid ringDataWithId.parentId. Must be null or a string.");
+    }
+
+    // IDの重複チェック
+    if (currentPolygon.rings.some(r => r.id === ringDataWithId.id)) {
+      throw new Error(`Ring with ID ${ringDataWithId.id} already exists in polygon ${polygonId}.`);
+    }
+
+    // ★ IDを指定してリングオブジェクトを作成
+    const newRing = {
+        id: ringDataWithId.id,
+        vertexIds: [...ringDataWithId.vertexIds],
+        isOuter: ringDataWithId.isOuter,
+        parentId: ringDataWithId.parentId !== undefined ? ringDataWithId.parentId : null
+    };
+
+    try {
+        // ポリゴンエンティティにリングを追加（不変操作）
+        // Polygon.withAddedRing は渡されたリングオブジェクトをそのまま使う
+        const updatedPolygon = currentPolygon.withAddedRing(newRing);
+        // 追加後のポリゴン全体を検証
+        await this.validatePolygonRings(updatedPolygon, world);
+        return updatedPolygon;
+    } catch (error) {
+        console.error(`Error adding ring with ID ${ringDataWithId.id} to polygon ${polygonId}:`, error);
+        throw error; // エラーを再スロー
+    }
+  }
+
 
   /**
    * ポリゴンからリングを削除する
@@ -205,13 +259,16 @@ export class PolygonEditService extends IPolygonEditService {
 
     try {
         const updatedPolygon = currentPolygon.withRemovedRing(ringId);
+        // 削除後、ポリゴンが空でなければ検証する
         if (updatedPolygon.rings.length > 0 || updatedPolygon.hasChildren()) {
              await this.validatePolygonRings(updatedPolygon, world);
         } else if (updatedPolygon.rings.length === 0 && !updatedPolygon.hasChildren()) {
+            // ポリゴンが空になった場合の警告（削除は上位のUseCaseが判断）
             console.warn(`Polygon ${polygonId} became empty after removing ring ${ringId}. It might need to be deleted.`);
         }
         return updatedPolygon;
     } catch (error) {
+        // Polygon.withRemovedRingが子リング依存エラーを投げる可能性あり
         console.error(`Error removing ring ${ringId} from polygon ${polygonId}:`, error);
         throw error;
     }
@@ -239,10 +296,13 @@ export class PolygonEditService extends IPolygonEditService {
     }
 
     try {
+        // ポリゴンエンティティのメソッドでリング頂点を更新
         const updatedPolygon = currentPolygon.withUpdatedRingVertices(ringId, newVertexIds);
+        // 更新後のポリゴン全体を検証
         await this.validatePolygonRings(updatedPolygon, world);
         return updatedPolygon;
     } catch (error) {
+        // Polygon.withUpdatedRingVerticesがエラーを投げる可能性あり (ringIdが見つからないなど)
         console.error(`Error updating vertices for ring ${ringId} in polygon ${polygonId}:`, error);
         throw error;
     }

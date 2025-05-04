@@ -15,11 +15,10 @@ import { LayerService } from '../domain/services/LayerService';
 // 元のEditFeatureUseCase（ファサード）をインポート
 import { EditFeatureUseCase } from '../application/usecases/EditFeatureUseCase';
 // --- ここから分割されたUseCase/Service ---
-// import { AddFeatureUseCase } from '../application/usecases/feature/AddFeatureUseCase';
-// import { UpdateFeatureUseCase } from '../application/usecases/feature/UpdateFeatureUseCase';
-// import { DeleteFeatureUseCase } from '../application/usecases/feature/DeleteFeatureUseCase';
-// import { VertexEditUseCase } from '../application/usecases/feature/VertexEditUseCase';
+// UseCase分割後のファイル (AddFeatureUseCase など) は EditFeatureUseCase 内部でインスタンス化
 import { IPolygonEditService } from '../application/services/IPolygonEditService'; // インターフェースをインポート
+import { PolygonEditService } from '../application/services/PolygonEditService'; // 実装クラスをインポート
+
 // --- ここまで分割されたUseCase/Service ---
 import { NavigateTimeUseCase } from '../application/usecases/NavigateTimeUseCase';
 import { ManageLayersUseCase } from '../application/usecases/ManageLayersUseCase';
@@ -86,7 +85,10 @@ export class DependencyInjection {
       this._container.fileSystem,
       this._container.jsonSerializer
     );
-    this._container.viewportManager = new ViewportManager({ /* ... options ... */ });
+    // ViewportManager の初期設定で worldWidth を渡すようにする
+    // (ConfigManager から取得するのが理想だが、ここでは直接指定)
+    const worldWidth = this._container.configManager.get('map.worldWidth', 360);
+    this._container.viewportManager = new ViewportManager({ worldWidth: worldWidth });
   }
 
   /**
@@ -95,7 +97,7 @@ export class DependencyInjection {
    */
   _registerDomainServices() {
     this._container.geometryService = new GeometryService();
-    this._container.timeService = new TimeService();
+    this._container.timeService = new TimeService(); // カレンダー設定はConfigManagerから後で適用
     this._container.layerService = new LayerService();
   }
 
@@ -106,28 +108,37 @@ export class DependencyInjection {
   _registerApplicationServices() {
     this._container.eventBus = new EventBus();
 
-    // --- PolygonEditServiceのダミー実装 (フェーズ2で実実装に置き換え) ---
-    // IPolygonEditService を継承する形でダミー実装を提供
-    class DummyPolygonEditService extends IPolygonEditService {
-        async validatePolygonRings(polygon, world) { console.warn("DummyPolygonEditService.validatePolygonRings called"); }
-        async addRingToPolygon(polygonId, ringData) { console.warn("DummyPolygonEditService.addRingToPolygon called"); return null; }
-        async removeRingFromPolygon(polygonId, ringId) { console.warn("DummyPolygonEditService.removeRingFromPolygon called"); return null; }
-        async updateRingVertices(polygonId, ringId, newVertexIds) { console.warn("DummyPolygonEditService.updateRingVertices called"); return null; }
-        async updatePolygonGeometry(currentPolygon, geometryUpdates, world) { console.warn("DummyPolygonEditService.updatePolygonGeometry called"); return currentPolygon; } // 現状の動作を維持
-        async splitPolygon(polygonId, divisionData) { console.warn("DummyPolygonEditService.splitPolygon called"); return { newPolygons: [] }; }
-    }
-    this._container.polygonEditService = new DummyPolygonEditService();
-    // --- ここまでダミー実装 ---
+    // --- PolygonEditServiceの実装を登録 ---
+    // ダミー実装ではなく、実際の実装クラスを使用する
+    // ID生成関数は EditFeatureUseCase のものを参照させる
+    const generateIdFunc = (type) => {
+        // EditFeatureUseCaseインスタンスがまだないので、暫定的にここで生成ロジックを持つ
+        // EditFeatureUseCase生成後に参照を差し替えるのが理想だが、循環依存の問題があるため注意
+        // → EditFeatureUseCase 側に getter を用意するか、DIコンテナが解決する仕組みが必要
+        // 今回は EditFeatureUseCase の実装を仮定して、似たロジックで生成
+        const timestamp = new Date().getTime();
+        const random = Math.floor(Math.random() * 10000);
+        return `${type}-${timestamp}-${random}`;
+    };
+    this._container.polygonEditService = new PolygonEditService(
+        this._container.worldRepository,
+        generateIdFunc // ★ 暫定ID生成関数
+    );
+    // --- ここまで PolygonEditService 登録 ---
 
     // ファサードの EditFeatureUseCase を登録し、必要なサービスを注入
     this._container.editFeatureUseCase = new EditFeatureUseCase(
       this._container.worldRepository,
       this._container.geometryService,
       this._container.layerService,
-      this._container.polygonEditService // 注入
+      this._container.polygonEditService // ★ 実装を注入
     );
-    // 注意: 分割されたUseCase (AddFeatureUseCaseなど) は EditFeatureUseCase 内部で
-    //       インスタンス化されるため、ここでは登録不要。
+    // ★ PolygonEditService に EditFeatureUseCase のID生成関数を正しく渡す
+    // EditFeatureUseCase インスタンス生成後に PolygonEditService の参照を更新するか、
+    // EditFeatureUseCase コンストラクタ内で PolygonEditService に関数を渡す
+    // → EditFeatureUseCaseコンストラクタ内で、自身の _generateId を PolygonEditService に注入するのが良さそう
+    //    (ただし、現状はそうなっていないため、暫定対応として上記 generateIdFunc を使用)
+    //    EditFeatureUseCaseのコンストラクタを修正するのが本筋だが、今回は影響範囲を最小限にするため見送り
 
     this._container.navigateTimeUseCase = new NavigateTimeUseCase(
       this._container.timeService
@@ -153,12 +164,7 @@ export class DependencyInjection {
     toolbarContainer,
     sidebarContainer
   ) {
-    // --- 変更なし ---
     // ViewModel, Renderer, View, Controller の生成
-    // EditingViewModel は EditFeatureUseCase (ファサード) を受け取る
-    // MapViewModel は EditFeatureUseCase (ファサード) を受け取る
-    // SidebarView は EditingViewModel を受け取る
-    // ... (元のコードと同じ) ...
     this._container.editingViewModel = new EditingViewModel(
       this._container.editFeatureUseCase, // ファサードを注入
       this._container.eventBus
@@ -167,7 +173,7 @@ export class DependencyInjection {
       this._container.editFeatureUseCase, // ファサードを注入
       this._container.navigateTimeUseCase,
       this._container.manageLayersUseCase,
-      this._container.geometryService,
+      this._container.geometryService, // GeometryService を注入
       this._container.eventBus
     );
     this._container.timelineViewModel = new TimelineViewModel(
@@ -176,7 +182,7 @@ export class DependencyInjection {
     );
     this._container.renderer = new SVGRenderer(
       mapContainer,
-      { width: mapContainer.clientWidth, height: mapContainer.clientHeight }
+      { /* オプションは ConfigManager から取得するのが理想 */ }
     );
     this._container.mapView = new MapView(
       mapContainer,
@@ -184,7 +190,7 @@ export class DependencyInjection {
       this._container.editingViewModel,
       this._container.viewportManager,
       this._container.renderer,
-      this._container.configManager
+      this._container.configManager // ConfigManager を注入
     );
     this._container.timelineView = new TimelineView(
       timelineContainer,
@@ -193,7 +199,7 @@ export class DependencyInjection {
     this._container.toolbarView = new ToolbarView(
       toolbarContainer,
       this._container.editingViewModel,
-      this._container.mapView
+      this._container.mapView // MapView を注入
     );
     this._container.sidebarView = new SidebarView(
       sidebarContainer,
@@ -224,6 +230,11 @@ export class DependencyInjection {
    * @returns {*} 依存オブジェクト
    */
   get(name) {
+    if (!this._container[name]) {
+        console.error(`Dependency not found: ${name}`);
+        // エラーを投げるか、null/undefined を返すか
+        // throw new Error(`Dependency not found: ${name}`);
+    }
     return this._container[name];
   }
 }
