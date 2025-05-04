@@ -39,11 +39,10 @@ export class MapViewInteractionLogic {
       if (f instanceof DomainPoint || f instanceof DomainLine) {
           if (f.vertexIds) f.vertexIds.forEach(id => visibleVertexIds.add(id));
       } else if (f instanceof DomainPolygon) {
-          // ★ リングベースで頂点IDを収集
+          // リングベースで頂点IDを収集
           if (f.rings) {
               f.rings.forEach(ring => ring.vertexIds.forEach(id => visibleVertexIds.add(id)));
           }
-          // 古い形式のフォールバックは削除
       }
     });
 
@@ -70,9 +69,9 @@ export class MapViewInteractionLogic {
   }
 
   /**
-   * クリックされたワールド座標に最も近い地物を探す
+   * クリックされたワールド座標に最も近い地物を探す (包含関係と境界線上の近さを考慮)
    * @param {object} worldPoint - ワールド座標 {x, y}
-   * @returns {Feature | null} 最も近い地物オブジェクト、またはnull
+   * @returns {Feature | null} 最も適切な地物オブジェクト、またはnull
    */
   findClosestFeature(worldPoint) {
       const features = this._viewModel.getFeatures();
@@ -81,47 +80,81 @@ export class MapViewInteractionLogic {
           return null;
       }
 
-      let closestFeature = null;
-      let minDistanceSq = this._getClickToleranceSq(); // 動的に取得
+      // 候補リストを分ける
+      let candidatesInside = []; // クリック位置を内部に含むポリゴン候補 ({ feature, nestingLevel })
+      let candidatesNearby = []; // 境界線に近い地物候補 ({ feature, distanceSq })
+
+      const clickToleranceSq = this._getClickToleranceSq(); // クリック許容範囲(二乗)
+
       const verticesMap = new Map(world.vertices.map(v => [v.id, {id:v.id, x:v.x, y:v.y}]));
       const getVerticesByIds = (ids) => ids?.map(id => verticesMap.get(id)).filter(v => v && typeof v.x === 'number' && typeof v.y === 'number') || [];
 
       for (const feature of features) {
            if (!feature || typeof feature !== 'object') continue;
 
-          let distanceSq = Infinity;
-
-          if (feature instanceof DomainPoint) {
+           if (feature instanceof DomainPoint) {
                const featureVertices = getVerticesByIds(feature.vertexIds);
                if (featureVertices?.length === 1) {
-                   distanceSq = this._geometryService.calculateDistanceSq(
+                   const distanceSq = this._geometryService.calculateDistanceSq(
                        worldPoint.x, worldPoint.y, featureVertices[0].x, featureVertices[0].y
                    );
+                   if (distanceSq < clickToleranceSq) {
+                       candidatesNearby.push({ feature, distanceSq });
+                   }
                }
           } else if (feature instanceof DomainLine) {
                const featureVertices = getVerticesByIds(feature.vertexIds);
                if (featureVertices?.length >= 2) {
-                   for (let i = 0; i < featureVertices.length - 1; i++) {
-                       if (featureVertices[i] && featureVertices[i+1]) {
-                         const segmentDistSq = this._geometryService.distancePointSegmentSq(
-                             worldPoint, featureVertices[i], featureVertices[i + 1]
-                         );
-                         distanceSq = Math.min(distanceSq, segmentDistSq);
-                       }
+                    let minSegmentDistSq = Infinity;
+                    for (let i = 0; i < featureVertices.length - 1; i++) {
+                        if (featureVertices[i] && featureVertices[i+1]) {
+                            const segmentDistSq = this._geometryService.distancePointSegmentSq(
+                                worldPoint, featureVertices[i], featureVertices[i + 1]
+                            );
+                            minSegmentDistSq = Math.min(minSegmentDistSq, segmentDistSq);
+                        }
+                    }
+                   if (minSegmentDistSq < clickToleranceSq) {
+                       candidatesNearby.push({ feature, distanceSq: minSegmentDistSq });
                    }
                }
           } else if (feature instanceof DomainPolygon) {
-              // ★ リングベースで距離計算
-              distanceSq = this._calculateDistanceToPolygon(worldPoint, feature, verticesMap);
-          }
+              // ポリゴンの包含関係と境界近接をチェック
+              const locationInfo = this.locatePointInPolygon(worldPoint, feature, verticesMap);
+              const isNearBoundary = this.isPointNearPolygonBoundary(worldPoint, feature, verticesMap);
 
-          if (distanceSq < minDistanceSq) {
-              minDistanceSq = distanceSq;
-              closestFeature = feature;
+              // locatePointInPolygon の結果に基づいて候補を分類
+              if (locationInfo.type === 'inside_outer') {
+                  // ポリゴン内部 (穴を除く) にある場合
+                  candidatesInside.push({ feature, nestingLevel: locationInfo.nestingLevel });
+              } else if (locationInfo.type !== 'inside_hole' && isNearBoundary) {
+                  // 穴内部でなく、境界線に近い場合 (typeがoutsideで境界に近い場合など)
+                  const distanceSq = this._calculateDistanceToPolygon(worldPoint, feature, verticesMap);
+                   if (distanceSq < clickToleranceSq) { // 念のため再チェック
+                       candidatesNearby.push({ feature, distanceSq });
+                   }
+              }
+              // type === 'inside_hole' の場合は、どの候補リストにも追加しない
           }
       }
-      return closestFeature;
+
+      // 候補の優先順位付け
+      // 1. 内部候補があれば、最もネストレベルが高いものを優先
+      if (candidatesInside.length > 0) {
+          candidatesInside.sort((a, b) => b.nestingLevel - a.nestingLevel); // ネストレベル降順でソート
+          return candidatesInside[0].feature;
+      }
+
+      // 2. 内部候補がなく、境界線に近い候補があれば、最も距離が近いものを優先
+      if (candidatesNearby.length > 0) {
+          candidatesNearby.sort((a, b) => a.distanceSq - b.distanceSq); // 距離昇順でソート
+          return candidatesNearby[0].feature;
+      }
+
+      // 3. どちらの候補もなければ null を返す
+      return null;
   }
+
 
   /**
    * 指定されたワールド座標にあるオブジェクト（頂点優先）を選択する
@@ -131,14 +164,16 @@ export class MapViewInteractionLogic {
   selectObjectAt(worldPoint, addToSelection = false) {
       const clickedVertex = this.findClosestVertex(worldPoint);
       if (clickedVertex) {
+            // 頂点を選択 (複数選択対応)
             this._viewModel.selectVertex(clickedVertex.id, addToSelection);
       } else {
+           // 頂点が見つからない場合、地物を検索 (包含関係・ネスト考慮)
            const clickedFeature = this.findClosestFeature(worldPoint);
            if (clickedFeature) {
                 // 地物選択時は常に単一選択 (addToSelection は無視)
                 this._viewModel.selectFeature(clickedFeature.id);
            } else if (!addToSelection) {
-                // 何もヒットせず、追加選択でもない場合はクリア
+                // 何もヒットせず、追加選択でもない場合は選択解除
                 this._viewModel.clearSelection();
            }
            // 追加選択モードで何もない場所をクリックした場合は何もしない
@@ -151,6 +186,7 @@ export class MapViewInteractionLogic {
    */
   handleClickInViewMode(worldPoint) {
     console.log("Click at World (view mode):", worldPoint.x, worldPoint.y);
+    // findClosestFeature は包含関係を考慮するようになった
     const clickedFeature = this.findClosestFeature(worldPoint);
     if (clickedFeature) {
         this._viewModel.selectFeature(clickedFeature.id);
@@ -172,7 +208,7 @@ export class MapViewInteractionLogic {
         const toleranceSq = this._getClickToleranceSq(); // 動的に取得
         const getVertices = (ids) => ids?.map(id => verticesMap.get(id)).filter(Boolean) || [];
 
-        // ★ すべてのリングの境界をチェック
+        // すべてのリングの境界をチェック
         for (const ring of polygon.rings) {
             if (ring.vertexIds && ring.vertexIds.length >= 2) {
                 const ringVertices = getVertices(ring.vertexIds);
@@ -182,7 +218,6 @@ export class MapViewInteractionLogic {
                 }
             }
         }
-        // 古い形式へのフォールバックは削除
         return false;
   }
 
@@ -195,11 +230,10 @@ export class MapViewInteractionLogic {
    */
   isPointInsidePolygon(point, polygon, verticesMap) {
         if (!polygon || !Array.isArray(polygon.rings)) return false;
-        // ★ リングベースの位置判定ヘルパーを使用
+        // リングベースの位置判定ヘルパーを使用
         const location = this.locatePointInPolygon(point, polygon, verticesMap);
         // 'inside_outer' (外周リングの内側かつ穴の外側) の場合に true
         return location.type === 'inside_outer';
-        // 古い形式へのフォールバックは削除
   }
 
    /**
@@ -215,7 +249,7 @@ export class MapViewInteractionLogic {
        let minDistanceSq = Infinity;
        const getVertices = (ids) => ids?.map(id => verticesMap.get(id)).filter(Boolean) || [];
 
-       // ★ 点がポリゴン内部 (穴を除く) かまずチェック
+       // 点がポリゴン内部 (穴を除く) かまずチェック
        if (this.isPointInsidePolygon(point, polygon, verticesMap)) {
            return 0; // 内部なら距離0
        }
@@ -237,109 +271,64 @@ export class MapViewInteractionLogic {
            return minDistSq;
        };
 
-        // ★ すべてのリングの境界までの最短距離を計算
+        // すべてのリングの境界までの最短距離を計算
         polygon.rings.forEach(ring => {
             minDistanceSq = Math.min(minDistanceSq, calculateMinDistToRing(ring.vertexIds));
         });
 
-        // 古い形式へのフォールバックは削除
        return minDistanceSq;
    }
 
    /**
-    * 点がポリゴンのどの部分にあるか判定するヘルパー (リングベース実装)
+    * 点がポリゴンのどの部分にあるか判定するヘルパー (リングベース実装 - ネストレベル偶奇判定)
     * @param {object} point - ワールド座標 {x, y}
     * @param {DomainPolygon} polygon - 対象ポリゴン (リング構造を持つ前提)
     * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
     * @returns {{type: 'outside' | 'inside_outer' | 'inside_hole', ringId: string | null, nestingLevel: number}}
-    *   - type: 点の位置タイプ
-    *   - ringId: 点が含まれる最も内側の外周リングID (inside_outerの場合)、または点が内部にある穴リングID (inside_holeの場合)
-    *   - nestingLevel: ネストレベル (outside: 0, 最外周内部: 1, 最初の穴内部: 2, 穴の中の飛び地内部: 3, ...)
     */
-    locatePointInPolygon(point, polygon, verticesMap) {
-        if (!polygon || !Array.isArray(polygon.rings)) {
-            return { type: 'outside', ringId: null, nestingLevel: 0 };
-        }
-        const getVertices = (ids) => ids?.map(id => verticesMap.get(id)).filter(Boolean) || [];
+   locatePointInPolygon(point, polygon, verticesMap) {
+     if (!polygon || !Array.isArray(polygon.rings)) {
+       return { type: 'outside', ringId: null, nestingLevel: 0 };
+     }
 
-        let containingOuterRingId = null;
-        let innermostContainingOuterRingId = null;
-        let innermostContainingHoleRingId = null;
-        let maxNestingLevel = 0;
+     const getVertices = (ids) =>
+       ids?.map(id => verticesMap.get(id)).filter(Boolean) || [];
 
-        // リングをIDでマップ化
-        const ringsMap = new Map(polygon.rings.map(r => [r.id, r]));
+     // 境界線上なら outside
+     if (this.isPointNearPolygonBoundary(point, polygon, verticesMap)) {
+       return { type: 'outside', ringId: null, nestingLevel: 0 };
+     }
 
-        // 再帰的にリングを探索する関数
-        const checkRing = (ringId, currentLevel) => {
-            const ring = ringsMap.get(ringId);
-            if (!ring) return;
+     // ❶ 何本のリングが point を包含しているかを偶奇で判定
+     const insideRings = [];
+     for (const ring of polygon.rings) {
+       const verts = getVertices(ring.vertexIds);
+       // ★ GeometryService の isPointInPolygon を使用 (includeBoundary=false)
+       if (verts.length >= 3 &&
+           this._geometryService.isPointInPolygon(point, verts, false)) {
+         insideRings.push(ring);
+       }
+     }
 
-            const vertices = getVertices(ring.vertexIds);
-            if (vertices.length < 3) return;
+     const nestingLevel = insideRings.length;
+     if (nestingLevel === 0) {
+       return { type: 'outside', ringId: null, nestingLevel: 0 };
+     }
 
-            // 点が現在のリングの内側か？
-            if (this._geometryService.isPointInPolygon(point, vertices)) {
-                if (ring.isOuter) { // 外周リングの内側
-                    // より深いネストレベルの外周リングを見つけた
-                    if (currentLevel > maxNestingLevel) {
-                        maxNestingLevel = currentLevel;
-                        innermostContainingOuterRingId = ring.id;
-                        innermostContainingHoleRingId = null; // 内側の穴は見つかっていない
-                    }
-                    containingOuterRingId = ring.id; // 現在包含されている外周リングを記録
+     // ★ 最も内側のリングを取得 (包含リストの最後)
+     //    ただし、このリングIDがネストレベルに対して適切かは保証されないため注意
+     //    (例: 複数の独立した飛び地に含まれる場合など。本来はより詳細な分析が必要)
+     //    今回は簡易的に最後のリングIDを使用する
+     const innermostRing = insideRings[nestingLevel - 1];
+     // ★ ネストレベルの偶奇で判定
+     const isInsideOuter = nestingLevel % 2 === 1; // 奇数: 塗りつぶし領域
 
-                    // この外周リングの子リング（穴）を探索
-                    polygon.rings.forEach(childRing => {
-                        if (!childRing.isOuter && childRing.parentId === ring.id) {
-                            checkRing(childRing.id, currentLevel + 1);
-                        }
-                    });
-                } else { // 穴リングの内側
-                    // より深いネストレベルの穴リングを見つけた
-                    if (currentLevel > maxNestingLevel) {
-                        maxNestingLevel = currentLevel;
-                        innermostContainingHoleRingId = ring.id;
-                        // 外周リングIDは親を辿るか、包含チェックで見つける必要があるが、
-                        // ここでは直前に記録した containingOuterRingId を使う（単純化）
-                        innermostContainingOuterRingId = containingOuterRingId;
-                    }
-
-                    // この穴リングの子リング（飛び地）を探索
-                    polygon.rings.forEach(childRing => {
-                        if (childRing.isOuter && childRing.parentId === ring.id) {
-                            checkRing(childRing.id, currentLevel + 1);
-                        }
-                    });
-                }
-            }
-            // 点がリングの外側なら何もしない
-        };
-
-        // 最上位の外周リングから探索開始
-        polygon.rings.forEach(ring => {
-            if (ring.isOuter && ring.parentId === null) {
-                checkRing(ring.id, 1); // 最上位はレベル1
-            }
-        });
-
-        // 結果の判定
-        if (maxNestingLevel === 0) {
-            return { type: 'outside', ringId: null, nestingLevel: 0 };
-        } else if (innermostContainingHoleRingId !== null) {
-            // 最も深いレベルが穴の中だった場合
-            return { type: 'inside_hole', ringId: innermostContainingHoleRingId, nestingLevel: maxNestingLevel };
-        } else {
-            // 最も深いレベルが外周リングの中だった場合
-            return { type: 'inside_outer', ringId: innermostContainingOuterRingId, nestingLevel: maxNestingLevel };
-        }
-    }
-
-   /**
-    * 点がポリゴンのどの部分にあるか判定するヘルパー (古い形式用、削除)
-    * @deprecated Use locatePointInPolygon instead.
-    */
-   // _getPointLocationInPolygon_Old(point, polygon, verticesMap) { ... } // ★ 削除
+     return {
+       type: isInsideOuter ? 'inside_outer' : 'inside_hole',
+       ringId: innermostRing.id, // 最も内側のリングIDを返す
+       nestingLevel
+     };
+   }
 
    /**
     * 点がポリゴンのどの部分にあるか判定する (公開メソッド、内部でリングベース判定を呼ぶ)
@@ -349,8 +338,6 @@ export class MapViewInteractionLogic {
     * @returns {{type: 'outside' | 'inside_outer' | 'inside_hole', ringId: string | null, nestingLevel: number}}
     */
    getPointLocationInPolygon(point, polygon, verticesMap) {
-       // locatePointInPolygon がリングベースとフォールバックを内部で処理する想定だったが、
-       // フォールバックは不要になったため、直接 locatePointInPolygon を呼ぶ
        return this.locatePointInPolygon(point, polygon, verticesMap);
    }
 
