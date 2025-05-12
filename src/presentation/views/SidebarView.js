@@ -12,7 +12,7 @@ export class SidebarView {
    * @param {HTMLElement} container - 表示コンテナ
    * @param {MapViewModel} mapViewModel - マップビューモデル
    * @param {ManageLayersUseCase} manageLayersUseCase - レイヤー管理ユースケース
-   * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース // 注意: EditingViewModelに変更するべきだが、DI設定に合わせて現状維持
+   * @param {EditingViewModel} editingViewModel - 編集ビューモデル
    * @param {EventBus} eventBus - イベントバス
    */
 
@@ -28,6 +28,7 @@ export class SidebarView {
     this._layersTabElement = null;
     this._featuresTabElement = null;
     this._propertiesTabElement = null;
+    this._projectSettingsTabElement = null; // 追加
 
     // 現在のタブ
     this._currentTab = 'layers';
@@ -58,6 +59,7 @@ export class SidebarView {
     this._createLayersTab();
     this._createFeaturesTab();
     this._createPropertiesTab();
+    this._createProjectSettingsTab(); // 追加
 
     // サイドバーコンテナに追加
     this._container.appendChild(this._sidebarElement);
@@ -82,7 +84,8 @@ export class SidebarView {
     const tabs = [
       { id: 'layers', label: 'レイヤー' },
       { id: 'features', label: '地物一覧' },
-      { id: 'properties', label: 'プロパティ' }
+      { id: 'properties', label: 'プロパティ' },
+      { id: 'projectSettings', label: '設定' }
     ];
 
     tabs.forEach(tab => {
@@ -194,6 +197,24 @@ export class SidebarView {
   }
 
   /**
+   * プロジェクト設定タブの初期DOM構造を作成
+   * @private
+   */
+  _createProjectSettingsTab() { // 新規追加
+    this._projectSettingsTabElement = document.createElement('div');
+    this._projectSettingsTabElement.className = 'sidebar-tab-content';
+    this._projectSettingsTabElement.style.cssText = 'flex: 1; overflow: auto; padding: 10px; display: none;';
+
+    // 設定フォームのコンテナ (内容は _updateProjectSettingsTab で動的生成)
+    const settingsContainer = document.createElement('div');
+    settingsContainer.className = 'project-settings-container';
+    this._projectSettingsTabElement.appendChild(settingsContainer);
+
+    this._sidebarElement.appendChild(this._projectSettingsTabElement);
+  }
+
+
+  /**
    * タブの切り替え
    * @param {string} tabId - タブID
    * @private
@@ -209,6 +230,9 @@ export class SidebarView {
         break;
       case 'properties':
         this._propertiesTabElement.style.display = 'none';
+        break;
+      case 'projectSettings': // 追加
+        this._projectSettingsTabElement.style.display = 'none';
         break;
     }
 
@@ -226,12 +250,17 @@ export class SidebarView {
         this._propertiesTabElement.style.display = 'block';
         this._updatePropertiesTab();
         break;
+      case 'projectSettings': // 追加
+        this._projectSettingsTabElement.style.display = 'block';
+        this._updateProjectSettingsTab();
+        break;
     }
 
     // タブの状態を更新
     const tabs = this._sidebarElement.querySelector('.sidebar-tabs').children;
+    const tabIds = ['layers', 'features', 'properties', 'projectSettings']; // 更新
     for (let i = 0; i < tabs.length; i++) {
-      if (i === ['layers', 'features', 'properties'].indexOf(tabId)) {
+      if (i === tabIds.indexOf(tabId)) {
         tabs[i].style.backgroundColor = '#ddd';
       } else {
         tabs[i].style.backgroundColor = '';
@@ -250,10 +279,15 @@ export class SidebarView {
   _onMapViewModelChanged(type, data) {
     // タイプに応じた処理
     switch (type) {
+      case 'projectSettingsChanged': // 追加
       case 'world':
       case 'layers':
         if (this._currentTab === 'layers') {
           this._updateLayersTab();
+        }
+        // プロジェクト設定変更時は、プロジェクト設定タブも更新
+        if (this._currentTab === 'projectSettings' && (type === 'projectSettingsChanged' || type === 'world')) {
+            this._updateProjectSettingsTab();
         }
         break;
 
@@ -288,6 +322,183 @@ export class SidebarView {
         break;
     }
   }
+
+  /**
+   * プロジェクト設定タブの内容を更新 (フォームを再構築)
+   * @private
+   */
+  _updateProjectSettingsTab() { // 新規追加
+      const container = this._projectSettingsTabElement.querySelector('.project-settings-container');
+      if (!container) return;
+      container.innerHTML = ''; // 既存内容をクリア
+
+      const currentSettings = this._mapViewModel.getProjectSettings();
+      if (!currentSettings) {
+          container.textContent = "プロジェクト設定を読み込めませんでした。";
+          return;
+      }
+
+      const form = document.createElement('form');
+      form.addEventListener('submit', e => e.preventDefault()); // デフォルト送信抑止
+
+      const createRow = (labelText, inputElement) => {
+          const row = document.createElement('div');
+          row.style.marginBottom = '10px';
+          const label = document.createElement('label');
+          label.textContent = labelText;
+          label.style.display = 'block';
+          label.style.marginBottom = '3px';
+          row.appendChild(label);
+          row.appendChild(inputElement);
+          return row;
+      };
+
+      // プロジェクト名
+      const worldNameInput = document.createElement('input');
+      worldNameInput.type = 'text';
+      worldNameInput.name = 'worldName';
+      worldNameInput.value = currentSettings.worldName || '';
+      worldNameInput.style.width = '98%';
+      form.appendChild(createRow('プロジェクト名:', worldNameInput));
+
+      // プロジェクト説明
+      const worldDescriptionTextarea = document.createElement('textarea');
+      worldDescriptionTextarea.name = 'worldDescription';
+      worldDescriptionTextarea.value = currentSettings.worldDescription || '';
+      worldDescriptionTextarea.rows = 3;
+      worldDescriptionTextarea.style.width = '98%';
+      form.appendChild(createRow('プロジェクト説明:', worldDescriptionTextarea));
+      
+      // 赤道長
+      const equatorLengthInput = document.createElement('input');
+      equatorLengthInput.type = 'number';
+      equatorLengthInput.name = 'equatorLength';
+      equatorLengthInput.value = currentSettings.equatorLength;
+      equatorLengthInput.min = '1';
+      equatorLengthInput.required = true;
+      equatorLengthInput.style.width = '98%';
+      form.appendChild(createRow('赤道長 (km):', equatorLengthInput));
+
+      // タイムライン最小年
+      const sliderMinInput = document.createElement('input');
+      sliderMinInput.type = 'number';
+      sliderMinInput.name = 'sliderMin';
+      sliderMinInput.value = currentSettings.sliderMin;
+      sliderMinInput.required = true;
+      sliderMinInput.style.width = '98%';
+      form.appendChild(createRow('タイムライン最小年:', sliderMinInput));
+
+      // タイムライン最大年
+      const sliderMaxInput = document.createElement('input');
+      sliderMaxInput.type = 'number';
+      sliderMaxInput.name = 'sliderMax';
+      sliderMaxInput.value = currentSettings.sliderMax;
+      sliderMaxInput.required = true;
+      sliderMaxInput.style.width = '98%';
+      form.appendChild(createRow('タイムライン最大年:', sliderMaxInput));
+
+      // グリッド間隔
+      const gridIntervalInput = document.createElement('input');
+      gridIntervalInput.type = 'number';
+      gridIntervalInput.name = 'gridInterval';
+      gridIntervalInput.value = currentSettings.gridInterval;
+      gridIntervalInput.min = '1';
+      gridIntervalInput.step = '1'; // 整数のみ許容する場合
+      gridIntervalInput.required = true;
+      gridIntervalInput.style.width = '98%';
+      form.appendChild(createRow('グリッド間隔 (度):', gridIntervalInput));
+
+      // グリッド色
+      const gridColorInput = document.createElement('input');
+      gridColorInput.type = 'color';
+      gridColorInput.name = 'gridColor';
+      gridColorInput.value = currentSettings.gridColor;
+      gridColorInput.style.width = '98%';
+      form.appendChild(createRow('グリッド色:', gridColorInput));
+
+      // グリッド不透明度
+      const gridOpacityInput = document.createElement('input');
+      gridOpacityInput.type = 'number';
+      gridOpacityInput.name = 'gridOpacity';
+      gridOpacityInput.value = currentSettings.gridOpacity;
+      gridOpacityInput.min = '0';
+      gridOpacityInput.max = '1';
+      gridOpacityInput.step = '0.01';
+      gridOpacityInput.required = true;
+      gridOpacityInput.style.width = '98%';
+      form.appendChild(createRow('グリッド不透明度 (0-1):', gridOpacityInput));
+
+      // ボタンコンテナ
+      const buttonContainer = document.createElement('div');
+      buttonContainer.style.marginTop = '15px';
+      buttonContainer.style.textAlign = 'right';
+
+      // 保存ボタン
+      const saveButton = document.createElement('button');
+      saveButton.type = 'button';
+      saveButton.textContent = '設定を保存';
+      saveButton.addEventListener('click', async () => {
+          const newSettings = {
+              worldName: worldNameInput.value.trim(), // トリムして保存
+              worldDescription: worldDescriptionTextarea.value.trim(), // トリムして保存
+              equatorLength: parseFloat(equatorLengthInput.value),
+              sliderMin: parseInt(sliderMinInput.value, 10),
+              sliderMax: parseInt(sliderMaxInput.value, 10),
+              gridInterval: parseFloat(gridIntervalInput.value),
+              gridColor: gridColorInput.value,
+              gridOpacity: parseFloat(gridOpacityInput.value)
+          };
+
+          // UIバリデーション (簡易)
+          if (isNaN(newSettings.equatorLength) || newSettings.equatorLength <= 0) {
+              alert("赤道長は正の数値で入力してください。"); return;
+          }
+          if (isNaN(newSettings.sliderMin) || isNaN(newSettings.sliderMax) || newSettings.sliderMin >= newSettings.sliderMax) {
+              alert("タイムラインの年は、最小年 < 最大年 となるように入力してください。"); return;
+          }
+          if (isNaN(newSettings.gridInterval) || newSettings.gridInterval <= 0) {
+              alert("グリッド間隔は正の数値で入力してください。"); return;
+          }
+           if (newSettings.gridColor && !/^#[0-9a-fA-F]{6}$/.test(newSettings.gridColor)) {
+               alert("グリッド色はHEXカラーコード (例: #RRGGBB) で入力してください。"); return;
+           }
+          if (isNaN(newSettings.gridOpacity) || newSettings.gridOpacity < 0 || newSettings.gridOpacity > 1) {
+              alert("グリッド不透明度は0から1の間で入力してください。"); return;
+          }
+
+          try {
+              await this._mapViewModel.updateProjectSettings(newSettings);
+              alert('プロジェクト設定を保存しました。');
+          } catch (error) {
+              console.error('プロジェクト設定の保存に失敗しました:', error);
+              alert(`設定の保存に失敗: ${error.message}`);
+          }
+      });
+      buttonContainer.appendChild(saveButton);
+
+      // デフォルトに戻すボタン
+      const defaultsButton = document.createElement('button');
+      defaultsButton.type = 'button';
+      defaultsButton.textContent = 'デフォルトに戻す';
+      defaultsButton.style.marginLeft = '10px';
+      defaultsButton.addEventListener('click', () => {
+          const defaultSettings = this._mapViewModel.getDefaultProjectSettings();
+          worldNameInput.value = defaultSettings.worldName || '';
+          worldDescriptionTextarea.value = defaultSettings.worldDescription || '';
+          equatorLengthInput.value = defaultSettings.equatorLength;
+          sliderMinInput.value = defaultSettings.sliderMin;
+          sliderMaxInput.value = defaultSettings.sliderMax;
+          gridIntervalInput.value = defaultSettings.gridInterval;
+          gridColorInput.value = defaultSettings.gridColor;
+          gridOpacityInput.value = defaultSettings.gridOpacity;
+          alert('フォームをデフォルト値にリセットしました。保存するには「設定を保存」ボタンを押してください。');
+      });
+      buttonContainer.appendChild(defaultsButton);
+
+      form.appendChild(buttonContainer);
+      container.appendChild(form);
+  }
+
 
   /**
    * レイヤータブの更新

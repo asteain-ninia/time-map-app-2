@@ -27,6 +27,8 @@ export class TimelineViewModel {
     this._eventBus.subscribe('ProjectSettingsLoaded', this._onProjectSettingsLoaded.bind(this));
     // プロジェクト設定が変更された場合も対応
     this._eventBus.subscribe('projectSettingsChanged', this._onProjectSettingsLoaded.bind(this));
+    this._eventBus.subscribe('ProjectSettingsUpdated', this._onProjectSettingsLoaded.bind(this)); // 追加
+
 
   }
 
@@ -49,7 +51,8 @@ export class TimelineViewModel {
     if (eventData && eventData.settings) {
       const { sliderMin, sliderMax } = eventData.settings;
       if (sliderMin !== undefined && sliderMax !== undefined) {
-        this.setTimeRange(sliderMin, sliderMax); // これが 'range' を通知する
+        // setTimeRange は自身の状態を更新し、'range' イベントでUIに通知する
+        this.setTimeRange(sliderMin, sliderMax); 
       }
     }
   }

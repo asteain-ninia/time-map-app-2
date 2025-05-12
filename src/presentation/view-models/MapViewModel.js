@@ -4,6 +4,7 @@ import { Point as DomainPoint } from '../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { Vertex } from '../../domain/entities/Vertex.js'; // Vertex をインポート
+import { UpdateProjectSettingsUseCase } from '../../application/usecases/UpdateProjectSettingsUseCase.js'; // 型チェック用
 
 /**
  * マップビューのデータと状態管理
@@ -16,19 +17,22 @@ export class MapViewModel {
    * @param {ManageLayersUseCase} manageLayersUseCase - レイヤー管理ユースケース
    * @param {GeometryService} geometryService - 幾何学サービス
    * @param {EventBus} eventBus - イベントバス
+   * @param {UpdateProjectSettingsUseCase} updateProjectSettingsUseCase - プロジェクト設定更新ユースケース
    */
   constructor(
     editFeatureUseCase,
     navigateTimeUseCase,
     manageLayersUseCase,
     geometryService,
-    eventBus
+    eventBus,
+    updateProjectSettingsUseCase // 追加
   ) {
     this._editFeatureUseCase = editFeatureUseCase;
     this._navigateTimeUseCase = navigateTimeUseCase;
     this._manageLayersUseCase = manageLayersUseCase;
     this._geometryService = geometryService;
     this._eventBus = eventBus;
+    this._updateProjectSettingsUseCase = updateProjectSettingsUseCase; // 追加
 
     // マップの状態
     this._world = null;
@@ -63,22 +67,16 @@ export class MapViewModel {
       } else {
           // world.jsonにsettingsがない場合のフォールバック (本来はSerializerで補完される想定)
           console.warn("Project settings not found in world.metadata. Using default fallbacks.");
-          this._projectSettings = { // JSONSerializerのDEFAULT_PROJECT_SETTINGSと一致させる
-              equatorLength: 40000,
-              gridInterval: 10,
-              gridColor: "#cccccc",
-              gridOpacity: 0.5,
-              sliderMin: 0,
-              sliderMax: 10000,
-              autoSaveInterval: 300
-          };
+          this._projectSettings = this.getDefaultProjectSettings(); // デフォルト値を取得
       }
 
       // 現在の時間点に対応する地物をフィルタリング
       await this._loadFeaturesForCurrentTime();
 
       this._notifyObservers('world'); // world全体の変更を通知
-      this._eventBus.publish('ProjectSettingsLoaded', { settings: this.getProjectSettings() }); // プロジェクト設定ロードイベント発行
+      // this._eventBus.publish('ProjectSettingsLoaded', { settings: this.getProjectSettings() }); // ProjectSettingsUpdatedで代替または統一
+      this._eventBus.publish('ProjectSettingsUpdated', { settings: this.getProjectSettings() });
+
 
     } catch (error) {
       console.error('世界データのロードに失敗しました', error);
@@ -165,6 +163,16 @@ export class MapViewModel {
      this._eventBus.subscribe('VertexMoved', this._onVertexMoved.bind(this));
      // 頂点削除イベントの購読
      this._eventBus.subscribe('VerticesDeleted', this._onVerticesDeleted.bind(this));
+     // プロジェクト設定更新イベント (TimelineViewModel等への通知用)
+     // this._eventBus.subscribe('ProjectSettingsUpdated', (payload) => {
+     //    // MapViewModel自身が発行源なので、ここでは何もしないか、
+     //    // _projectSettingsを再同期する程度
+     //    if (payload && payload.settings) {
+     //        this._projectSettings = JSON.parse(JSON.stringify(payload.settings));
+     //        this._notifyObservers('projectSettingsChanged', this.getProjectSettings());
+     //    }
+     // });
+
   }
 
   /**
@@ -208,10 +216,8 @@ export class MapViewModel {
       this._world.features[index] = event.feature;
        // もし更新された地物がworldデータ全体にも影響を与える場合(例:metadata.settingsの更新)
        // this._projectSettingsも更新し、'projectSettingsChanged'イベントを発行する
-       if (event.feature.id === this._world.id && this._world.metadata && this._world.metadata.settings) { // 仮にworld全体を表すIDがあるとする
-           this._projectSettings = JSON.parse(JSON.stringify(this._world.metadata.settings));
-           this._notifyObservers('projectSettingsChanged', this.getProjectSettings());
-       }
+       // FeatureUpdateイベントでは、通常地物のプロパティや形状の変更であり、プロジェクト設定全体の変更とは区別する。
+       // プロジェクト設定の変更は updateProjectSettings メソッド経由で行い、専用のイベントを発行する。
     } else {
       // 更新対象が見つからない場合は追加 (アンドゥ/リドゥで発生する可能性)
       this._world.features.push(event.feature);
@@ -892,5 +898,53 @@ export class MapViewModel {
    */
   getCurrentTime() {
     return this._navigateTimeUseCase.getCurrentTime();
+  }
+
+  /**
+   * プロジェクト設定を更新する
+   * @param {object} newSettings - 新しい設定オブジェクト
+   * @returns {Promise<void>}
+   * @throws {Error} 更新に失敗した場合
+   */
+  async updateProjectSettings(newSettings) { // 新規追加
+      try {
+          const updatedSettings = await this._updateProjectSettingsUseCase.execute(newSettings);
+          this._projectSettings = updatedSettings; // ViewModelの内部状態を更新
+
+          // 世界データ全体の metadata.settings も更新されたものとして扱う
+          if (this._world && this._world.metadata) {
+              this._world.metadata.settings = { ...updatedSettings };
+          }
+
+          // イベント発行 (ペイロードに更新後の設定を含める)
+          this._notifyObservers('projectSettingsChanged', this.getProjectSettings());
+          // worldデータも変更されたとみなし、関連するコンポーネントに通知
+          this._notifyObservers('world'); 
+
+          // 設定によってはタイムラインの範囲も変わるため、専用イベントも発行
+          this._eventBus.publish('ProjectSettingsUpdated', { settings: this.getProjectSettings() });
+
+      } catch (error) {
+          console.error("Failed to update project settings in MapViewModel:", error);
+          throw error; // UI側でエラー表示するために再スロー
+      }
+  }
+
+  /**
+   * デフォルトのプロジェクト設定を取得する (JSONWorldRepository の定義と同期)
+   * @returns {object} デフォルト設定オブジェクト
+   */
+  getDefaultProjectSettings() { // 新規追加
+      // この値は JSONWorldRepository._createEmptyWorld の settings と一致させる
+      return {
+          equatorLength: 40000,
+          gridInterval: 10,
+          gridColor: "#cccccc",
+          gridOpacity: 0.5,
+          sliderMin: 0,
+          sliderMax: 10000,
+          worldName: "新しい世界", 
+          worldDescription: ""
+      };
   }
 }

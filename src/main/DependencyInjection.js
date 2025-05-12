@@ -22,6 +22,7 @@ import { PolygonEditService } from '../application/services/PolygonEditService';
 // --- ここまで分割されたUseCase/Service ---
 import { NavigateTimeUseCase } from '../application/usecases/NavigateTimeUseCase';
 import { ManageLayersUseCase } from '../application/usecases/ManageLayersUseCase';
+import { UpdateProjectSettingsUseCase } from '../application/usecases/UpdateProjectSettingsUseCase'; // 新規インポート
 
 import { MapViewModel } from '../presentation/view-models/MapViewModel';
 import { TimelineViewModel } from '../presentation/view-models/TimelineViewModel';
@@ -148,6 +149,10 @@ export class DependencyInjection {
       this._container.worldRepository,
       this._container.layerService
     );
+
+    this._container.updateProjectSettingsUseCase = new UpdateProjectSettingsUseCase( // 新規登録
+        this._container.worldRepository
+    );
   }
 
   /**
@@ -174,7 +179,8 @@ export class DependencyInjection {
       this._container.navigateTimeUseCase,
       this._container.manageLayersUseCase,
       this._container.geometryService, // GeometryService を注入
-      this._container.eventBus
+      this._container.eventBus,
+      this._container.updateProjectSettingsUseCase // UpdateProjectSettingsUseCase を注入
     );
     this._container.timelineViewModel = new TimelineViewModel(
       this._container.navigateTimeUseCase,
