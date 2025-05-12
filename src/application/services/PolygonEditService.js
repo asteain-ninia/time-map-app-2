@@ -4,6 +4,7 @@ import { IPolygonEditService } from './IPolygonEditService.js';
 import { Polygon } from '../../domain/entities/Polygon.js';
 import { WorldRepository } from '../WorldRepository.js'; // 型チェック用
 import { GeometryService } from '../../domain/services/GeometryService.js';
+import { IdGenerationService } from './IdGenerationService.js'; // ★ IdGenerationService をインポート
 
 /**
  * ポリゴン編集サービスの具象実装
@@ -12,26 +13,26 @@ import { GeometryService } from '../../domain/services/GeometryService.js';
 export class PolygonEditService extends IPolygonEditService {
   /** @type {WorldRepository} */
   _worldRepository;
-  /** @type {Function} */
-  _generateId; // ID生成関数 (例: EditFeatureUseCase._generateId)
+  /** @type {IdGenerationService} */
+  _idGenerationService;
   /** @type {GeometryService} */
   _geometryService;
 
   /**
    * PolygonEditServiceを作成
    * @param {WorldRepository} worldRepository
-   * @param {Function} generateIdFunction - ID生成関数
+   * @param {IdGenerationService} idGenerationService - ID生成サービス
    */
-  constructor(worldRepository, generateIdFunction) {
+  constructor(worldRepository, idGenerationService) { // idGenerationService を引数に変更
     super();
     if (!worldRepository) {
       throw new Error("WorldRepository is required for PolygonEditService.");
     }
-    if (typeof generateIdFunction !== 'function') {
-        throw new Error("A valid ID generation function is required for PolygonEditService.");
+    if (!(idGenerationService instanceof IdGenerationService)) { // インスタンスチェックに変更
+        throw new Error("A valid IdGenerationService instance is required for PolygonEditService.");
     }
     this._worldRepository = worldRepository;
-    this._generateId = generateIdFunction;
+    this._idGenerationService = idGenerationService;
     this._geometryService = new GeometryService();
   }
 
@@ -42,7 +43,6 @@ export class PolygonEditService extends IPolygonEditService {
    * @returns {Promise<void>} 検証エラーがあれば例外をスロー
    */
   async validatePolygonRings(polygon, world) {
-    // (ステップ 3.3 で実装済み)
     if (!polygon || !Array.isArray(polygon.rings)) {
         throw new Error("Invalid polygon or rings data for validation.");
     }
@@ -154,7 +154,6 @@ export class PolygonEditService extends IPolygonEditService {
    * @throws {Error} ポリゴンが見つからない場合、リングデータが無効な場合
    */
   async addRingToPolygon(polygonId, ringData) {
-    // (ステップ 3.1 で実装済み、検証呼び出し含む)
     const world = await this._worldRepository.getWorld();
     const polygonIndex = world.features.findIndex(f => f.id === polygonId && f instanceof Polygon);
     if (polygonIndex === -1) {
@@ -169,7 +168,7 @@ export class PolygonEditService extends IPolygonEditService {
         throw new Error("Invalid ringData.parentId. Must be null or a string.");
     }
 
-    const newRingId = this._generateId('ring'); // ★ IDを内部生成
+    const newRingId = this._idGenerationService.generateId('ring'); // ★ IdGenerationService を利用
     const newRing = {
         id: newRingId,
         vertexIds: [...ringData.vertexIds],
@@ -219,7 +218,7 @@ export class PolygonEditService extends IPolygonEditService {
       throw new Error(`Ring with ID ${ringDataWithId.id} already exists in polygon ${polygonId}.`);
     }
 
-    // ★ IDを指定してリングオブジェクトを作成
+    // IDを指定してリングオブジェクトを作成
     const newRing = {
         id: ringDataWithId.id,
         vertexIds: [...ringDataWithId.vertexIds],
@@ -249,7 +248,6 @@ export class PolygonEditService extends IPolygonEditService {
    * @throws {Error} ポリゴンが見つからない場合
    */
   async removeRingFromPolygon(polygonId, ringId) {
-    // (ステップ 3.1 で実装済み、検証呼び出し含む)
     const world = await this._worldRepository.getWorld();
     const polygonIndex = world.features.findIndex(f => f.id === polygonId && f instanceof Polygon);
     if (polygonIndex === -1) {
@@ -283,7 +281,6 @@ export class PolygonEditService extends IPolygonEditService {
    * @throws {Error} ポリゴンが見つからない場合、リングが見つからない場合、頂点データが無効な場合
    */
   async updateRingVertices(polygonId, ringId, newVertexIds) {
-    // (ステップ 3.1 で実装済み、検証呼び出し含む)
     const world = await this._worldRepository.getWorld();
     const polygonIndex = world.features.findIndex(f => f.id === polygonId && f instanceof Polygon);
     if (polygonIndex === -1) {

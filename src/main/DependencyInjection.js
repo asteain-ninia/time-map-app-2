@@ -12,6 +12,8 @@ import { GeometryService } from '../domain/services/GeometryService';
 import { TimeService } from '../domain/services/TimeService';
 import { LayerService } from '../domain/services/LayerService';
 
+import { IdGenerationService } from '../application/services/IdGenerationService'; // ★ 新規インポート
+
 // 元のEditFeatureUseCase（ファサード）をインポート
 import { EditFeatureUseCase } from '../application/usecases/EditFeatureUseCase';
 // --- ここから分割されたUseCase/Service ---
@@ -22,7 +24,7 @@ import { PolygonEditService } from '../application/services/PolygonEditService';
 // --- ここまで分割されたUseCase/Service ---
 import { NavigateTimeUseCase } from '../application/usecases/NavigateTimeUseCase';
 import { ManageLayersUseCase } from '../application/usecases/ManageLayersUseCase';
-import { UpdateProjectSettingsUseCase } from '../application/usecases/UpdateProjectSettingsUseCase'; // 新規インポート
+import { UpdateProjectSettingsUseCase } from '../application/usecases/UpdateProjectSettingsUseCase';
 
 import { MapViewModel } from '../presentation/view-models/MapViewModel';
 import { TimelineViewModel } from '../presentation/view-models/TimelineViewModel';
@@ -109,37 +111,24 @@ export class DependencyInjection {
   _registerApplicationServices() {
     this._container.eventBus = new EventBus();
 
-    // --- PolygonEditServiceの実装を登録 ---
-    // ダミー実装ではなく、実際の実装クラスを使用する
-    // ID生成関数は EditFeatureUseCase のものを参照させる
-    const generateIdFunc = (type) => {
-        // EditFeatureUseCaseインスタンスがまだないので、暫定的にここで生成ロジックを持つ
-        // EditFeatureUseCase生成後に参照を差し替えるのが理想だが、循環依存の問題があるため注意
-        // → EditFeatureUseCase 側に getter を用意するか、DIコンテナが解決する仕組みが必要
-        // 今回は EditFeatureUseCase の実装を仮定して、似たロジックで生成
-        const timestamp = new Date().getTime();
-        const random = Math.floor(Math.random() * 10000);
-        return `${type}-${timestamp}-${random}`;
-    };
+    // --- ID生成サービスを登録 ---
+    this._container.idGenerationService = new IdGenerationService();
+
+    // --- PolygonEditServiceの登録 ---
+    // PolygonEditService には IdGenerationService のインスタンスを渡す
     this._container.polygonEditService = new PolygonEditService(
         this._container.worldRepository,
-        generateIdFunc // ★ 暫定ID生成関数
+        this._container.idGenerationService
     );
-    // --- ここまで PolygonEditService 登録 ---
 
     // ファサードの EditFeatureUseCase を登録し、必要なサービスを注入
     this._container.editFeatureUseCase = new EditFeatureUseCase(
       this._container.worldRepository,
       this._container.geometryService,
       this._container.layerService,
-      this._container.polygonEditService // ★ 実装を注入
+      this._container.polygonEditService,
+      this._container.idGenerationService
     );
-    // ★ PolygonEditService に EditFeatureUseCase のID生成関数を正しく渡す
-    // EditFeatureUseCase インスタンス生成後に PolygonEditService の参照を更新するか、
-    // EditFeatureUseCase コンストラクタ内で PolygonEditService に関数を渡す
-    // → EditFeatureUseCaseコンストラクタ内で、自身の _generateId を PolygonEditService に注入するのが良さそう
-    //    (ただし、現状はそうなっていないため、暫定対応として上記 generateIdFunc を使用)
-    //    EditFeatureUseCaseのコンストラクタを修正するのが本筋だが、今回は影響範囲を最小限にするため見送り
 
     this._container.navigateTimeUseCase = new NavigateTimeUseCase(
       this._container.timeService
@@ -150,7 +139,7 @@ export class DependencyInjection {
       this._container.layerService
     );
 
-    this._container.updateProjectSettingsUseCase = new UpdateProjectSettingsUseCase( // 新規登録
+    this._container.updateProjectSettingsUseCase = new UpdateProjectSettingsUseCase(
         this._container.worldRepository
     );
   }

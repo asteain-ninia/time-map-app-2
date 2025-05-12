@@ -7,6 +7,7 @@ import { UpdateFeatureUseCase } from './feature/UpdateFeatureUseCase';
 import { DeleteFeatureUseCase } from './feature/DeleteFeatureUseCase';
 import { VertexEditUseCase } from './feature/VertexEditUseCase';
 // import { IPolygonEditService } from '../services/IPolygonEditService'; // リングベース移行後
+import { IdGenerationService } from '../services/IdGenerationService'; // ★ IdGenerationService をインポート
 
 /**
  * 地理オブジェクト編集のファサードユースケース
@@ -19,15 +20,17 @@ export class EditFeatureUseCase {
    * @param {GeometryService} geometryService
    * @param {LayerService} layerService
    * @param {IPolygonEditService} polygonEditService - ポリゴン編集サービス (リングベース移行後)
+   * @param {IdGenerationService} idGenerationService - ID生成サービス ★ 追加
    */
-  constructor(worldRepository, geometryService, layerService, polygonEditService) {
+  constructor(worldRepository, geometryService, layerService, polygonEditService, idGenerationService) { // ★ idGenerationService を引数に追加
     this._worldRepository = worldRepository;
     this._geometryService = geometryService;
     this._layerService = layerService;
-    this._polygonEditService = polygonEditService; // リングベース移行後に利用
+    this._polygonEditService = polygonEditService;
+    this._idGenerationService = idGenerationService; // ★ 保持
 
     // 共通ヘルパー関数をここで保持または生成
-    this._generateIdFunc = this._generateId.bind(this);
+    this._generateIdFunc = this._generateId.bind(this); // ★ _generateId は内部で _idGenerationService を使う
     this._processGeometryFunc = this._processGeometry.bind(this);
     this._getVerticesFromIdsFunc = this._getVerticesFromIds.bind(this);
     this._cleanupUnusedVerticesFunc = this._cleanupUnusedVertices.bind(this);
@@ -41,7 +44,7 @@ export class EditFeatureUseCase {
     this._updateFeatureUseCase = new UpdateFeatureUseCase(
         worldRepository, geometryService, layerService,
         this._processGeometryFunc, this._getVerticesFromIdsFunc,
-        polygonEditService // 注入
+        polygonEditService
     );
     this._deleteFeatureUseCase = new DeleteFeatureUseCase(
         worldRepository,
@@ -61,7 +64,6 @@ export class EditFeatureUseCase {
   }
 
   async updateFeature(featureId, updates) {
-    // 注意: ポリゴン形状の更新は UpdateFeatureUseCase 内部で PolygonEditService に委譲される想定
     return this._updateFeatureUseCase.execute(featureId, updates);
   }
 
@@ -94,32 +96,25 @@ export class EditFeatureUseCase {
   async splitPolygon(polygonId, divisionData) {
     // TODO: リングベース移行後、PolygonEditService に委譲
     console.warn("splitPolygon is not fully implemented after refactoring.");
-    // 元のロジックを一時的に残すか、エラーにする
-    // return this._polygonEditService.splitPolygon(polygonId, divisionData);
     throw new Error("splitPolygon not implemented yet after refactoring.");
   }
 
   async changePolygonParent(polygonId, newParentId) {
-    // TODO: リングベース移行後、レイヤー構造を考慮して LayerService や UpdateFeatureUseCase で処理？
     console.warn("changePolygonParent needs careful review after refactoring.");
-    // 元のロジックを一時的に残すか、エラーにする
-    // この操作は形状だけでなく、ドメイン階層にも関わるため、UpdateFeatureUseCaseが担当する方が適切かもしれない
-    // return await this._updateFeatureUseCase.execute(polygonId, { parentId: newParentId }); // これは安直すぎる
     throw new Error("changePolygonParent not implemented yet after refactoring.");
   }
 
   // --- 共通ヘルパーメソッド (内部利用またはサブUseCaseから参照) ---
 
   /**
-   * ID生成
+   * ID生成 (IdGenerationServiceを利用)
    * @param {string} type - 生成するIDのタイプ
    * @returns {string} 生成されたID
    * @private
    */
   _generateId(type) {
-    const timestamp = new Date().getTime();
-    const random = Math.floor(Math.random() * 10000);
-    return `${type}-${timestamp}-${random}`;
+    // ★ IdGenerationService のメソッドを呼び出す
+    return this._idGenerationService.generateId(type);
   }
 
   /**
@@ -131,24 +126,21 @@ export class EditFeatureUseCase {
    * @private
    */
   _processGeometry(geometry, world) {
-    // 既存頂点のコピー
     const processedGeometry = { ...geometry };
-    let verticesChanged = false; // world.vertices が変更されたか
+    let verticesChanged = false;
 
-    // 外周頂点
     if (geometry.vertices && Array.isArray(geometry.vertices)) {
-      processedGeometry.vertexIds = processedGeometry.vertexIds || []; // 既存IDがあればマージ
+      processedGeometry.vertexIds = processedGeometry.vertexIds || [];
       for (const vertex of geometry.vertices) {
           if(vertex.x === undefined || vertex.y === undefined) continue;
-          const vertexId = this._generateId('vertex');
+          const vertexId = this._generateId('vertex'); // ★ 内部メソッド経由でIdGenerationServiceを利用
           processedGeometry.vertexIds.push(vertexId);
           world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
           verticesChanged = true;
       }
-       delete processedGeometry.vertices; // 元の配列は削除
+       delete processedGeometry.vertices;
     }
 
-    // トップレベル穴
     if (geometry.holes && Array.isArray(geometry.holes)) {
       processedGeometry.holesVertexIds = processedGeometry.holesVertexIds || [];
       for (const hole of geometry.holes) {
@@ -156,36 +148,32 @@ export class EditFeatureUseCase {
         const holeIds = [];
         for (const vertex of hole) {
             if(vertex.x === undefined || vertex.y === undefined) continue;
-            const vertexId = this._generateId('vertex');
+            const vertexId = this._generateId('vertex'); // ★
             holeIds.push(vertexId);
             world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
             verticesChanged = true;
         }
-        if(holeIds.length >= 3) { // 3点以上で有効な穴
+        if(holeIds.length >= 3) {
            processedGeometry.holesVertexIds.push(holeIds);
         }
       }
-      delete processedGeometry.holes; // 元の配列は削除
+      delete processedGeometry.holes;
     }
 
-     // 新しい飛び地 (newSubPolygonVertices)
      if (geometry.newSubPolygonVertices && Array.isArray(geometry.newSubPolygonVertices)) {
          const newSubPolygonVertexIds = [];
          for (const vertex of geometry.newSubPolygonVertices) {
               if(vertex.x === undefined || vertex.y === undefined) continue;
-              const vertexId = this._generateId('vertex');
+              const vertexId = this._generateId('vertex'); // ★
               newSubPolygonVertexIds.push(vertexId);
               world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
               verticesChanged = true;
          }
          if (newSubPolygonVertexIds.length >= 3) {
-             // processedGeometry にID配列を追加して返す
              processedGeometry.newSubPolygonVertexIds = newSubPolygonVertexIds;
          }
-         // 元の座標配列 (newSubPolygonVertices) は削除しない (UpdateFeatureUseCase で利用するため)
      }
 
-    // 特定の飛び地に追加する新しい穴 (geometry.newHolesForSubPolygon) のID割り当て
      if (geometry.targetSubPolygonIndex !== undefined && geometry.newHolesForSubPolygon && Array.isArray(geometry.newHolesForSubPolygon)) {
          processedGeometry.newHolesVertexIdsForSubPolygon = [];
          for (const hole of geometry.newHolesForSubPolygon) {
@@ -193,7 +181,7 @@ export class EditFeatureUseCase {
              const holeIds = [];
              for (const vertex of hole) {
                  if(vertex.x === undefined || vertex.y === undefined) continue;
-                 const vertexId = this._generateId('vertex');
+                 const vertexId = this._generateId('vertex'); // ★
                  holeIds.push(vertexId);
                  world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
                  verticesChanged = true;
@@ -202,19 +190,15 @@ export class EditFeatureUseCase {
                 processedGeometry.newHolesVertexIdsForSubPolygon.push(holeIds);
              }
          }
-        delete processedGeometry.newHolesForSubPolygon; // 元の配列は削除
+        delete processedGeometry.newHolesForSubPolygon;
      }
 
-
-    // 既存の飛び地情報全体の上書き (geometry.subPolygons) - ここではID生成は不要
     if(geometry.subPolygons && Array.isArray(geometry.subPolygons)) {
         processedGeometry.subPolygons = geometry.subPolygons.map(sub => ({
             vertexIds: sub.vertexIds || [],
             holesVertexIds: sub.holesVertexIds || []
         }));
     }
-
-    // verticesChanged フラグは返さない (副作用として world が変更される)
     return processedGeometry;
   }
 
@@ -230,15 +214,15 @@ export class EditFeatureUseCase {
            if (!f || typeof f !== 'object') return;
            const isPolygon = f instanceof Polygon || f.constructor?.name === 'Polygon';
            if (f.vertexIds) f.vertexIds.forEach(id => allUsedVertexIds.add(id));
-           if (isPolygon && f.holesVertexIds) {
+           if (isPolygon && f.rings && Array.isArray(f.rings)) { // ★ リングベースのポリゴン対応
+               f.rings.forEach(ring => {
+                   if (ring.vertexIds) ring.vertexIds.forEach(id => allUsedVertexIds.add(id));
+               });
+           } else if (isPolygon && f.holesVertexIds) { // 古い形式へのフォールバック
                (f.holesVertexIds || []).flat().forEach(id => allUsedVertexIds.add(id));
            }
-           if (isPolygon && f.isMultiPolygon && f.subPolygons) {
-               (f.subPolygons || []).forEach(sub => {
-                   (sub.vertexIds || []).forEach(id => allUsedVertexIds.add(id));
-                   (sub.holesVertexIds || []).flat().forEach(id => allUsedVertexIds.add(id));
-               });
-           }
+           // 古い isMultiPolygon / subPolygons 形式はリングベース移行後は通常存在しない
+           // if (isPolygon && f.isMultiPolygon && f.subPolygons) { ... }
        });
 
       const originalVertexCount = world.vertices.length;
@@ -249,10 +233,9 @@ export class EditFeatureUseCase {
       if (verticesToDelete.length > 0) {
           const deleteSet = new Set(verticesToDelete);
           world.vertices = world.vertices.filter(v => !deleteSet.has(v.id));
-          const removedCount = deleteSet.size; // Use deleteSet.size for accuracy
+          const removedCount = deleteSet.size;
           if (removedCount > 0) {
             console.log(`[EditFeatureUseCase Facade] Cleaned up ${removedCount} unused vertices (via _cleanupUnusedVertices).`);
-            // Note: worldの保存はこのヘルパーを呼び出したUseCaseが行う
           }
       }
   }
@@ -265,22 +248,16 @@ export class EditFeatureUseCase {
    * @private
    */
   _getOlderVertexId(id1, id2) {
-    // IDからタイムスタンプ部分を抽出して比較
     const getTimestamp = (id) => {
       if (!id || typeof id !== 'string') return 0;
       const parts = id.split('-');
-      // タイムスタンプは2番目の要素と仮定
       return parts.length > 1 ? parseInt(parts[1], 10) : 0;
     };
-
     const timestamp1 = getTimestamp(id1);
     const timestamp2 = getTimestamp(id2);
-
-    // タイムスタンプが同じ、または取得できない場合は、辞書順で比較（一意性を保つため）
     if (timestamp1 === timestamp2 || isNaN(timestamp1) || isNaN(timestamp2)) {
         return id1 <= id2 ? id1 : id2;
     }
-
     return timestamp1 < timestamp2 ? id1 : id2;
   }
 
@@ -294,13 +271,11 @@ export class EditFeatureUseCase {
    _getVerticesFromIds(vertexIds, world) {
     if (!vertexIds || !world || !world.vertices) return [];
     const vertexMap = new Map(world.vertices.map(v => [v.id, v]));
-    // Vertex インスタンスを返すように修正
     return vertexIds
         .map(id => {
             const data = vertexMap.get(id);
-            // データが存在すれば Vertex インスタンスを生成
             return data ? new Vertex(data.id, data.x, data.y) : null;
         })
-        .filter(Boolean); // null を除去
+        .filter(Boolean);
    }
 }
