@@ -38,6 +38,7 @@ export class MapViewModel {
     this._highlightedFeatureId = null; // (string | null) 暗黙的にハイライトする地物のID (頂点選択時に属する地物)
     this._hoveredFeature = null; // ホバー中の地物インスタンス
     this._hoveredVertex = null; // ホバー中の頂点データ {id, x, y}
+    this._projectSettings = null; // プロジェクト固有設定を保持
 
     // 観測者の登録
     this._observers = [];
@@ -56,10 +57,29 @@ export class MapViewModel {
       const worldRepository = this._editFeatureUseCase._worldRepository;
       this._world = await worldRepository.getWorld();
 
+      // プロジェクト固有設定を保持
+      if (this._world && this._world.metadata && this._world.metadata.settings) {
+          this._projectSettings = JSON.parse(JSON.stringify(this._world.metadata.settings));
+      } else {
+          // world.jsonにsettingsがない場合のフォールバック (本来はSerializerで補完される想定)
+          console.warn("Project settings not found in world.metadata. Using default fallbacks.");
+          this._projectSettings = { // JSONSerializerのDEFAULT_PROJECT_SETTINGSと一致させる
+              equatorLength: 40000,
+              gridInterval: 10,
+              gridColor: "#cccccc",
+              gridOpacity: 0.5,
+              sliderMin: 0,
+              sliderMax: 10000,
+              autoSaveInterval: 300
+          };
+      }
+
       // 現在の時間点に対応する地物をフィルタリング
       await this._loadFeaturesForCurrentTime();
 
-      this._notifyObservers('world');
+      this._notifyObservers('world'); // world全体の変更を通知
+      this._eventBus.publish('ProjectSettingsLoaded', { settings: this.getProjectSettings() }); // プロジェクト設定ロードイベント発行
+
     } catch (error) {
       console.error('世界データのロードに失敗しました', error);
       throw error;
@@ -186,6 +206,12 @@ export class MapViewModel {
     const index = this._world.features.findIndex(f => f.id === event.feature.id);
     if (index !== -1) {
       this._world.features[index] = event.feature;
+       // もし更新された地物がworldデータ全体にも影響を与える場合(例:metadata.settingsの更新)
+       // this._projectSettingsも更新し、'projectSettingsChanged'イベントを発行する
+       if (event.feature.id === this._world.id && this._world.metadata && this._world.metadata.settings) { // 仮にworld全体を表すIDがあるとする
+           this._projectSettings = JSON.parse(JSON.stringify(this._world.metadata.settings));
+           this._notifyObservers('projectSettingsChanged', this.getProjectSettings());
+       }
     } else {
       // 更新対象が見つからない場合は追加 (アンドゥ/リドゥで発生する可能性)
       this._world.features.push(event.feature);
@@ -669,10 +695,11 @@ export class MapViewModel {
   /**
    * 観測者に通知
    * @param {string} type - 変更タイプ
+   * @param {any} [dataOverride] - 通知するデータを上書きする場合に指定
    * @private
    */
-  _notifyObservers(type) {
-    const data = this._getStateForType(type);
+  _notifyObservers(type, dataOverride) {
+    const data = dataOverride !== undefined ? dataOverride : this._getStateForType(type);
     for (const observer of this._observers) {
       // コールバック呼び出し前に存在チェック (防御的)
       if (typeof observer === 'function') {
@@ -695,6 +722,7 @@ export class MapViewModel {
     switch (type) {
       case 'world':
         // Worldオブジェクト全体を返す（変更可能性に注意、コピー推奨？）
+        // _projectSettingsも更新されたことを示すため、worldと一緒に渡すのもあり
         return this._world;
       case 'features':
         // 表示中の地物リスト（ドメインインスタンスの配列）
@@ -711,10 +739,59 @@ export class MapViewModel {
         return this._hoveredVertex; // プレーンオブジェクト or null
       case 'layers':
         return this._world ? this._world.layers : []; // Layerインスタンスの配列
+      case 'projectSettingsChanged': // プロジェクト設定変更イベント用
+        return this.getProjectSettings();
       default:
         return null;
     }
   }
+
+  // --- 新しいゲッターメソッド ---
+  /**
+   * プロジェクト固有設定を取得 (ディープコピーを返す)
+   * @returns {Object | null} プロジェクト設定オブジェクト、または未ロードの場合はnull
+   */
+  getProjectSettings() {
+      return this._projectSettings ? JSON.parse(JSON.stringify(this._projectSettings)) : null;
+  }
+
+  /**
+   * 赤道長を取得
+   * @returns {number} 赤道長 (km)
+   */
+  getEquatorLength() {
+      return this._projectSettings ? this._projectSettings.equatorLength : 40000; // フォールバック値
+  }
+
+  /**
+   * グリッド設定を取得
+   * @returns {{interval: number, color: string, opacity: number}} グリッド設定
+   */
+  getGridSettings() {
+      if (this._projectSettings) {
+          return {
+              interval: this._projectSettings.gridInterval,
+              color: this._projectSettings.gridColor,
+              opacity: this._projectSettings.gridOpacity
+          };
+      }
+      return { interval: 10, color: "#cccccc", opacity: 0.5 }; // フォールバック値
+  }
+
+  /**
+   * 時間スライダーの表示範囲を取得
+   * @returns {{min: number, max: number}} 時間スライダーの最小年・最大年
+   */
+  getTimeSliderRange() {
+      if (this._projectSettings) {
+          return {
+              min: this._projectSettings.sliderMin,
+              max: this._projectSettings.sliderMax
+          };
+      }
+      return { min: 0, max: 10000 }; // フォールバック値
+  }
+
 
   /**
    * 選択中の地物IDを取得

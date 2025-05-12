@@ -87,7 +87,7 @@ export class DependencyInjection {
     );
     // ViewportManager の初期設定で worldWidth を渡すようにする
     // (ConfigManager から取得するのが理想だが、ここでは直接指定)
-    const worldWidth = this._container.configManager.get('map.worldWidth', 360);
+    const worldWidth = this._container.configManager.get('map.worldWidth', 360); // worldWidth はアプリ全体設定として残すか検討の余地あり。プロジェクト固有の場合もあるため。現状はConfigManagerから。
     this._container.viewportManager = new ViewportManager({ worldWidth: worldWidth });
   }
 
@@ -182,7 +182,7 @@ export class DependencyInjection {
     );
     this._container.renderer = new SVGRenderer(
       mapContainer,
-      { /* オプションは ConfigManager から取得するのが理想 */ }
+      { /* オプションは ConfigManager から取得するが、プロジェクト固有グリッド設定は削除 */ }
     );
     this._container.mapView = new MapView(
       mapContainer,

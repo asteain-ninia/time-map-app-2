@@ -10,16 +10,12 @@ export class Config {
       map: {
         zoomMin: 0.1,
         zoomMax: 50, // 修正: デフォルトの最大ズームを50に変更
-        gridInterval: 10,
-        gridColor: "#cccccc",
-        gridOpacity: 0.5,
-        equatorLength: 40000 // 赤道長（km）
+        // equatorLength, gridInterval, gridColor, gridOpacity はプロジェクト固有設定のため削除
       },
 
       // 時間スライダー設定
       timeline: {
-        minYear: 0,
-        maxYear: 10000,
+        // minYear, maxYear はプロジェクト固有設定のため削除
         stepSize: 1
       },
 

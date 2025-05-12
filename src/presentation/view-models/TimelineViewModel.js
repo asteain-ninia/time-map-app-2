@@ -13,8 +13,8 @@ export class TimelineViewModel {
     
     // タイムラインの状態
     this._currentTime = navigateTimeUseCase.getCurrentTime();
-    this._minYear = 0;
-    this._maxYear = 10000;
+    this._minYear = 0; // 初期値、後にプロジェクト設定で更新
+    this._maxYear = 10000; // 初期値、後にプロジェクト設定で更新
     this._yearMarks = [];
     this._isPlaying = false;
     this._playbackSpeed = 1;
@@ -22,19 +22,38 @@ export class TimelineViewModel {
     
     // 観測者の登録
     this._observers = [];
+
+    // イベントリスナーの設定 (ProjectSettingsLoaded を購読)
+    this._eventBus.subscribe('ProjectSettingsLoaded', this._onProjectSettingsLoaded.bind(this));
+    // プロジェクト設定が変更された場合も対応
+    this._eventBus.subscribe('projectSettingsChanged', this._onProjectSettingsLoaded.bind(this));
+
   }
 
   /**
-   * 初期化
-   * @param {Object} config - 設定
+   * 初期化 (プロジェクト設定に依存しない部分)
+   * @param {Object} [config={}] - 設定 (yearMarksなど)
    */
-  initialize(config) {
-    this._minYear = config.minYear || 0;
-    this._maxYear = config.maxYear || 10000;
+  initialize(config = {}) {
     this._yearMarks = config.yearMarks || [];
-    
-    this._notifyObservers('range');
+    // minYear, maxYear は ProjectSettingsLoaded イベントで設定される
+    // this._notifyObservers('range'); // ProjectSettingsLoadedで通知
   }
+
+  /**
+   * プロジェクト設定読み込み/変更イベントのハンドラ
+   * @param {Object} eventData - イベントデータ { settings: { sliderMin, sliderMax, ... } }
+   * @private
+   */
+  _onProjectSettingsLoaded(eventData) {
+    if (eventData && eventData.settings) {
+      const { sliderMin, sliderMax } = eventData.settings;
+      if (sliderMin !== undefined && sliderMax !== undefined) {
+        this.setTimeRange(sliderMin, sliderMax); // これが 'range' を通知する
+      }
+    }
+  }
+
 
   /**
    * 現在の時間を取得

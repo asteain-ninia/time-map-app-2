@@ -20,7 +20,7 @@ export class MapViewRendererHelper {
     this._viewModel = viewModel;
     this._editingViewModel = editingViewModel;
     this._viewportManager = viewportManager;
-    this._configManager = configManager;
+    this._configManager = configManager; // configManager は赤道長以外の設定でまだ使われる可能性があるため残す
 
     this._selectionElements = []; // 選択要素の描画物
     this._dragPreviewElements = []; // ドラッグプレビュー描画物
@@ -281,7 +281,8 @@ export class MapViewRendererHelper {
         const lineElem = this._renderer.drawLine(measurePoints, { stroke: '#ffff00', strokeWidth: 2, strokeDasharray: '5,5' }, viewport);
         if (lineElem) this._measureElements.push(lineElem);
 
-        const equatorLength = this._configManager.get('map.equatorLength', 40000);
+        // 赤道長を MapViewModel から取得
+        const equatorLength = this._viewModel.getEquatorLength(); 
         let totalLinear = 0;
         let totalGreatCircle = 0;
 

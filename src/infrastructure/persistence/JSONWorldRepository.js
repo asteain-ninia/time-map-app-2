@@ -100,15 +100,20 @@ export class JSONWorldRepository extends WorldRepository {
       vertices: [],
       features: [],
       metadata: {
-        sliderMin: 0,
-        sliderMax: 10000,
+        // sliderMin, sliderMax は settings に移動
         worldName: "新しい世界",
         worldDescription: "",
         settings: {
-          zoomMin: 1,
-          zoomMax: 50,
+          // zoomMin, zoomMax はアプリ全体設定なので削除
+          // gridInterval, autoSaveInterval はプロジェクト固有設定
           gridInterval: 10,
-          autoSaveInterval: 300
+          autoSaveInterval: 300, // autoSaveInterval はアプリ全体設定かもしれないが、一旦プロジェクト固有として残す
+          // 新しいプロジェクト固有設定のデフォルト値
+          equatorLength: 40000,
+          gridColor: "#cccccc",
+          gridOpacity: 0.5,
+          sliderMin: 0, // metadata直下から移動
+          sliderMax: 10000 // metadata直下から移動
         }
       }
     };

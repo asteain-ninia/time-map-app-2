@@ -11,7 +11,7 @@ export class SVGRenderer {
   /**
    * レンダラーを作成
    * @param {HTMLElement} container - SVG要素を配置するコンテナ
-   * @param {Object} [options={}] - レンダリングオプション
+   * @param {Object} [options={}] - レンダリングオプション (グリッド関連は削除)
    */
   constructor(container, options = {}) {
     this._container = container;
@@ -37,10 +37,8 @@ export class SVGRenderer {
       width: options.width || 800,
       height: options.height || 600,
       padding: options.padding || 10,
-      gridColor: options.gridColor || "#cccccc",
-      gridOpacity: options.gridOpacity || 0.5,
-      showGrid: true, // グリッド表示状態
-      gridInterval: options.gridInterval || 10, // グリッド間隔のデフォルト値
+      // gridColor, gridOpacity, gridInterval は削除 (プロジェクト設定から渡される)
+      showGrid: true, // グリッド表示状態 (これはUIトグル用なので残す)
       ...options
     };
 
@@ -116,10 +114,13 @@ export class SVGRenderer {
  * @param {Object} world - 世界データ
  * @param {Object} viewport - ビューポート情報 { x, y, zoom, width, height }
  * @param {TimePoint} currentTime - 現在の時間点
+ * @param {Object} projectSettings - プロジェクト設定 (グリッド設定などを含む)
  */
-render(world, viewport, currentTime) {
+render(world, viewport, currentTime, projectSettings) {
   // console.log('SVGRenderer.render 開始');
   // console.log('ビューポート情報:', viewport);
+  // console.log('プロジェクト設定:', projectSettings);
+
 
   // SVG要素の viewBox を更新
   // SVG要素の viewBox を更新して、パン・ズーム機能を実現
@@ -137,8 +138,21 @@ render(world, viewport, currentTime) {
   // 背景を描画 (再生成せず、Transformのみ更新)
   this._renderBackground(viewport);
 
-  // グリッドを描画
-  this._renderGrid(viewport);
+  // グリッドを描画 (projectSettingsからグリッド設定を渡す)
+  if (this._options.showGrid && projectSettings && projectSettings.gridInterval) {
+      const gridSettings = {
+          interval: projectSettings.gridInterval,
+          color: projectSettings.gridColor,
+          opacity: projectSettings.gridOpacity
+      };
+      this._renderGrid(viewport, gridSettings);
+  } else {
+      // グリッド非表示または設定がない場合はクリア
+      while (this._gridGroup.firstChild) {
+        this._gridGroup.removeChild(this._gridGroup.firstChild);
+      }
+  }
+
 
   // 地物を描画
   this._clearFeatures();
@@ -244,16 +258,22 @@ render(world, viewport, currentTime) {
 /**
  * グリッドを描画
  * @param {Object} viewport - ビューポート情報
+ * @param {Object} gridSettings - グリッド設定 { interval, color, opacity }
  * @private
  */
-_renderGrid(viewport) {
+_renderGrid(viewport, gridSettings) {
   // グリッドをクリア
   while (this._gridGroup.firstChild) {
     this._gridGroup.removeChild(this._gridGroup.firstChild);
   }
 
-  // グリッド非表示設定の場合は描画しない
+  // グリッド非表示設定の場合は描画しない (renderメソッド側で制御済みだが念のため)
   if (!this._options.showGrid) return;
+  // gridSettings が不正な場合も描画しない
+  if (!gridSettings || typeof gridSettings.interval !== 'number' || gridSettings.interval <= 0) {
+      console.warn("SVGRenderer: Invalid gridSettings provided to _renderGrid.", gridSettings);
+      return;
+  }
 
   const { x, y, zoom, width, height } = viewport;
 
@@ -265,8 +285,11 @@ _renderGrid(viewport) {
   const top = y + viewBoxHeight / 2; // ワールド座標の上端 (緯度が高い方)
   const bottom = y - viewBoxHeight / 2; // ワールド座標の下端 (緯度が低い方)
 
-  // グリッド間隔（度単位）
-  const gridInterval = this._options.gridInterval || 10;
+  // グリッド間隔（度単位）- 引数から取得
+  const gridInterval = gridSettings.interval;
+  const gridColor = gridSettings.color || "#cccccc";
+  const gridOpacity = gridSettings.opacity !== undefined ? gridSettings.opacity : 0.5;
+
 
   // 緯度・経度の描画範囲を計算 (ワールド座標)
   const latMin = Math.max(-90, Math.floor(bottom / gridInterval) * gridInterval);
@@ -293,9 +316,9 @@ _renderGrid(viewport) {
     line.setAttribute("y1", svgY);
     line.setAttribute("x2", right);
     line.setAttribute("y2", svgY);
-    line.setAttribute("stroke", isEquator ? "#ff0000" : this._options.gridColor);
+    line.setAttribute("stroke", isEquator ? "#ff0000" : gridColor);
     line.setAttribute("stroke-width", (isEquator ? 2 : 1) * strokeWidth);
-    line.setAttribute("opacity", this._options.gridOpacity);
+    line.setAttribute("opacity", gridOpacity);
     line.setAttribute("pointer-events", "none");
     this._gridGroup.appendChild(line);
 
@@ -305,7 +328,7 @@ _renderGrid(viewport) {
     // ラベルを線の少し「上」(SVG座標ではYが小さい方)に表示
     text.setAttribute("y", svgY - 2 * strokeWidth);
     text.setAttribute("font-size", fontSize); // ズームに応じたフォントサイズ
-    text.setAttribute("fill", this._options.gridColor);
+    text.setAttribute("fill", gridColor);
     text.setAttribute("text-anchor", "start"); // 左揃え
     // ベースラインを文字の上に合わせる (hanging)
     text.setAttribute("dominant-baseline", "alphabetic"); //hanging");
@@ -334,9 +357,9 @@ _renderGrid(viewport) {
       line.setAttribute("y1", svgTopY);   // SVG座標の上端
       line.setAttribute("x2", lng);
       line.setAttribute("y2", svgBottomY); // SVG座標の下端
-      line.setAttribute("stroke", isPrimeMeridian || isDateLine ? "#ff0000" : this._options.gridColor);
+      line.setAttribute("stroke", isPrimeMeridian || isDateLine ? "#ff0000" : gridColor);
       line.setAttribute("stroke-width", (isPrimeMeridian || isDateLine ? 2 : 1) * strokeWidth);
-      line.setAttribute("opacity", this._options.gridOpacity);
+      line.setAttribute("opacity", gridOpacity);
       // クリックイベントを無効化
       line.setAttribute("pointer-events", "none");
 
@@ -348,7 +371,7 @@ _renderGrid(viewport) {
       // Y座標を fontSize に応じて調整 (hanging baseline なので、y座標がテキストの上端)
       text.setAttribute("y", svgTopY + 2 * strokeWidth);
       text.setAttribute("font-size", fontSize); //  ズームに応じたフォントサイズ
-      text.setAttribute("fill", this._options.gridColor);
+      text.setAttribute("fill", gridColor);
       text.setAttribute("text-anchor", "middle"); //  中央揃え
       text.setAttribute("dominant-baseline", "hanging"); // 上揃え
       text.setAttribute("pointer-events", "none");

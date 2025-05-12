@@ -8,6 +8,18 @@ import { Layer } from '../../domain/entities/Layer';
 import { TimePoint } from '../../domain/value-objects/TimePoint';
 import { Property } from '../../domain/value-objects/Property';
 
+// プロジェクト固有設定のデフォルト値 (JSONWorldRepository._createEmptyWorld と同期)
+const DEFAULT_PROJECT_SETTINGS = {
+  equatorLength: 40000,
+  gridInterval: 10,
+  gridColor: "#cccccc",
+  gridOpacity: 0.5,
+  sliderMin: 0,
+  sliderMax: 10000,
+  autoSaveInterval: 300, // autoSaveIntervalもプロジェクト固有と見なす場合
+};
+
+
 /**
  * JSON形式でのデータシリアライズ/デシリアライズ
  */
@@ -25,7 +37,7 @@ export class JSONSerializer {
       points: [],
       lines: [],
       polygons: [],
-      metadata: world.metadata || {}
+      metadata: world.metadata || {} // metadata全体を保存
     };
 
     // 地理オブジェクトを種類別に分類
@@ -57,6 +69,29 @@ export class JSONSerializer {
       // ここでデータ移行ロジックを入れることも可能だが、今回は警告のみ
     }
 
+    // メタデータのデフォルト値補完
+    let metadata = data.metadata || {};
+    if (!metadata.settings) {
+      metadata.settings = {};
+    }
+    // sliderMin/Max が metadata 直下にある古い形式の場合、settings に移動
+    if (metadata.sliderMin !== undefined && metadata.settings.sliderMin === undefined) {
+        metadata.settings.sliderMin = metadata.sliderMin;
+        delete metadata.sliderMin;
+    }
+    if (metadata.sliderMax !== undefined && metadata.settings.sliderMax === undefined) {
+        metadata.settings.sliderMax = metadata.sliderMax;
+        delete metadata.sliderMax;
+    }
+
+    // プロジェクト固有設定のデフォルト値で補完
+    for (const key in DEFAULT_PROJECT_SETTINGS) {
+      if (metadata.settings[key] === undefined) {
+        metadata.settings[key] = DEFAULT_PROJECT_SETTINGS[key];
+      }
+    }
+
+
     const world = {
       // レイヤーの復元
       layers: (data.layers || []).map(layer => this._deserializeLayer(layer)),
@@ -67,8 +102,8 @@ export class JSONSerializer {
       // 地物の復元（空の配列で初期化）
       features: [],
 
-      // メタデータの復元
-      metadata: data.metadata || {}
+      // メタデータの復元 (デフォルト値で補完済み)
+      metadata: metadata
     };
 
     // 点情報の復元

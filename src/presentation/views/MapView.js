@@ -31,7 +31,7 @@ export class MapView {
     this._editingViewModel = editingViewModel;
     this._viewportManager = viewportManager;
     this._renderer = renderer;
-    this._configManager = configManager;
+    this._configManager = configManager; // configManager は他のアプリ全体設定で使われる可能性があるので残す
 
     // DOM要素
     this._mapElement = null;
@@ -59,7 +59,7 @@ export class MapView {
         viewModel,
         editingViewModel,
         viewportManager,
-        configManager
+        configManager // RendererHelperもconfigManagerに依存する部分があるかもしれない
     );
     // EventHandlerにはMapView自身の参照、Overlay要素、関連クラスを渡す
     this._eventHandler = new MapViewEventHandler(
@@ -142,6 +142,7 @@ export class MapView {
       case 'hoveredFeature': // ホバー地物が変更された場合
       case 'hoveredVertex': // ホバー頂点が変更された場合
       case 'layers': // レイヤー情報が変更された場合
+      case 'projectSettingsChanged': // プロジェクト設定が変更された場合も再描画
         this._render(); // 再描画をトリガー
         break;
       // 他のタイプのイベントはここでは処理しない
@@ -212,7 +213,15 @@ export class MapView {
     }
     const viewport = this._viewportManager.getViewport();
     const currentTime = this._viewModel.getCurrentTime();
-    this._renderer.render(world, viewport, currentTime);
+    // プロジェクト設定をMapViewModelから取得
+    const projectSettings = this._viewModel.getProjectSettings(); 
+    if (!projectSettings) {
+        console.warn("MapView._render: Project settings not available from MapViewModel.");
+        // 必要であればここでフォールバック値を設定するか、エラー処理
+        return; 
+    }
+    // SVGRenderer.renderにprojectSettingsを渡す
+    this._renderer.render(world, viewport, currentTime, projectSettings);
 
     // 2. 一時的な描画要素 (RendererHelperに委譲)
     this._rendererHelper.clearAllTemporaryDrawings(); // 事前に既存の一時描画をクリア

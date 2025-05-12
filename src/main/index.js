@@ -104,18 +104,18 @@ class TimeMapApp {
       maxZoom: this._config.get('map.zoomMax', 10)
     });
     
-    // タイムラインコントローラに設定を適用
-    const timelineController = this._di.get('timelineController');
-    timelineController.setTimeRange(
-      this._config.get('timeline.minYear', 0),
-      this._config.get('timeline.maxYear', 10000)
-    );
+    // タイムラインコントローラへのsetTimeRange呼び出しを削除
+    // const timelineController = this._di.get('timelineController');
+    // timelineController.setTimeRange(
+    //   this._config.get('timeline.minYear', 0), // プロジェクト固有のため削除
+    //   this._config.get('timeline.maxYear', 10000) // プロジェクト固有のため削除
+    // );
     
     // 時間サービスに設定を適用
     const timeService = this._di.get('timeService');
     timeService.updateCalendarConfig(this._config.get('calendar', {}));
     
-    // 設定マネージャーに設定を適用
+    // 設定マネージャーに設定を適用 (アプリケーション全体設定のみ)
     const configManager = this._di.get('configManager');
     Object.keys(this._config._config).forEach(section => {
       configManager.updateSection(section, this._config.getSection(section));
