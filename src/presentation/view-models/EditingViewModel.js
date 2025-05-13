@@ -163,12 +163,13 @@ export class EditingViewModel {
 _deserializeFromHistory(data) {
     if (!data) return null;
     // リングデータは _constructorName を持たない前提で処理を追加
-    if (data.id && Array.isArray(data.vertexIds) && typeof data.isOuter === 'boolean') {
+    // リングデータはプレーンオブジェクトとして扱われるため、ここでは new Ring() のようなことはしない
+    if (data.id && Array.isArray(data.vertexIds) && typeof data.isOuter === 'boolean' && data._constructorName === undefined) { // リング判定条件をより明確に
         return { // リングデータはプレーンオブジェクトとして返す
             id: data.id,
             vertexIds: data.vertexIds || [],
             isOuter: data.isOuter,
-            parentId: data.parentId // nullも許容
+            parentId: data.parentId !== undefined ? data.parentId : null // parentIdがなければnull
         };
     }
     // _constructorName を持つオブジェクトの処理
@@ -184,37 +185,42 @@ _deserializeFromHistory(data) {
             case 'Property':
                 return this._deserializeProperty(data);
             case 'Point':
+                const pointProps = (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(p => p instanceof Property);
                 return new Point(
                     data.id,
                     data.vertexIds || [],
-                    (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(Boolean),
+                    pointProps,
                     data.layerId
                 );
             case 'Line':
-                return new DomainLine(
+                const lineProps = (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(p => p instanceof Property);
+                return new DomainLine( // エイリアスを使用
                     data.id,
                     data.vertexIds || [],
-                    (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(Boolean),
+                    lineProps,
                     data.layerId
                 );
             case 'Polygon':
-                const rings = (data.rings || []).map(ringData => ({ // リングはプレーンオブジェクト
-                    id: ringData.id,
-                    vertexIds: ringData.vertexIds || [],
-                    isOuter: ringData.isOuter,
-                    parentId: ringData.parentId
-                }));
-                return new DomainPolygon(
+                const polygonRings = (data.rings || []).map(ringData => { // リングはプレーンオブジェクト
+                    // ここでもリングデータの parentId をnullにフォールバック
+                    return {
+                        id: ringData.id,
+                        vertexIds: ringData.vertexIds || [],
+                        isOuter: ringData.isOuter,
+                        parentId: ringData.parentId !== undefined ? ringData.parentId : null
+                    };
+                });
+                const polygonProps = (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(p => p instanceof Property);
+                return new DomainPolygon( // エイリアスを使用
                     data.id,
-                    (data.properties || []).map(pData => this._deserializeFromHistory(pData)).filter(Boolean),
+                    polygonProps,
                     data.layerId,
                     data.parentId || "0",
                     data.childIds || [],
-                    rings
+                    polygonRings
                 );
-            // 'Ring' のケースは不要 (上で処理されるため)
             default:
-                console.warn(`Unsupported constructor name for history deserialization: ${constructorName}`);
+                console.warn(`Unsupported constructor name for history deserialization: ${constructorName}`, data);
                 return null;
         }
     } catch (error) {
@@ -431,29 +437,36 @@ _deserializeFromHistory(data) {
     try {
       let feature;
       const geometryData = { vertices: [...this._addingPoints] };
-      switch (this._tool) {
-        case 'point':
-          if (this._addingPoints.length !== 1) throw new Error('点情報は1つの点のみを持つ必要があります');
-          feature = await this._editFeatureUseCase.addFeature('point', properties, geometryData, layerId);
-          break;
-        case 'line':
-          if (this._addingPoints.length < 2) throw new Error('線情報は少なくとも2つの点が必要です');
-           feature = await this._editFeatureUseCase.addFeature('line', properties, geometryData, layerId);
-          break;
-        case 'polygon':
-          if (this._addingPoints.length < 3) throw new Error('面情報は少なくとも3つの点が必要です');
-           feature = await this._editFeatureUseCase.addFeature('polygon', properties, geometryData, layerId);
-          break;
-        default:
-          throw new Error(`未対応のツールタイプ: ${this._tool}`);
+      console.log("[confirmAddFeature] Calling _editFeatureUseCase.addFeature with tool:", this._tool, "properties:", properties, "geometryData:", geometryData, "layerId:", layerId);
+      feature = await this._editFeatureUseCase.addFeature(this._tool, properties, geometryData, layerId);
+      console.log("[confirmAddFeature] Feature returned from use case:", JSON.parse(JSON.stringify(feature))); // ★ feature オブジェクトの内容をログ出力
+
+      let vertexIdsForHistory = [];
+      if (feature) {
+          if (this._tool === 'point' && feature.vertexIds && feature.vertexIds.length > 0) {
+              vertexIdsForHistory = feature.vertexIds;
+          } else if ((this._tool === 'line' || this._tool === 'polygon') && feature.rings && feature.rings.length > 0) {
+              vertexIdsForHistory = feature.rings.flatMap(r => r.vertexIds || []);
+          } else if (this._tool === 'line' && feature.vertexIds && feature.vertexIds.length > 0) { // PolygonでないLineの場合
+              vertexIdsForHistory = feature.vertexIds;
+          }
+          // Feature基底クラスのvertexIdsも考慮（リングベースでないポリゴンやLine/Pointのフォールバック）
+          if (vertexIdsForHistory.length === 0 && feature.vertexIds && feature.vertexIds.length > 0) {
+              console.warn("[confirmAddFeature] Falling back to feature.vertexIds for history as rings might be empty or tool type mismatch for ring extraction.");
+              vertexIdsForHistory = feature.vertexIds;
+          }
       }
-      const addedVerticesData = await this._getVerticesByIds(feature.vertexIds || feature.rings?.flatMap(r => r.vertexIds) || []);
+      console.log("[confirmAddFeature] Vertex IDs extracted for history (_getVerticesByIds input):", JSON.parse(JSON.stringify(vertexIdsForHistory))); // ★ _getVerticesByIdsに渡すIDリストをログ出力
+
+      const addedVerticesData = await this._getVerticesByIds(vertexIdsForHistory);
+      console.log("[confirmAddFeature] Data returned from _getVerticesByIds (addedVerticesData for history):", JSON.parse(JSON.stringify(addedVerticesData))); // ★ _getVerticesByIdsの結果をログ出力
+
       this._addToHistory({
         type: 'add',
         featureId: feature.id,
         featureType: this._tool,
-        featureData: this._serializeForHistory(feature), // ドメインインスタンスを履歴用にシリアライズ
-        addedVerticesData: addedVerticesData // プレーンオブジェクトの配列
+        featureData: this._serializeForHistory(feature),
+        addedVerticesData: addedVerticesData
       });
       this._clearAddingState();
       this._eventBus.publish('FeatureAdded', { feature });
@@ -464,7 +477,6 @@ _deserializeFromHistory(data) {
       throw error;
     }
   }
-
 
   /**
    * 穴の追加を確定
@@ -899,79 +911,157 @@ _deserializeFromHistory(data) {
   async _executeOperation(operation) {
     const worldRepo = this._editFeatureUseCase._worldRepository;
     let world = await worldRepo.getWorld();
-    let worldChanged = false;
+    let madeChangesToWorld = false; // この操作で実際にworldが変更されたかを示すフラグ
+    console.log(`[Redo] Executing operation:`, JSON.parse(JSON.stringify(operation)));
+    console.log(`[Redo] Initial world.vertices.length: ${world.vertices.length}, world.features.length: ${world.features.length}`);
 
     switch (operation.type) {
       case 'add': // 地物追加のRedo
+        let addedFeatureForEvent = null; // イベント発行のために、追加された地物インスタンスを保持
+
         // 1. 必要な頂点を復元
-        if (operation.addedVerticesData) {
+        if (operation.addedVerticesData && Array.isArray(operation.addedVerticesData)) {
+            console.log("[Redo 'add'] Processing addedVerticesData:", JSON.parse(JSON.stringify(operation.addedVerticesData)));
             operation.addedVerticesData.forEach(vDataPlain => {
+                console.log("[Redo 'add'] Deserializing vertex data from history:", JSON.parse(JSON.stringify(vDataPlain)));
                 const vData = this._deserializeFromHistory(vDataPlain);
-                if (vData && !world.vertices.some(wv => wv.id === vData.id)) {
-                    world.vertices.push({ id: vData.id, x: vData.x, y: vData.y });
-                    worldChanged = true;
+                console.log("[Redo 'add'] Deserialized vertex instance (vData):", vData, `Is vData instanceof Vertex? ${vData instanceof Vertex}`);
+
+                if (vData instanceof Vertex) {
+                    const vertexExists = world.vertices.some(wv => wv.id === vData.id);
+                    console.log(`[Redo 'add'] Vertex ${vData.id} (from vData) exists in world.vertices? ${vertexExists}`);
+                    if (!vertexExists) {
+                        world.vertices.push({ id: vData.id, x: vData.x, y: vData.y });
+                        madeChangesToWorld = true;
+                        console.log(`[Redo 'add'] Pushed vertex ${vData.id} to world.vertices. world.vertices.length is now ${world.vertices.length}`);
+                    }
+                } else {
+                    console.warn("[Redo 'add'] Expected Vertex instance from history for vertexData, but got:", vData, "Original data from history:", vDataPlain);
                 }
             });
-            if (worldChanged) { await worldRepo.saveWorld(world); world = await worldRepo.getWorld(); } // 保存して再取得
+            console.log("[Redo 'add'] After processing all addedVerticesData, world.vertices.length:", world.vertices.length);
+        } else {
+            console.log("[Redo 'add'] No addedVerticesData found in operation history or it's not an array.");
         }
+
         // 2. 地物を復元して追加
         if (operation.featureData) {
+            console.log("[Redo 'add'] Processing featureData:", JSON.parse(JSON.stringify(operation.featureData)));
             const featureInstance = this._deserializeFromHistory(operation.featureData);
-            if (featureInstance && !world.features.some(f => f.id === featureInstance.id)) {
-                 world.features.push(featureInstance);
-                 await worldRepo.saveWorld(world);
-                 this._eventBus.publish('FeatureAdded', { feature: featureInstance });
+            console.log("[Redo 'add'] Deserialized feature instance:", featureInstance);
+
+            if (featureInstance &&
+                (featureInstance instanceof DomainPolygon || featureInstance instanceof DomainLine || featureInstance instanceof Point)) {
+                const featureExists = world.features.some(f => f.id === featureInstance.id);
+                console.log(`[Redo 'add'] Feature ${featureInstance.id} exists in world.features? ${featureExists}`);
+                if (!featureExists) {
+                     world.features.push(featureInstance);
+                     addedFeatureForEvent = featureInstance;
+                     madeChangesToWorld = true;
+                     console.log(`[Redo 'add'] Pushed feature ${featureInstance.id} to world.features. world.features.length is now ${world.features.length}`);
+                }
+            } else {
+                console.warn("[Redo 'add'] Expected Feature instance from history for featureData, but got:", featureInstance, "Original data from history:", operation.featureData);
             }
+        } else {
+            console.log("[Redo 'add'] No featureData found in operation history.");
+        }
+
+        console.log(`[Redo 'add'] Before saveWorld, madeChangesToWorld: ${madeChangesToWorld}, world.vertices.length: ${world.vertices.length}, world.features.length: ${world.features.length}`);
+        if (madeChangesToWorld) {
+            await worldRepo.saveWorld(world);
+            console.log("[Redo 'add'] saveWorld executed.");
+            if (addedFeatureForEvent) {
+                this._eventBus.publish('FeatureAdded', { feature: addedFeatureForEvent });
+                console.log("[Redo 'add'] FeatureAdded event published for feature:", addedFeatureForEvent.id);
+            }
+        } else {
+            console.log("[Redo 'add'] No changes made to world, saveWorld skipped.");
         }
         break;
       case 'delete': // 地物削除のRedo
+         console.log(`[Redo 'delete'] Deleting feature: ${operation.featureId}`);
          await this._editFeatureUseCase.deleteFeature(operation.featureId);
-         // deleteFeature がイベント発行と保存を行う
+         console.log(`[Redo 'delete'] deleteFeature called for: ${operation.featureId}`);
          break;
       case 'deleteVertices': // 頂点削除のRedo
+          console.log(`[Redo 'deleteVertices'] Deleting vertices:`, operation.deletedVertexIds);
           await this._editFeatureUseCase.deleteVertices(operation.deletedVertexIds);
-          // deleteVertices がイベント発行と保存を行う
+          console.log(`[Redo 'deleteVertices'] deleteVertices called for:`, operation.deletedVertexIds);
           break;
       case 'moveVertices': // 頂点移動のRedo
+        console.log(`[Redo 'moveVertices'] Moving vertices:`, JSON.parse(JSON.stringify(operation.updates)));
         const redoUpdates = operation.updates.map(u => {
-            const newPos = this._deserializeFromHistory(u.newPosition); // newPositionはVertexプレーンデータ
-            return { vertexId: u.vertexId, newPosition: { x: newPos.x, y: newPos.y }};
-        });
-        await this._editFeatureUseCase.moveVertices(redoUpdates);
-        // moveVertices がイベント発行と保存を行う
+            const newPosVertex = this._deserializeFromHistory(u.newPosition);
+            if (!newPosVertex || !(newPosVertex instanceof Vertex)){
+                 console.error("[Redo 'moveVertices'] Invalid newPosition data in history for vertexId " + u.vertexId + ":", u.newPosition, "Deserialized as:", newPosVertex);
+                 return null;
+            }
+            return { vertexId: u.vertexId, newPosition: { x: newPosVertex.x, y: newPosVertex.y }};
+        }).filter(Boolean);
+        if (redoUpdates.length > 0) {
+            await this._editFeatureUseCase.moveVertices(redoUpdates);
+            console.log(`[Redo 'moveVertices'] moveVertices called with:`, redoUpdates);
+        } else {
+            console.warn(`[Redo 'moveVertices'] No valid vertex updates to execute.`);
+        }
         break;
       case 'updateProperties': // プロパティ更新のRedo
-        const newPropsInstances = operation.newProperties.map(p => this._deserializeFromHistory(p)).filter(Boolean);
-        const featureProps = await this._editFeatureUseCase.updateFeature(operation.featureId, { properties: newPropsInstances });
-        // updateFeature がイベント発行と保存を行う
+        console.log(`[Redo 'updateProperties'] Updating properties for feature: ${operation.featureId}`, JSON.parse(JSON.stringify(operation.newProperties)));
+        const newPropsInstances = operation.newProperties.map(p => {
+            const propInstance = this._deserializeFromHistory(p);
+            if (!propInstance || !(propInstance instanceof Property)) {
+                console.error("[Redo 'updateProperties'] Invalid property data in history:", p, "Deserialized as:", propInstance);
+                return null;
+            }
+            return propInstance;
+        }).filter(Boolean);
+        // プロパティが空になる更新（newPropsInstancesが空配列）も有効な操作として扱う
+        if (newPropsInstances.length > 0 || operation.newProperties.length === 0) {
+             await this._editFeatureUseCase.updateFeature(operation.featureId, { properties: newPropsInstances });
+             console.log(`[Redo 'updateProperties'] updateFeature (properties) called for: ${operation.featureId}`);
+        } else if (operation.newProperties.length > 0) { // 元の履歴にはプロパティがあったが、デシリアライズで全て無効になった場合
+            console.warn(`[Redo 'updateProperties'] All new properties were invalid for feature: ${operation.featureId}`);
+        }
         break;
       case 'addRing': // リング追加のRedo
-         // 1. 必要な頂点を復元
-         let verticesAddedRing = false;
-         if (operation.addedVerticesData) {
+         console.log(`[Redo 'addRing'] Adding ring to polygon: ${operation.polygonId}`, JSON.parse(JSON.stringify(operation.addedRing)));
+         let verticesAddedForRing = false;
+         if (operation.addedVerticesData && Array.isArray(operation.addedVerticesData)) {
+             console.log("[Redo 'addRing'] Processing addedVerticesData for ring:", JSON.parse(JSON.stringify(operation.addedVerticesData)));
              operation.addedVerticesData.forEach(vDataPlain => {
+                 console.log("[Redo 'addRing'] Deserializing vertex data from history for ring:", JSON.parse(JSON.stringify(vDataPlain)));
                  const vData = this._deserializeFromHistory(vDataPlain);
-                 if (vData && !world.vertices.some(wv => wv.id === vData.id)) {
+                 console.log("[Redo 'addRing'] Deserialized vertex instance for ring (vData):", vData, `Is vData instanceof Vertex? ${vData instanceof Vertex}`);
+                 if (vData instanceof Vertex && !world.vertices.some(wv => wv.id === vData.id)) {
                      world.vertices.push({ id: vData.id, x: vData.x, y: vData.y });
-                     verticesAddedRing = true;
+                     verticesAddedForRing = true;
+                     console.log(`[Redo 'addRing'] Pushed vertex ${vData.id} for ring. world.vertices.length: ${world.vertices.length}`);
+                 } else if (vData && !(vData instanceof Vertex)){
+                      console.warn("[Redo 'addRing'] Expected Vertex instance from history for ring, but got:", vData, "Original data:", vDataPlain);
                  }
              });
-             if (verticesAddedRing) { await worldRepo.saveWorld(world); world = await worldRepo.getWorld(); }
+             console.log("[Redo 'addRing'] After processing addedVerticesData for ring, world.vertices.length:", world.vertices.length);
+             if (verticesAddedForRing) {
+                 await worldRepo.saveWorld(world);
+                 console.log("[Redo 'addRing'] saveWorld executed for vertices of the ring.");
+                 world = await worldRepo.getWorld(); // worldを再取得
+                 console.log("[Redo 'addRing'] World re-fetched. world.vertices.length:", world.vertices.length);
+             }
          }
-         // 2. UseCase経由でリングを追加 (ID指定)
-         const ringToAdd = this._deserializeFromHistory(operation.addedRing); // リングプレーンデータを取得
-         if (ringToAdd) {
-             // UseCaseに existingRingData で渡す
-             const geometryUpdate = { existingRingData: [ringToAdd] };
-             const updatedPolygonRing = await this._editFeatureUseCase.updateFeature(operation.polygonId, { geometry: geometryUpdate });
-             // updateFeature がイベント発行と保存を行う
+         const ringToAddPlain = operation.addedRing;
+         if (ringToAddPlain && typeof ringToAddPlain.id === 'string') {
+             const geometryUpdate = { existingRingData: [ringToAddPlain] };
+             await this._editFeatureUseCase.updateFeature(operation.polygonId, { geometry: geometryUpdate });
+             console.log(`[Redo 'addRing'] updateFeature (addRingWithId) called for polygon: ${operation.polygonId} with ring: ${ringToAddPlain.id}`);
          } else {
-             console.error("Redo addRing: Failed to deserialize ring data from history.");
+             console.error("[Redo 'addRing'] Failed to get ring data or ring ID missing from history. Ring data:", ringToAddPlain);
          }
         break;
       default:
-        console.warn(`未対応の操作タイプ (Redo): ${operation.type}`);
+        console.warn(`[Redo] Unsupported operation type: ${operation.type}`);
     }
+    console.log(`[Redo] Finished operation: ${operation.type}. Final world.vertices.length: ${world.vertices.length}, world.features.length: ${world.features.length}`);
   }
 
   /**
@@ -1091,19 +1181,40 @@ _deserializeFromHistory(data) {
    * @private
    */
   async _getVerticesByIds(vertexIds) {
-    if (!vertexIds || vertexIds.length === 0) return [];
+    if (!vertexIds || vertexIds.length === 0) {
+        console.log("[_getVerticesByIds] Received empty or null vertexIds, returning empty array.");
+        return [];
+    }
     try {
         const worldRepository = this._editFeatureUseCase._worldRepository;
+        console.log("[_getVerticesByIds] Calling worldRepository.getWorld() for vertexIds:", JSON.parse(JSON.stringify(vertexIds)));
         const world = await worldRepository.getWorld();
-        if (!world || !world.vertices) return [];
+        if (!world || !world.vertices) {
+            console.warn("[_getVerticesByIds] World or world.vertices is null/undefined. Current world.vertices:", world ? world.vertices : 'world_is_null');
+            return [];
+        }
+        console.log(`[_getVerticesByIds] world.vertices (length ${world.vertices.length}) from repository:`, JSON.parse(JSON.stringify(world.vertices.slice(0, 5))) , `... (first 5 shown if many)`);
+
         const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
-        return vertexIds
-            .map(id => verticesMap.get(id))
-            .filter(Boolean)
-            // ★ Vertexインスタンスをシリアライズするように修正
-            .map(v => this._serializeForHistory(new Vertex(v.id, v.x, v.y)));
+        const foundVertices = vertexIds.map(id => {
+            const foundVertex = verticesMap.get(id);
+            if (!foundVertex) {
+                console.warn(`[_getVerticesByIds] Vertex with ID ${id} not found in world.vertices map.`);
+            }
+            return foundVertex;
+        }).filter(Boolean);
+
+        console.log(`[_getVerticesByIds] Found ${foundVertices.length} vertex objects from world.vertices for ${vertexIds.length} IDs.`);
+
+        return foundVertices.map(v => {
+            const serializedVertex = this._serializeForHistory(new Vertex(v.id, v.x, v.y));
+            if (!serializedVertex) {
+                console.error(`[_getVerticesByIds] Serialization failed for vertex:`, v);
+            }
+            return serializedVertex;
+        }).filter(Boolean);
     } catch (error) {
-        console.error("Error fetching vertices by IDs:", error);
+        console.error("[_getVerticesByIds] Error fetching vertices by IDs:", error);
         return [];
     }
   }
