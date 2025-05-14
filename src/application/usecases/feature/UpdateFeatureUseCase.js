@@ -52,16 +52,16 @@ export class UpdateFeatureUseCase {
    * @param {string} featureId - 更新するオブジェクトのID
    * @param {Object} updates - 更新内容 { properties?: Property[], geometry?: Object, layerId?: string }
    *                         geometry (Polygonの場合): {
-   *                           newRingCoordinates?: { points: {x,y}[], isOuter: boolean, parentId?: string }[], // 座標から追加 (ID内部生成)
-   *                           existingRingData?: { id: string, vertexIds: string[], isOuter: boolean, parentId?: string }[], // ID指定で追加 (Redo用)
-   *                           removedRingIds?: string[], // 削除するリングID配列
-   *                           updatedRingVertices?: { ringId: string, newVertexIds: string[] }[] // 頂点更新情報配列
+   *                           newRingCoordinates?: { points: {x,y}[], isOuter: boolean, parentId?: string }[],
+   *                           existingRingData?: { id: string, vertexIds: string[], isOuter: boolean, parentId?: string }[],
+   *                           removedRingIds?: string[],
+   *                           updatedRingVertices?: { ringId: string, newVertexIds: string[] }[]
    *                         }
    *                         geometry (Point/Lineの場合): { vertexIds?: string[] } または { vertices: [{x,y}] }
-   * @returns {Promise<Feature>} 更新されたオブジェクト
+   * @returns {Promise<{feature: Feature, newlyAddedVerticesData?: Array<{id: string, x: number, y: number}>}>} 更新されたオブジェクトと、新規リング追加時に生成された頂点データ（あれば）
    */
   async execute(featureId, updates) {
-    let world = await this._worldRepository.getWorld(); // world を let で宣言
+    let world = await this._worldRepository.getWorld(); 
 
     const featureIndex = world.features.findIndex(f => f.id === featureId);
     if (featureIndex === -1) {
@@ -70,7 +70,8 @@ export class UpdateFeatureUseCase {
 
     let currentFeature = world.features[featureIndex];
     let updatedFeature = currentFeature;
-    let worldVerticesUpdated = false; // _processGeometryが呼ばれたか
+    let worldVerticesUpdated = false; 
+    let newlyAddedVerticesDataForHistory = []; // 新規リング追加時に生成された頂点データ
 
     // プロパティ更新
     if (updates.properties) {
@@ -91,85 +92,62 @@ export class UpdateFeatureUseCase {
        }
 
       if (updatedFeature instanceof Polygon) {
-        // --- リングベースの処理 ---
         const geometryUpdates = updates.geometry;
         const editService = this._polygonEditService;
         let polygonBeingUpdated = updatedFeature;
 
         try {
-            // 1. リング削除 (変更なし)
             if (Array.isArray(geometryUpdates.removedRingIds)) {
-                console.log(`[UpdateFeatureUseCase] Removing rings: ${geometryUpdates.removedRingIds.join(', ')} from Polygon ${featureId}`);
                 for (const ringId of geometryUpdates.removedRingIds) {
                     polygonBeingUpdated = await editService.removeRingFromPolygon(polygonBeingUpdated.id, ringId);
                 }
             }
-
-            // 2. リング頂点更新 (変更なし)
             if (Array.isArray(geometryUpdates.updatedRingVertices)) {
-                 console.log(`[UpdateFeatureUseCase] Updating ring vertices for Polygon ${featureId}`, geometryUpdates.updatedRingVertices);
                 for (const update of geometryUpdates.updatedRingVertices) {
                     polygonBeingUpdated = await editService.updateRingVertices(polygonBeingUpdated.id, update.ringId, update.newVertexIds);
                 }
             }
-
-            // 3. 新リング追加 (座標から - IDは内部生成) (変更なし)
             if (Array.isArray(geometryUpdates.newRingCoordinates)) {
-                console.log(`[UpdateFeatureUseCase] Adding new rings from coordinates for Polygon ${featureId}`, geometryUpdates.newRingCoordinates);
                 for (const ringCoordData of geometryUpdates.newRingCoordinates) {
-                    // 3a. 頂点IDを生成・追加
                     const tempGeometry = { vertices: ringCoordData.points };
-                    // ★★★ 副作用: world.vertices が変更される ★★★
-                    const processed = this._processGeometry(tempGeometry, world);
-                    worldVerticesUpdated = true; // 副作用があったことを記録
+                    const processed = this._processGeometry(tempGeometry, world); // world.vertices が変更される
+                    worldVerticesUpdated = true; 
 
-                    // 3b. ringData を構築 (IDなし)
+                    // 生成された頂点のデータを収集 (プレーンオブジェクト)
+                    if (processed.vertexIds) {
+                        const worldVerticesMap = new Map(world.vertices.map(v => [v.id, v]));
+                        processed.vertexIds.forEach(id => {
+                            const vData = worldVerticesMap.get(id);
+                            if (vData) newlyAddedVerticesDataForHistory.push({ id: vData.id, x: vData.x, y: vData.y });
+                        });
+                    }
                     const ringData = {
-                        vertexIds: processed.vertexIds, // 生成されたIDを使用
+                        vertexIds: processed.vertexIds,
                         isOuter: ringCoordData.isOuter,
                         parentId: ringCoordData.parentId
                     };
-                    // 3c. リング追加 (ID内部生成)
                     polygonBeingUpdated = await editService.addRingToPolygon(polygonBeingUpdated.id, ringData);
                 }
             }
-
-            // 4. 既存リングデータ追加 (アンドゥ/リドゥ Redo 用 - ID指定)
             if (Array.isArray(geometryUpdates.existingRingData)) {
-                 console.log(`[UpdateFeatureUseCase] Adding existing rings (Redo) for Polygon ${featureId}`, geometryUpdates.existingRingData);
-                 // ★ PolygonEditServiceの addRingWithId を呼び出すように修正
                 for (const existingRing of geometryUpdates.existingRingData) {
-                    // 頂点が存在するか等の事前チェックは addRingWithId 内の validatePolygonRings で行われる想定
-                    try {
-                        polygonBeingUpdated = await editService.addRingWithId(polygonBeingUpdated.id, existingRing);
-                        // ★ 注意: このリングが参照する頂点ID (existingRing.vertexIds) が
-                        //    world.vertices に存在することは、呼び出し元(EditingViewModel)で保証されている必要がある。
-                    } catch (addError) {
-                         console.error(`[UpdateFeatureUseCase] Failed to redo adding ring ${existingRing.id}. Check if vertices exist and polygon remains valid.`, addError);
-                         // Redo失敗時のエラーハンドリングが必要
-                         throw addError;
-                    }
+                    // existingRing.vertexIds が world.vertices に存在することは呼び出し元で保証される前提
+                    polygonBeingUpdated = await editService.addRingWithId(polygonBeingUpdated.id, existingRing);
                 }
             }
-
             updatedFeature = polygonBeingUpdated;
-
         } catch (error) {
             console.error(`Failed to update polygon geometry for ${featureId}:`, error);
-            // UseCaseレベルでエラーをラップして再スロー
             throw new Error(`Polygon geometry update failed: ${error.message}`);
         }
-        // --- リングベース処理ここまで ---
-
-      } else { // Point or Line (変更なし)
+      } else { 
         let processedGeometry = updates.geometry;
-        // vertices が渡された場合は _processGeometry を呼び出して頂点を生成
         if (updates.geometry.vertices) {
             processedGeometry = this._processGeometry(updates.geometry, world);
-            worldVerticesUpdated = true; // 副作用を記録
+            worldVerticesUpdated = true;
+            // Point/Line の頂点追加の場合も newlyAddedVerticesDataForHistory に追加する（必要であれば）
+            // 今回の修正はリング追加に限定するため、ここでは追加しない。
         }
-
-        // vertexIds が存在する場合 (直接ID指定、または_processGeometry経由)
         if (processedGeometry.vertexIds !== undefined) {
           if (updatedFeature && typeof updatedFeature.withVertexIds === 'function') {
             if (updatedFeature instanceof Point && (!processedGeometry.vertexIds || processedGeometry.vertexIds.length !== 1)) {
@@ -186,7 +164,7 @@ export class UpdateFeatureUseCase {
       }
     }
 
-    // レイヤーID更新 (変更なし)
+    // レイヤーID更新
     if (updates.layerId !== undefined) {
       if (!updatedFeature) {
           throw new Error(`Feature object invalid before layer ID update for ID: ${featureId}`);
@@ -198,13 +176,15 @@ export class UpdateFeatureUseCase {
       }
     }
 
-    // 更新されたオブジェクトを置き換え & 保存 (変更なし)
-    if (updatedFeature !== currentFeature || worldVerticesUpdated) { // world.vertices が変更された場合も保存
+    if (updatedFeature !== currentFeature || worldVerticesUpdated) { 
         world.features[featureIndex] = updatedFeature;
-        await this._worldRepository.saveWorld(world); // world全体を保存
+        await this._worldRepository.saveWorld(world); 
     }
 
-    return updatedFeature;
+    // 戻り値をオブジェクトに変更
+    return { 
+        feature: updatedFeature, 
+        newlyAddedVerticesData: newlyAddedVerticesDataForHistory.length > 0 ? newlyAddedVerticesDataForHistory : undefined 
+    };
   }
-
 }

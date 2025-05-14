@@ -12,23 +12,24 @@ import { GeometryService } from '../domain/services/GeometryService';
 import { TimeService } from '../domain/services/TimeService';
 import { LayerService } from '../domain/services/LayerService';
 
-import { IdGenerationService } from '../application/services/IdGenerationService'; // ★ 新規インポート
+import { IdGenerationService } from '../application/services/IdGenerationService';
+// --- History関連サービス ---
+import { HistoryStackManager } from '../application/services/history/HistoryStackManager.js'; // ★追加
+import { HistorySerializer } from '../application/services/history/HistorySerializer.js';   // ★追加
+import { OperationEngine } from '../application/services/history/OperationEngine.js';       // ★追加
+import { HistoryService } from '../application/services/HistoryService.js';                 // ★追加 (ファサード)
 
-// 元のEditFeatureUseCase（ファサード）をインポート
 import { EditFeatureUseCase } from '../application/usecases/EditFeatureUseCase';
-// --- ここから分割されたUseCase/Service ---
-// UseCase分割後のファイル (AddFeatureUseCase など) は EditFeatureUseCase 内部でインスタンス化
-import { IPolygonEditService } from '../application/services/IPolygonEditService'; // インターフェースをインポート
-import { PolygonEditService } from '../application/services/PolygonEditService'; // 実装クラスをインポート
+import { IPolygonEditService } from '../application/services/IPolygonEditService';
+import { PolygonEditService } from '../application/services/PolygonEditService';
 
-// --- ここまで分割されたUseCase/Service ---
 import { NavigateTimeUseCase } from '../application/usecases/NavigateTimeUseCase';
 import { ManageLayersUseCase } from '../application/usecases/ManageLayersUseCase';
 import { UpdateProjectSettingsUseCase } from '../application/usecases/UpdateProjectSettingsUseCase';
 
 import { MapViewModel } from '../presentation/view-models/MapViewModel';
 import { TimelineViewModel } from '../presentation/view-models/TimelineViewModel';
-import { EditingViewModel } from '../presentation/view-models/EditingViewModel';
+import { EditingViewModel } from '../presentation/view-models/EditingViewModel'; // ★コンストラクタ変更に対応
 
 import { MapView } from '../presentation/views/MapView';
 import { TimelineView } from '../presentation/views/TimelineView';
@@ -45,9 +46,7 @@ import { EventBus } from '../presentation/EventBus';
  * アプリケーションの依存性注入を管理するクラス
  */
 export class DependencyInjection {
-  constructor() {
-    this._container = {};
-  }
+  constructor() { this._container = {}; }
 
   /**
    * 依存性を初期化
@@ -57,40 +56,19 @@ export class DependencyInjection {
    * @param {HTMLElement} sidebarContainer - サイドバーコンテナ要素
    */
   initialize(mapContainer, timelineContainer, toolbarContainer, sidebarContainer) {
-    // インフラストラクチャ層の依存性を登録
     this._registerInfrastructureServices();
-
-    // ドメイン層の依存性を登録
     this._registerDomainServices();
-
-    // アプリケーション層の依存性を登録
     this._registerApplicationServices();
-
-    // プレゼンテーション層の依存性を登録
-    this._registerPresentationServices(
-      mapContainer,
-      timelineContainer,
-      toolbarContainer,
-      sidebarContainer
-    );
+    this._registerPresentationServices(mapContainer, timelineContainer, toolbarContainer, sidebarContainer);
   }
 
-  /**
-   * インフラストラクチャサービスの登録
-   * @private
-   */
   _registerInfrastructureServices() {
     this._container.logger = new Logger(3);
-    this._container.configManager = new ConfigManager();
+    this._container.configManager = new ConfigManager(); // maxHistorySizeはここから取得も可
     this._container.fileSystem = new FileSystem();
-    this._container.jsonSerializer = new JSONSerializer();
-    this._container.worldRepository = new JSONWorldRepository(
-      this._container.fileSystem,
-      this._container.jsonSerializer
-    );
-    // ViewportManager の初期設定で worldWidth を渡すようにする
-    // (ConfigManager から取得するのが理想だが、ここでは直接指定)
-    const worldWidth = this._container.configManager.get('map.worldWidth', 360); // worldWidth はアプリ全体設定として残すか検討の余地あり。プロジェクト固有の場合もあるため。現状はConfigManagerから。
+    this._container.jsonSerializer = new JSONSerializer(); // これはWorldRepository用
+    this._container.worldRepository = new JSONWorldRepository(this._container.fileSystem, this._container.jsonSerializer);
+    const worldWidth = 360; // ConfigManagerから取得する方が望ましい
     this._container.viewportManager = new ViewportManager({ worldWidth: worldWidth });
   }
 
@@ -100,7 +78,7 @@ export class DependencyInjection {
    */
   _registerDomainServices() {
     this._container.geometryService = new GeometryService();
-    this._container.timeService = new TimeService(); // カレンダー設定はConfigManagerから後で適用
+    this._container.timeService = new TimeService();
     this._container.layerService = new LayerService();
   }
 
@@ -110,18 +88,10 @@ export class DependencyInjection {
    */
   _registerApplicationServices() {
     this._container.eventBus = new EventBus();
-
-    // --- ID生成サービスを登録 ---
     this._container.idGenerationService = new IdGenerationService();
+    this._container.polygonEditService = new PolygonEditService(this._container.worldRepository, this._container.idGenerationService);
 
-    // --- PolygonEditServiceの登録 ---
-    // PolygonEditService には IdGenerationService のインスタンスを渡す
-    this._container.polygonEditService = new PolygonEditService(
-        this._container.worldRepository,
-        this._container.idGenerationService
-    );
-
-    // ファサードの EditFeatureUseCase を登録し、必要なサービスを注入
+    // EditFeatureUseCase を先に登録 (History関連サービスが依存する可能性)
     this._container.editFeatureUseCase = new EditFeatureUseCase(
       this._container.worldRepository,
       this._container.geometryService,
@@ -130,21 +100,31 @@ export class DependencyInjection {
       this._container.idGenerationService
     );
 
-    this._container.navigateTimeUseCase = new NavigateTimeUseCase(
-      this._container.timeService
+    // --- History 関連サービスの登録 ---
+    const maxHistorySize = this._container.configManager.get('history.maxSize', 100); // ConfigManagerから取得 (なければデフォルト)
+    this._container.historyStackManager = new HistoryStackManager(maxHistorySize);
+    this._container.historySerializer = new HistorySerializer(); // 依存なし
+    this._container.operationEngine = new OperationEngine(
+        this._container.worldRepository,      // WorldRepositoryを渡す
+        this._container.historySerializer,    // HistorySerializerを渡す
+        this._container.editFeatureUseCase    // EditFeatureUseCaseを渡す
     );
+    this._container.historyService = new HistoryService( // ファサード
+        this._container.historyStackManager,
+        this._container.historySerializer,
+        this._container.operationEngine,
+        this._container.eventBus,
+        this._container.worldRepository,
+        this._container.editFeatureUseCase    // HistoryServiceもEditFeatureUseCaseを持つ
+    );
+    // --- History 関連サービスここまで ---
 
-    this._container.manageLayersUseCase = new ManageLayersUseCase(
-      this._container.worldRepository,
-      this._container.layerService
-    );
-
-    this._container.updateProjectSettingsUseCase = new UpdateProjectSettingsUseCase(
-        this._container.worldRepository
-    );
+    this._container.navigateTimeUseCase = new NavigateTimeUseCase(this._container.timeService);
+    this._container.manageLayersUseCase = new ManageLayersUseCase(this._container.worldRepository, this._container.layerService);
+    this._container.updateProjectSettingsUseCase = new UpdateProjectSettingsUseCase(this._container.worldRepository);
   }
 
-  /**
+    /**
    * プレゼンテーションサービスの登録
    * @param {HTMLElement} mapContainer - マップコンテナ要素
    * @param {HTMLElement} timelineContainer - タイムラインコンテナ要素
@@ -152,71 +132,23 @@ export class DependencyInjection {
    * @param {HTMLElement} sidebarContainer - サイドバーコンテナ要素
    * @private
    */
-  _registerPresentationServices(
-    mapContainer,
-    timelineContainer,
-    toolbarContainer,
-    sidebarContainer
-  ) {
-    // ViewModel, Renderer, View, Controller の生成
-    this._container.editingViewModel = new EditingViewModel(
-      this._container.editFeatureUseCase, // ファサードを注入
-      this._container.eventBus
-    );
-    this._container.mapViewModel = new MapViewModel(
-      this._container.editFeatureUseCase, // ファサードを注入
-      this._container.navigateTimeUseCase,
-      this._container.manageLayersUseCase,
-      this._container.geometryService, // GeometryService を注入
+  _registerPresentationServices(mapContainer, timelineContainer, toolbarContainer, sidebarContainer) {
+    this._container.editingViewModel = new EditingViewModel( // historyServiceを注入
+      this._container.editFeatureUseCase,
       this._container.eventBus,
-      this._container.updateProjectSettingsUseCase // UpdateProjectSettingsUseCase を注入
+      this._container.historyService // HistoryServiceファサードを渡す
     );
-    this._container.timelineViewModel = new TimelineViewModel(
-      this._container.navigateTimeUseCase,
-      this._container.eventBus
-    );
-    this._container.renderer = new SVGRenderer(
-      mapContainer,
-      { /* オプションは ConfigManager から取得するが、プロジェクト固有グリッド設定は削除 */ }
-    );
-    this._container.mapView = new MapView(
-      mapContainer,
-      this._container.mapViewModel,
-      this._container.editingViewModel,
-      this._container.viewportManager,
-      this._container.renderer,
-      this._container.configManager // ConfigManager を注入
-    );
-    this._container.timelineView = new TimelineView(
-      timelineContainer,
-      this._container.timelineViewModel
-    );
-    this._container.toolbarView = new ToolbarView(
-      toolbarContainer,
-      this._container.editingViewModel,
-      this._container.mapView // MapView を注入
-    );
-    this._container.sidebarView = new SidebarView(
-      sidebarContainer,
-      this._container.mapViewModel,
-      this._container.manageLayersUseCase,
-      this._container.editingViewModel, // EditingViewModel を注入
-      this._container.eventBus
-    );
-    this._container.mapController = new MapController(
-      this._container.mapView,
-      this._container.mapViewModel,
-      this._container.editingViewModel,
-      this._container.viewportManager
-    );
-    this._container.timelineController = new TimelineController(
-      this._container.timelineView,
-      this._container.timelineViewModel
-    );
-    this._container.toolController = new ToolController(
-      this._container.toolbarView,
-      this._container.editingViewModel
-    );
+    // MapViewModel, TimelineViewModel, Renderer, Views, Controllers は変更なし
+    this._container.mapViewModel = new MapViewModel(this._container.editFeatureUseCase, this._container.navigateTimeUseCase, this._container.manageLayersUseCase, this._container.geometryService, this._container.eventBus, this._container.updateProjectSettingsUseCase);
+    this._container.timelineViewModel = new TimelineViewModel(this._container.navigateTimeUseCase, this._container.eventBus);
+    this._container.renderer = new SVGRenderer(mapContainer, {});
+    this._container.mapView = new MapView(mapContainer, this._container.mapViewModel, this._container.editingViewModel, this._container.viewportManager, this._container.renderer, this._container.configManager);
+    this._container.timelineView = new TimelineView(timelineContainer, this._container.timelineViewModel);
+    this._container.toolbarView = new ToolbarView(toolbarContainer, this._container.editingViewModel, this._container.mapView);
+    this._container.sidebarView = new SidebarView(sidebarContainer, this._container.mapViewModel, this._container.manageLayersUseCase, this._container.editingViewModel, this._container.eventBus);
+    this._container.mapController = new MapController(this._container.mapView, this._container.mapViewModel, this._container.editingViewModel, this._container.viewportManager);
+    this._container.timelineController = new TimelineController(this._container.timelineView, this._container.timelineViewModel);
+    this._container.toolController = new ToolController(this._container.toolbarView, this._container.editingViewModel);
   }
 
   /**
@@ -227,8 +159,6 @@ export class DependencyInjection {
   get(name) {
     if (!this._container[name]) {
         console.error(`Dependency not found: ${name}`);
-        // エラーを投げるか、null/undefined を返すか
-        // throw new Error(`Dependency not found: ${name}`);
     }
     return this._container[name];
   }
