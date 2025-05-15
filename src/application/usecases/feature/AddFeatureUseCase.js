@@ -71,12 +71,15 @@ export class AddFeatureUseCase {
         feature = Line.create(featureId, properties, lineGeometry, layerId);
         break;
       case 'polygon':
-        // ポリゴンの検証 (リングベース移行後は PolygonEditService に委譲)
-        // this._validatePolygonAddition(processedGeometry, layerId, world); // 検証はPolygonEditServiceで行うためコメントアウト
-
         // リングベースの Polygon コンストラクタを直接呼び出す
         if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 3) {
           throw new Error("Polygon geometry must have at least three vertexIds for the outer ring.");
+        }
+
+        // 自己交差チェックを追加
+        const outerRingVertices = this._getVerticesFromIds(processedGeometry.vertexIds, world); // Vertexインスタンスの配列を取得
+        if (this._geometryService.isPolygonSelfIntersecting(outerRingVertices)) {
+            throw new Error("新規ポリゴンの外周リングが自己交差しています。");
         }
 
         // 単純なポリゴン追加なので、外周リングを1つ作成
