@@ -27,7 +27,7 @@ export class MapViewEventHandler {
     this._renderer = renderer;
     this._interactionLogic = interactionLogic;
 
-    // マウス/タッチ状態
+    // マウス状態
     this._isMouseDown = false;
     this._isDragging = false;
     this._dragStartScreenPosition = { x: 0, y: 0 }; // スクリーン座標
@@ -59,7 +59,6 @@ export class MapViewEventHandler {
     this._mapOverlay.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
     this._mapOverlay.addEventListener('dblclick', this.handleDoubleClick.bind(this));
     this._mapOverlay.addEventListener('contextmenu', this.handleContextMenu.bind(this));
-    // タッチイベントも同様に設定 (省略、必要なら元のMapViewから移動)
     window.addEventListener('keydown', this.handleKeyDown.bind(this));
     window.addEventListener('keyup', this.handleKeyUp.bind(this));
   }
