@@ -7,7 +7,7 @@ import { UpdateFeatureUseCase } from './feature/UpdateFeatureUseCase';
 import { DeleteFeatureUseCase } from './feature/DeleteFeatureUseCase';
 import { VertexEditUseCase } from './feature/VertexEditUseCase';
 // import { IPolygonEditService } from '../services/IPolygonEditService'; // リングベース移行後
-import { IdGenerationService } from '../services/IdGenerationService'; // ★ IdGenerationService をインポート
+import { IdGenerationService } from '../services/IdGenerationService'; // IdGenerationService をインポート
 
 /**
  * 地理オブジェクト編集のファサードユースケース
@@ -20,17 +20,17 @@ export class EditFeatureUseCase {
    * @param {GeometryService} geometryService
    * @param {LayerService} layerService
    * @param {IPolygonEditService} polygonEditService - ポリゴン編集サービス (リングベース移行後)
-   * @param {IdGenerationService} idGenerationService - ID生成サービス ★ 追加
+   * @param {IdGenerationService} idGenerationService - ID生成サービス
    */
-  constructor(worldRepository, geometryService, layerService, polygonEditService, idGenerationService) { // ★ idGenerationService を引数に追加
+  constructor(worldRepository, geometryService, layerService, polygonEditService, idGenerationService) { // idGenerationService を引数に追加
     this._worldRepository = worldRepository;
     this._geometryService = geometryService;
     this._layerService = layerService;
     this._polygonEditService = polygonEditService;
-    this._idGenerationService = idGenerationService; // ★ 保持
+    this._idGenerationService = idGenerationService; 
 
     // 共通ヘルパー関数をここで保持または生成
-    this._generateIdFunc = this._generateId.bind(this); // ★ _generateId は内部で _idGenerationService を使う
+    this._generateIdFunc = this._generateId.bind(this); // _generateId は内部で _idGenerationService を使う
     this._processGeometryFunc = this._processGeometry.bind(this);
     this._getVerticesFromIdsFunc = this._getVerticesFromIds.bind(this);
     this._cleanupUnusedVerticesFunc = this._cleanupUnusedVertices.bind(this);
@@ -113,7 +113,7 @@ export class EditFeatureUseCase {
    * @private
    */
   _generateId(type) {
-    // ★ IdGenerationService のメソッドを呼び出す
+    // IdGenerationService のメソッドを呼び出す
     return this._idGenerationService.generateId(type);
   }
 
@@ -133,7 +133,7 @@ export class EditFeatureUseCase {
       processedGeometry.vertexIds = processedGeometry.vertexIds || [];
       for (const vertex of geometry.vertices) {
           if(vertex.x === undefined || vertex.y === undefined) continue;
-          const vertexId = this._generateId('vertex'); // ★ 内部メソッド経由でIdGenerationServiceを利用
+          const vertexId = this._generateId('vertex'); // 内部メソッド経由でIdGenerationServiceを利用
           processedGeometry.vertexIds.push(vertexId);
           world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
           verticesChanged = true;
@@ -148,7 +148,7 @@ export class EditFeatureUseCase {
         const holeIds = [];
         for (const vertex of hole) {
             if(vertex.x === undefined || vertex.y === undefined) continue;
-            const vertexId = this._generateId('vertex'); // ★
+            const vertexId = this._generateId('vertex');
             holeIds.push(vertexId);
             world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
             verticesChanged = true;
@@ -164,7 +164,7 @@ export class EditFeatureUseCase {
          const newSubPolygonVertexIds = [];
          for (const vertex of geometry.newSubPolygonVertices) {
               if(vertex.x === undefined || vertex.y === undefined) continue;
-              const vertexId = this._generateId('vertex'); // ★
+              const vertexId = this._generateId('vertex');
               newSubPolygonVertexIds.push(vertexId);
               world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
               verticesChanged = true;
@@ -181,7 +181,7 @@ export class EditFeatureUseCase {
              const holeIds = [];
              for (const vertex of hole) {
                  if(vertex.x === undefined || vertex.y === undefined) continue;
-                 const vertexId = this._generateId('vertex'); // ★
+                 const vertexId = this._generateId('vertex');
                  holeIds.push(vertexId);
                  world.vertices.push({ id: vertexId, x: vertex.x, y: vertex.y });
                  verticesChanged = true;
@@ -214,7 +214,7 @@ export class EditFeatureUseCase {
            if (!f || typeof f !== 'object') return;
            const isPolygon = f instanceof Polygon || f.constructor?.name === 'Polygon';
            if (f.vertexIds) f.vertexIds.forEach(id => allUsedVertexIds.add(id));
-           if (isPolygon && f.rings && Array.isArray(f.rings)) { // ★ リングベースのポリゴン対応
+           if (isPolygon && f.rings && Array.isArray(f.rings)) { // リングベースのポリゴン対応
                f.rings.forEach(ring => {
                    if (ring.vertexIds) ring.vertexIds.forEach(id => allUsedVertexIds.add(id));
                });

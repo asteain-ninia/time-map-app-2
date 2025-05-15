@@ -303,7 +303,7 @@ export class MapViewInteractionLogic {
      const insideRings = [];
      for (const ring of polygon.rings) {
        const verts = getVertices(ring.vertexIds);
-       // ★ GeometryService の isPointInPolygon を使用 (includeBoundary=false)
+       // GeometryService の isPointInPolygon を使用 (includeBoundary=false)
        if (verts.length >= 3 &&
            this._geometryService.isPointInPolygon(point, verts, false)) {
          insideRings.push(ring);
@@ -315,12 +315,12 @@ export class MapViewInteractionLogic {
        return { type: 'outside', ringId: null, nestingLevel: 0 };
      }
 
-     // ★ 最も内側のリングを取得 (包含リストの最後)
+     //    最も内側のリングを取得 (包含リストの最後)
      //    ただし、このリングIDがネストレベルに対して適切かは保証されないため注意
      //    (例: 複数の独立した飛び地に含まれる場合など。本来はより詳細な分析が必要)
      //    今回は簡易的に最後のリングIDを使用する
      const innermostRing = insideRings[nestingLevel - 1];
-     // ★ ネストレベルの偶奇で判定
+     // ネストレベルの偶奇で判定
      const isInsideOuter = nestingLevel % 2 === 1; // 奇数: 塗りつぶし領域
 
      return {

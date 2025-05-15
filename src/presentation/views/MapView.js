@@ -93,7 +93,7 @@ export class MapView {
     // pointer-events: auto でマウスイベントを受け取る
     this._mapOverlay.style.cssText = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: auto; cursor: default;';
     this._mapElement.appendChild(this._mapOverlay);
-    // ★ EventHandlerにOverlay要素への参照を渡す
+    // EventHandlerにOverlay要素への参照を渡す
     this._eventHandler._mapOverlay = this._mapOverlay;
 
     // アクションボタン（確定/キャンセル）のコンテナ作成

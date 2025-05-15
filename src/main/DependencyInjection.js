@@ -14,10 +14,10 @@ import { LayerService } from '../domain/services/LayerService';
 
 import { IdGenerationService } from '../application/services/IdGenerationService';
 // --- History関連サービス ---
-import { HistoryStackManager } from '../application/services/history/HistoryStackManager.js'; // ★追加
-import { HistorySerializer } from '../application/services/history/HistorySerializer.js';   // ★追加
-import { OperationEngine } from '../application/services/history/OperationEngine.js';       // ★追加
-import { HistoryService } from '../application/services/HistoryService.js';                 // ★追加 (ファサード)
+import { HistoryStackManager } from '../application/services/history/HistoryStackManager.js';
+import { HistorySerializer } from '../application/services/history/HistorySerializer.js';
+import { OperationEngine } from '../application/services/history/OperationEngine.js';
+import { HistoryService } from '../application/services/HistoryService.js';
 
 import { EditFeatureUseCase } from '../application/usecases/EditFeatureUseCase';
 import { IPolygonEditService } from '../application/services/IPolygonEditService';
@@ -29,7 +29,7 @@ import { UpdateProjectSettingsUseCase } from '../application/usecases/UpdateProj
 
 import { MapViewModel } from '../presentation/view-models/MapViewModel';
 import { TimelineViewModel } from '../presentation/view-models/TimelineViewModel';
-import { EditingViewModel } from '../presentation/view-models/EditingViewModel'; // ★コンストラクタ変更に対応
+import { EditingViewModel } from '../presentation/view-models/EditingViewModel';
 
 import { MapView } from '../presentation/views/MapView';
 import { TimelineView } from '../presentation/views/TimelineView';

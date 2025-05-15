@@ -25,14 +25,14 @@ export class MapViewModel {
     manageLayersUseCase,
     geometryService,
     eventBus,
-    updateProjectSettingsUseCase // 追加
+    updateProjectSettingsUseCase
   ) {
     this._editFeatureUseCase = editFeatureUseCase;
     this._navigateTimeUseCase = navigateTimeUseCase;
     this._manageLayersUseCase = manageLayersUseCase;
     this._geometryService = geometryService;
     this._eventBus = eventBus;
-    this._updateProjectSettingsUseCase = updateProjectSettingsUseCase; // 追加
+    this._updateProjectSettingsUseCase = updateProjectSettingsUseCase
 
     // マップの状態
     this._world = null;
@@ -112,7 +112,7 @@ export class MapViewModel {
 
         this._selectedVertexIds.forEach(id => {
             if (currentVertexIds.has(id)) {
-                // ★ この頂点が現在表示中の地物のいずれかに属しているかチェック (リングベース対応)
+                // この頂点が現在表示中の地物のいずれかに属しているかチェック (リングベース対応)
                  const vertexIsVisible = this._features.some(f => {
                      if (f instanceof DomainPolygon) {
                          return f.rings?.some(ring => ring.vertexIds.includes(id));
@@ -324,7 +324,7 @@ export class MapViewModel {
             // この頂点が、非表示になったレイヤー *以外* の、現在表示されている地物に属しているか
             const belongsToOtherVisibleLayerFeature = this._features.some(f =>
                 f.layerId !== layerId && // このレイヤー以外で
-                // ★ リングベースで頂点が含まれるかチェック
+                // リングベースで頂点が含まれるかチェック
                 ( (f instanceof DomainPolygon && f.rings?.some(r => r.vertexIds.includes(vertexId))) ||
                   ((f instanceof DomainLine || f instanceof DomainPoint) && f.vertexIds?.includes(vertexId)) )
             );
@@ -361,7 +361,7 @@ export class MapViewModel {
             x: event.newPosition.x,
             y: event.newPosition.y
         };
-        // ★ world.vertices 配列自体の参照は変えない
+        // world.vertices 配列自体の参照は変えない
     }
 
     // ホバー中の頂点も更新
@@ -371,9 +371,9 @@ export class MapViewModel {
     }
 
     // 地物の形状はインスタンスが不変なので、再描画時に新しい頂点座標が使われる
-    // ★ ViewModelの責務として、Worldデータが更新されたことを通知
+    // ViewModelの責務として、Worldデータが更新されたことを通知
     this._notifyObservers('world'); // worldオブジェクト自体は変わらないが、内部データ変更を通知
-    // ★ 描画更新のために features も通知する（内部の頂点座標が変わったため）
+    // 描画更新のために features も通知する（内部の頂点座標が変わったため）
     this._notifyObservers('features');
   }
 
@@ -399,7 +399,7 @@ export class MapViewModel {
     }
 
     // World内の頂点リストからも削除 (UseCaseで削除済みのはずだが念のため同期)
-    // ★ world.vertices 配列自体の参照が変わるように filter を使う
+    // world.vertices 配列自体の参照が変わるように filter を使う
     const verticesBefore = this._world.vertices.length;
     this._world.vertices = this._world.vertices.filter(v => !deletedIdsSet.has(v.id));
     const verticesAfter = this._world.vertices.length;
@@ -420,7 +420,7 @@ export class MapViewModel {
     if (verticesBefore !== verticesAfter) {
         this._notifyObservers('world');
     }
-    // ★ 表示地物リストも再計算が必要 (頂点削除で地物が消える/変わる可能性があるため)
+    // 表示地物リストも再計算が必要 (頂点削除で地物が消える/変わる可能性があるため)
     this._loadFeaturesForCurrentTime();
   }
 
@@ -464,7 +464,7 @@ export class MapViewModel {
          return;
     }
 
-    // ★ 頂点が現在表示中の地物に属しているか確認 (リングベース対応)
+    // 頂点が現在表示中の地物に属しているか確認 (リングベース対応)
     const isVertexVisible = this._features.some(f => {
          if (f instanceof DomainPolygon) {
              return f.rings?.some(ring => ring.vertexIds.includes(vertexId));
@@ -489,7 +489,7 @@ export class MapViewModel {
         newSelectedVertexIds.delete(vertexId); // 解除
         vertexSelectionChanged = true;
       } else {
-        newSelectedVertexIds.add(vertexId); // 追加
+        newSelectedVertexIds.add(vertexId);
         vertexSelectionChanged = true;
       }
     } else { // 単一選択
@@ -524,7 +524,7 @@ export class MapViewModel {
       let newHighlightedFeatureId = null;
       if (this._selectedVertexIds.size > 0) {
           const firstSelectedVertexId = this._selectedVertexIds.values().next().value;
-          // ★ 表示中の地物から探す (リングベース対応)
+          // 表示中の地物から探す (リングベース対応)
           const ownerFeature = this._features.find(f => {
                if (f instanceof DomainPolygon) {
                    return f.rings?.some(ring => ring.vertexIds.includes(firstSelectedVertexId));

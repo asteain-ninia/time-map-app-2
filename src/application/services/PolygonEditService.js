@@ -4,7 +4,7 @@ import { IPolygonEditService } from './IPolygonEditService.js';
 import { Polygon } from '../../domain/entities/Polygon.js';
 import { WorldRepository } from '../WorldRepository.js'; // 型チェック用
 import { GeometryService } from '../../domain/services/GeometryService.js';
-import { IdGenerationService } from './IdGenerationService.js'; // ★ IdGenerationService をインポート
+import { IdGenerationService } from './IdGenerationService.js'; // IdGenerationService をインポート
 
 /**
  * ポリゴン編集サービスの具象実装
@@ -168,7 +168,7 @@ export class PolygonEditService extends IPolygonEditService {
         throw new Error("Invalid ringData.parentId. Must be null or a string.");
     }
 
-    const newRingId = this._idGenerationService.generateId('ring'); // ★ IdGenerationService を利用
+    const newRingId = this._idGenerationService.generateId('ring'); // IdGenerationService を利用
     const newRing = {
         id: newRingId,
         vertexIds: [...ringData.vertexIds],

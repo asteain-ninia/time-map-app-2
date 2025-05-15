@@ -40,7 +40,7 @@ export class MapViewEventHandler {
    * イベントリスナーを設定
    */
   setupEventListeners() {
-    // ★ _mapOverlay が設定されてからリスナーを追加
+    // _mapOverlay が設定されてからリスナーを追加
     if (!this._mapOverlay) {
       console.error("MapViewEventHandler: mapOverlay is not set. Cannot setup event listeners.");
       return;
@@ -126,7 +126,7 @@ export class MapViewEventHandler {
         break;
       case 'edit':
         if (tool === 'add-hole') {
-          // ★ 穴/飛び地追加モードのクリック処理
+          // 穴/飛び地追加モードのクリック処理
           this._handleAddHoleOrEnclaveClick(worldPoint);
         } else { // 選択、移動など
             const clickedVertex = this._interactionLogic.findClosestVertex(worldPoint);
@@ -456,7 +456,7 @@ export class MapViewEventHandler {
               this._editingViewModel.deleteVertices(vertexIdsToDelete);
           } else if (selectedFeatureId) {
               // 地物選択中 -> 選択地物を削除
-              // ★ 削除前に地物データを取得する必要がある
+              // 削除前に地物データを取得する必要がある
               const featureToDelete = this._viewModel.getWorld()?.features.find(f => f.id === selectedFeatureId);
               if (featureToDelete) {
                   this._editingViewModel.deleteFeature(selectedFeatureId, featureToDelete);
@@ -569,7 +569,7 @@ export class MapViewEventHandler {
       } else if (locationInfo.type === 'inside_outer') { // ポリゴン外周の内側（穴の外側）の場合
         // 穴モードを開始
         this._editingViewModel.setAddingSubMode('hole');
-        // ★ 穴を追加する対象の外周リングIDを設定
+        // 穴を追加する対象の外周リングIDを設定
         this._editingViewModel.setTargetRingIdForHole(locationInfo.ringId);
         // 最初の点を追加
         this.handleAddPoint(worldPoint);
@@ -577,7 +577,7 @@ export class MapViewEventHandler {
       } else if (locationInfo.type === 'outside' || locationInfo.type === 'inside_hole') { // ポリゴン外部または穴内部の場合
         // 飛び地モードを開始
         this._editingViewModel.setAddingSubMode('enclave');
-        // ★ 飛び地の場合、ターゲットリングIDは不要なのでnullを設定
+        // 飛び地の場合、ターゲットリングIDは不要なのでnullを設定
         this._editingViewModel.setTargetRingIdForHole(null);
         // 最初の点を追加
         this.handleAddPoint(worldPoint);

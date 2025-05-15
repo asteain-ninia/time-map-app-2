@@ -28,7 +28,7 @@ export class SidebarView {
     this._layersTabElement = null;
     this._featuresTabElement = null;
     this._propertiesTabElement = null;
-    this._projectSettingsTabElement = null; // 追加
+    this._projectSettingsTabElement = null;
 
     // 現在のタブ
     this._currentTab = 'layers';
@@ -59,7 +59,7 @@ export class SidebarView {
     this._createLayersTab();
     this._createFeaturesTab();
     this._createPropertiesTab();
-    this._createProjectSettingsTab(); // 追加
+    this._createProjectSettingsTab();
 
     // サイドバーコンテナに追加
     this._container.appendChild(this._sidebarElement);
@@ -231,7 +231,7 @@ export class SidebarView {
       case 'properties':
         this._propertiesTabElement.style.display = 'none';
         break;
-      case 'projectSettings': // 追加
+      case 'projectSettings':
         this._projectSettingsTabElement.style.display = 'none';
         break;
     }
@@ -250,7 +250,7 @@ export class SidebarView {
         this._propertiesTabElement.style.display = 'block';
         this._updatePropertiesTab();
         break;
-      case 'projectSettings': // 追加
+      case 'projectSettings':
         this._projectSettingsTabElement.style.display = 'block';
         this._updateProjectSettingsTab();
         break;
@@ -279,7 +279,7 @@ export class SidebarView {
   _onMapViewModelChanged(type, data) {
     // タイプに応じた処理
     switch (type) {
-      case 'projectSettingsChanged': // 追加
+      case 'projectSettingsChanged':
       case 'world':
       case 'layers':
         if (this._currentTab === 'layers') {

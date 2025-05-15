@@ -89,7 +89,7 @@ export class MapViewRendererHelper {
                 const vertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
                 drawHighlightLine(vertices, style);
             } else if (feature instanceof DomainPolygon) {
-                // ★ リングベースで描画
+                // リングベースで描画
                 if (feature.rings && Array.isArray(feature.rings)) {
                     feature.rings.forEach(ring => {
                          const ringVertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
@@ -110,7 +110,7 @@ export class MapViewRendererHelper {
                 const vertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
                 drawHighlightLine(vertices, style);
             } else if (feature instanceof DomainPolygon) {
-                 // ★ リングベースで描画
+                 // リングベースで描画
                  if (feature.rings && Array.isArray(feature.rings)) {
                     feature.rings.forEach(ring => {
                          const ringVertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
@@ -182,7 +182,7 @@ export class MapViewRendererHelper {
                 if (elem) this._dragPreviewElements.push(elem);
             }
         } else if (feature instanceof DomainPolygon) {
-            // ★ リングベースで仮形状を描画
+            // リングベースで仮形状を描画
             if (feature.rings && Array.isArray(feature.rings)) {
                 feature.rings.forEach(ring => {
                     const vertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);

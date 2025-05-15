@@ -89,7 +89,7 @@ export class VertexEditUseCase {
                         // リングが無効になった -> このリングは削除対象とする
                         ringsToDeleteIds.push(ring.id);
                         polygonUpdated = true; // ポリゴン形状が変更された
-                        // ★注意: このリングが他の穴リングの親だった場合の処理は
+                        // 注意: このリングが他の穴リングの親だった場合の処理は
                         // PolygonEditService.removeRingFromPolygon の責務とする。
                         // ここでは単純に無効なリングを除外する。
                         // 子リングを持つリングを削除しようとするとremoveRingFromPolygonでエラーになる想定。
@@ -120,7 +120,7 @@ export class VertexEditUseCase {
                      }
                  });
                  // 次に無効になったリングを削除 (インスタンス更新)
-                 // ★注意: 依存関係チェックは Polygon.withRemovedRing が行う
+                 // 注意: 依存関係チェックは Polygon.withRemovedRing が行う
                 for (const ringId of ringsToDeleteIds) {
                      try {
                          tempPolygon = tempPolygon.withRemovedRing(ringId);

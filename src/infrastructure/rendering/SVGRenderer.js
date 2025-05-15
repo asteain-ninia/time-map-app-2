@@ -21,9 +21,9 @@ export class SVGRenderer {
     this._gridGroup = null;
     this._featuresGroup = null;
     this._backgroundGroup = null; // 背景グループの参照を追加
-    this._originalBackgroundContent = null; // 追加: 元の背景SVG内容を保持
+    this._originalBackgroundContent = null; // 元の背景SVG内容を保持
     this._backgroundCopies = [null, null, null]; // [left, center, right]
-    this._backgroundTransform = { // 追加: 背景の基準変換情報
+    this._backgroundTransform = { // 背景の基準変換情報
         scaleX: 1,
         scaleY: 1,
         translateX: 0,
@@ -56,10 +56,10 @@ export class SVGRenderer {
     this._svg.setAttribute("height", this._options.height);
     this._svg.setAttribute("viewBox", `0 0 ${this._options.width} ${this._options.height}`);
     this._svg.style.display = "block";
-    this._svg.style.position = "absolute";  // 追加: 絶対配置に
-    this._svg.style.top = "0";              // 追加: 上端に配置
-    this._svg.style.left = "0";             // 追加: 左端に配置
-    this._svg.style.zIndex = "5";           // 追加: オーバーレイより下に配置
+    this._svg.style.position = "absolute";  // 絶対配置に
+    this._svg.style.top = "0";              // 上端に配置
+    this._svg.style.left = "0";             // 左端に配置
+    this._svg.style.zIndex = "5";           // オーバーレイより下に配置
 
     // グループ要素を作成
     this._defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
@@ -483,7 +483,7 @@ _renderGrid(viewport, gridSettings) {
     // パスデータのY座標を反転
     let pathData = `M ${this._toScreenX(lineVertices[0].x, viewport)} ${-this._toScreenY(lineVertices[0].y, viewport)}`;
     for (let i = 1; i < lineVertices.length; i++) {
-      pathData += ` L ${this._toScreenX(lineVertices[i].x, viewport)} ${-this._toScreenY(lineVertices[i].y, viewport)}`; // ★ Y座標反転
+      pathData += ` L ${this._toScreenX(lineVertices[i].x, viewport)} ${-this._toScreenY(lineVertices[i].y, viewport)}`; // Y座標反転
     }
 
     pathElement.setAttribute("d", pathData);
@@ -1014,7 +1014,7 @@ toWorldY(svgY, viewport) {
  * @param {string} svgContent - SVG形式の地図内容
  */
   loadBackgroundMap(svgContent) {
-    // ★ 変更: 既存の背景コピーの内容をクリア
+    // 既存の背景コピーの内容をクリア
     this._backgroundCopies.forEach(copyGroup => {
         while (copyGroup.firstChild) {
             copyGroup.removeChild(copyGroup.firstChild);

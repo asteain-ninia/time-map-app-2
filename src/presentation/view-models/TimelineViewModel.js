@@ -27,7 +27,7 @@ export class TimelineViewModel {
     this._eventBus.subscribe('ProjectSettingsLoaded', this._onProjectSettingsLoaded.bind(this));
     // プロジェクト設定が変更された場合も対応
     this._eventBus.subscribe('projectSettingsChanged', this._onProjectSettingsLoaded.bind(this));
-    this._eventBus.subscribe('ProjectSettingsUpdated', this._onProjectSettingsLoaded.bind(this)); // 追加
+    this._eventBus.subscribe('ProjectSettingsUpdated', this._onProjectSettingsLoaded.bind(this));
 
 
   }
