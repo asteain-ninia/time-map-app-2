@@ -100,4 +100,17 @@ export class HistoryStackManager {
   getRedoStackLength() {
     return this._redoStack.length;
   }
+
+  /**
+   * Redo操作の結果としてアンドゥスタックに操作を追加する。
+   * このメソッドはリドゥスタックをクリアしない。
+   * @param {Object} operation - アンドゥスタックに追加する操作オブジェクト
+   */
+  pushUndoFromRedo(operation) {
+    this._undoStack.push(operation);
+    if (this._undoStack.length > this._maxHistorySize) {
+      this._undoStack.shift(); // 古いものから削除
+    }
+    // clearRedoStack() は呼び出さない
+  }
 }

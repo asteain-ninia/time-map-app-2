@@ -63,7 +63,7 @@ export class HistoryService {
 
     try {
       const resultInfo = await this._operationEngine.execute(operation);
-      this._stackManager.pushUndo(operation);
+      this._stackManager.pushUndoFromRedo(operation);
       this._publishStandardEvents(resultInfo); // 結果情報を渡す
     } catch (error) {
       this._stackManager.pushRedo(operation);
