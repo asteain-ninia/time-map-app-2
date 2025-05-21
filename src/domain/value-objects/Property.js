@@ -1,23 +1,44 @@
+// src/domain/value-objects/Property.js
+import { TimePoint } from './TimePoint.js'; // TimePoint をインポート
+
 /**
  * 時間依存の属性を表す不変オブジェクト
+ * (現在の単純化モデルでは、Feature._properties 配列は常に要素数1であり、
+ *  このPropertyが地物の単一の状態と存在期間を定義する)
  */
 export class Property {
   /**
    * プロパティオブジェクトを作成
-   * @param {TimePoint} timePoint - 適用開始時点 (このプロパティ定義が有効になる時間)
+   * @param {TimePoint} timePoint - このプロパティ定義が有効になる時間。現在の単純化モデルでは、通常 startTime と同じ値、または startTime がない場合はデフォルトの TimePoint(0) が期待される。
    * @param {string} name - 名称
    * @param {string} description - 説明
    * @param {Object} [attributes={}] - 追加属性
-   * @param {TimePoint} [startTime=null] - このプロパティが示すエンティティ状態の存在開始時点（省略可）
-   * @param {TimePoint} [endTime=null] - このプロパティが示すエンティティ状態の存在終了時点（省略可、排他的）
+   * @param {TimePoint | null} [startTime=null] - このプロパティが示すエンティティ状態の存在開始時点（省略可）
+   * @param {TimePoint | null} [endTime=null] - このプロパティが示すエンティティ状態の存在終了時点（省略可、排他的）
    */
   constructor(timePoint, name, description, attributes = {}, startTime = null, endTime = null) {
-    this._timePoint = timePoint;
+    if (!timePoint && startTime instanceof TimePoint) {
+        this._timePoint = startTime;
+    } else if (!timePoint && !(startTime instanceof TimePoint)) {
+        console.warn("Property constructor: timePoint is invalid and startTime is also invalid or not provided. Defaulting timePoint to year 0.", {name, timePointData: timePoint, startTimeData: startTime});
+        this._timePoint = new TimePoint(0);
+    } else if (!(timePoint instanceof TimePoint)) {
+        // timePoint が TimePoint インスタンスでない場合 (例: プレーンオブジェクト)、startTime を使うか、デフォルト値にする
+        console.warn("Property constructor: timePoint is not a TimePoint instance. Using startTime or defaulting to year 0.", {name, timePointData: timePoint, startTimeData: startTime});
+        if (startTime instanceof TimePoint) {
+            this._timePoint = startTime;
+        } else {
+            this._timePoint = new TimePoint(0);
+        }
+    }
+    else {
+        this._timePoint = timePoint;
+    }
     this._name = name;
     this._description = description;
     this._attributes = { ...attributes };
-    this._startTime = startTime;
-    this._endTime = endTime;
+    this._startTime = startTime instanceof TimePoint ? startTime : null;
+    this._endTime = endTime instanceof TimePoint ? endTime : null;
     Object.freeze(this._attributes);
     Object.freeze(this);
   }
@@ -104,15 +125,11 @@ export class Property {
    * @returns {boolean} プロパティが有効ならtrue
    */
   isActiveAt(timePoint) {
-    // プロパティ定義自体のtimePointは有効期間に関係しない
-    // if (timePoint.isBefore(this._timePoint)) return false;
-
     // 開始時点が設定されていて、それよりも前なら非アクティブ
     if (this._startTime && timePoint.isBefore(this._startTime)) return false;
 
     // 終了時点が設定されていて、それと等しいかそれよりも後なら非アクティブ (endTimeは排他的)
     if (this._endTime && !timePoint.isBefore(this._endTime)) return false;
-    // 上記は以下と同じ意味: if (this._endTime && (timePoint.isAfter(this._endTime) || timePoint.equals(this._endTime))) return false;
 
     return true;
   }

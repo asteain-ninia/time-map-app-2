@@ -200,7 +200,7 @@ export class SidebarView {
    * プロジェクト設定タブの初期DOM構造を作成
    * @private
    */
-  _createProjectSettingsTab() { // 新規追加
+  _createProjectSettingsTab() {
     this._projectSettingsTabElement = document.createElement('div');
     this._projectSettingsTabElement.className = 'sidebar-tab-content';
     this._projectSettingsTabElement.style.cssText = 'flex: 1; overflow: auto; padding: 10px; display: none;';
@@ -258,7 +258,7 @@ export class SidebarView {
 
     // タブの状態を更新
     const tabs = this._sidebarElement.querySelector('.sidebar-tabs').children;
-    const tabIds = ['layers', 'features', 'properties', 'projectSettings']; // 更新
+    const tabIds = ['layers', 'features', 'properties', 'projectSettings'];
     for (let i = 0; i < tabs.length; i++) {
       if (i === tabIds.indexOf(tabId)) {
         tabs[i].style.backgroundColor = '#ddd';
@@ -327,7 +327,7 @@ export class SidebarView {
    * プロジェクト設定タブの内容を更新 (フォームを再構築)
    * @private
    */
-  _updateProjectSettingsTab() { // 新規追加
+  _updateProjectSettingsTab() {
       const container = this._projectSettingsTabElement.querySelector('.project-settings-container');
       if (!container) return;
       container.innerHTML = ''; // 既存内容をクリア
@@ -459,8 +459,8 @@ export class SidebarView {
           if (isNaN(newSettings.gridInterval) || newSettings.gridInterval <= 0) {
               alert("グリッド間隔は正の数値で入力してください。"); return;
           }
-           if (newSettings.gridColor && !/^#[0-9a-fA-F]{6}$/.test(newSettings.gridColor)) {
-               alert("グリッド色はHEXカラーコード (例: #RRGGBB) で入力してください。"); return;
+           if (newSettings.gridColor && !/^#[0-9a-fA-F]{6}$/.test(newSettings.gridColor) && !/^#[0-9a-fA-F]{3}$/.test(newSettings.gridColor)) { // 3桁HEXも許容する場合
+               alert("グリッド色は有効なHEXカラーコード (例: #RRGGBB または #RGB) で入力してください。"); return;
            }
           if (isNaN(newSettings.gridOpacity) || newSettings.gridOpacity < 0 || newSettings.gridOpacity > 1) {
               alert("グリッド不透明度は0から1の間で入力してください。"); return;
@@ -726,8 +726,10 @@ export class SidebarView {
     idRow.appendChild(typeLabel);
     propertiesContainer.appendChild(idRow);
 
-    // 現在のプロパティを取得
-    const currentProperty = selectedFeature.getPropertyAt(currentTime);
+    // Featureが持つ唯一のPropertyを取得 (Simple化モデルに基づく)
+    const currentProperty = (selectedFeature.properties && selectedFeature.properties.length > 0)
+                            ? selectedFeature.properties[0]
+                            : null;
 
     // プロパティフォームの作成
     const form = document.createElement('form');
@@ -895,9 +897,8 @@ export class SidebarView {
    * @private
    */
   _showAddLayerDialog() {
-    // プロンプトをダイアログの代わりに実装
-    const container = this._sidebarElement.querySelector('.layers-container');
-
+    const container = this._layersTabElement.querySelector('.layers-container');
+    
     // 既存の入力フォームがあれば削除
     const existingForm = container.querySelector('.layer-input-form');
     if (existingForm) {
@@ -961,8 +962,8 @@ export class SidebarView {
    * @private
    */
   _showEditLayerDialog(layer) {
-    const container = this._sidebarElement.querySelector('.layers-container');
-
+    const container = this._layersTabElement.querySelector('.layers-container');
+    
     // 既存の入力フォームがあれば削除
     const existingForm = container.querySelector('.layer-input-form');
     if (existingForm) {
@@ -1035,8 +1036,8 @@ export class SidebarView {
    */
   _showDeleteLayerConfirm(layer) {
     // 簡易的な確認ダイアログ
-    const confirm = window.confirm(`レイヤー「${layer.name}」を削除してもよろしいですか？`);
-    if (confirm) {
+    const confirmResult = window.confirm(`レイヤー「${layer.name}」を削除してもよろしいですか？`);
+    if (confirmResult) {
       this._deleteLayer(layer.id);
     }
   }
@@ -1052,16 +1053,15 @@ export class SidebarView {
     const name = property ? property.name : '名称なし';
 
     // 簡易的な確認ダイアログ
-    const confirm = window.confirm(`地物「${name}」を削除してもよろしいですか？`);
-    if (confirm) {
+    const confirmResult = window.confirm(`地物「${name}」を削除してもよろしいですか？`);
+    if (confirmResult) {
       // MapViewModel 経由ではなく、直接 EditingViewModel を呼び出すべき
       // DI が正しく設定されていれば this._editingViewModel が使える
       if (this._editingViewModel) {
+        // Featureインスタンスを渡す (既に selectedFeature として取得されているはず)
         this._editingViewModel.deleteFeature(feature.id, feature);
       } else {
         console.error("EditingViewModel is not available in SidebarView.");
-        // フォールバックとして MapViewModel を使う（非推奨）
-        this._mapViewModel.deleteFeature(feature.id);
       }
     }
   }
@@ -1137,56 +1137,36 @@ export class SidebarView {
       console.error("プロパティ保存時に地物が選択されていません。");
       return;
     }
-    const currentTime = this._mapViewModel.getCurrentTime();
 
-    // 古いプロパティ配列を複製（変更検出のため）
-    // ※ EditingViewModel側で取得するため、ここでは不要
+    // Property の _timePoint は、_startTime と同じ値にする。
+    // _startTime が null の場合は、Property のコンストラクタ内でフォールバック (0年) される。
+    const propertyTimePoint = startYear !== null ? new TimePoint(startYear) : null;
+                                //  ^ startTime が null であれば、timePoint も null で Property コンストラクタに渡す。
+                                //    コンストラクタ側で startTime が null なら timePoint も 0年 にフォールバックする。
 
-    // TimePoint インスタンスを生成
-    const currentTp = new TimePoint(currentTime.year, currentTime.month, currentTime.day);
     const startTp = startYear !== null ? new TimePoint(startYear) : null;
     const endTp = endYear !== null ? new TimePoint(endYear) : null;
 
-    // 新しい Property インスタンスを作成
-    const newProperty = new Property(
-      currentTp,
-      name || '名称未設定', // 名前が空の場合のデフォルト値
-      description || '',   // 説明が空の場合のデフォルト値
-      { category: category || 'default' }, // カテゴリ属性、空の場合のデフォルト値
+    const newPropertyInstance = new Property(
+      propertyTimePoint,
+      name || '名称未設定',
+      description || '',
+      { category: category || 'default' },
       startTp,
       endTp
     );
 
-    // 既存のプロパティ配列から、現在の時点のプロパティを置き換えるか、新しいプロパティを追加する
-    // (元のプロパティ配列を取得する必要がある)
-    const existingProperties = [...selectedFeature.properties]; // 既存のプロパティをコピー
-    let newPropertiesInstances;
-    const existingPropIndex = existingProperties.findIndex(prop => prop.timePoint.equals(currentTp));
-
-    if (existingPropIndex !== -1) {
-      // 現在の時点に既にプロパティが存在する場合は置き換え
-      newPropertiesInstances = [...existingProperties];
-      newPropertiesInstances[existingPropIndex] = newProperty;
-    } else {
-      // 新しい時点のプロパティとして追加し、時間でソート
-      newPropertiesInstances = [...existingProperties, newProperty];
-      newPropertiesInstances.sort((a, b) => {
-        if (a.timePoint.isBefore(b.timePoint)) return -1;
-        if (b.timePoint.isBefore(a.timePoint)) return 1;
-        return 0;
-      });
-    }
+    const newPropertiesArray = [newPropertyInstance];
 
     try {
-      // EditingViewModel の updateFeatureProperties を呼び出す
       if (!this._editingViewModel) {
-        console.error("EditingViewModel is not available in SidebarView. DI might be incorrect.");
+        console.error("EditingViewModel is not available in SidebarView.");
         alert("エラー: 編集機能が利用できません。");
         return;
       }
-      await this._editingViewModel.updateFeatureProperties(featureId, newPropertiesInstances);
-
+      await this._editingViewModel.updateFeatureProperties(featureId, newPropertiesArray);
       alert('プロパティを保存しました');
+      this._updatePropertiesTab(); // 保存後にプロパティタブを再描画
     } catch (error) {
       console.error('プロパティの保存に失敗しました', error);
       alert('プロパティの保存に失敗しました: ' + error.message);
@@ -1243,16 +1223,10 @@ export class SidebarView {
       let category = property.getAttribute('category');
 
       if (!category) {
-        // 地物タイプに基づくデフォルトカテゴリ
-        if (feature.constructor.name === 'Point') {
-          category = 'point';
-        } else if (feature.constructor.name === 'Line') {
-          category = 'line';
-        } else if (feature.constructor.name === 'Polygon') {
-          category = 'polygon';
-        } else {
-          category = 'other';
-        }
+        if (feature.constructor.name === 'Point') category = 'point';
+        else if (feature.constructor.name === 'Line') category = 'line';
+        else if (feature.constructor.name === 'Polygon') category = 'polygon';
+        else category = 'other';
       }
 
       // カテゴリ名の表示用変換
@@ -1295,7 +1269,7 @@ export class SidebarView {
       'line': '線',
       'polygon': '面',
       'other': 'その他',
-      'default': 'デフォルト' // 'default' も追加
+      'default': 'デフォルト'
     };
 
     return categoryMap[category] || category;

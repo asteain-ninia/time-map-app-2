@@ -51,6 +51,7 @@ export class UpdateFeatureUseCase {
    * 既存の地理オブジェクトを更新
    * @param {string} featureId - 更新するオブジェクトのID
    * @param {Object} updates - 更新内容 { properties?: Property[], geometry?: Object, layerId?: string }
+   *                         properties は要素数1の Property インスタンスの配列を期待。
    *                         geometry (Polygonの場合): {
    *                           newRingCoordinates?: { points: {x,y}[], isOuter: boolean, parentId?: string }[],
    *                           existingRingData?: { id: string, vertexIds: string[], isOuter: boolean, parentId?: string }[],
@@ -71,14 +72,16 @@ export class UpdateFeatureUseCase {
     let currentFeature = world.features[featureIndex];
     let updatedFeature = currentFeature;
     let worldVerticesUpdated = false; 
-    let newlyAddedVerticesDataForHistory = []; // 新規リング追加時に生成された頂点データ
+    let newlyAddedVerticesDataForHistory = [];
 
     // プロパティ更新
     if (updates.properties) {
-      if (!Array.isArray(updates.properties) || !updates.properties.every(p => p instanceof Property)) {
-        throw new Error("Invalid properties format: must be an array of Property instances.");
+      // updates.properties が要素数1の Property インスタンスの配列であることをバリデーション
+      if (!Array.isArray(updates.properties) || updates.properties.length !== 1 || !(updates.properties[0] instanceof Property)) {
+        throw new Error("Invalid properties format for UpdateFeatureUseCase: must be an array containing a single Property instance. Received:" + JSON.stringify(updates.properties));
       }
       if (updatedFeature && typeof updatedFeature.withProperties === 'function') {
+        // Feature.withProperties がドメイン層で修正され、要素数1の配列を正しく処理することを期待
         updatedFeature = updatedFeature.withProperties(updates.properties);
       } else {
         throw new Error(`Invalid feature object or missing withProperties method for ID: ${featureId}`);
@@ -110,10 +113,9 @@ export class UpdateFeatureUseCase {
             if (Array.isArray(geometryUpdates.newRingCoordinates)) {
                 for (const ringCoordData of geometryUpdates.newRingCoordinates) {
                     const tempGeometry = { vertices: ringCoordData.points };
-                    const processed = this._processGeometry(tempGeometry, world); // world.vertices が変更される
+                    const processed = this._processGeometry(tempGeometry, world);
                     worldVerticesUpdated = true; 
 
-                    // 生成された頂点のデータを収集 (プレーンオブジェクト)
                     if (processed.vertexIds) {
                         const worldVerticesMap = new Map(world.vertices.map(v => [v.id, v]));
                         processed.vertexIds.forEach(id => {
@@ -131,7 +133,6 @@ export class UpdateFeatureUseCase {
             }
             if (Array.isArray(geometryUpdates.existingRingData)) {
                 for (const existingRing of geometryUpdates.existingRingData) {
-                    // existingRing.vertexIds が world.vertices に存在することは呼び出し元で保証される前提
                     polygonBeingUpdated = await editService.addRingWithId(polygonBeingUpdated.id, existingRing);
                 }
             }
@@ -145,8 +146,6 @@ export class UpdateFeatureUseCase {
         if (updates.geometry.vertices) {
             processedGeometry = this._processGeometry(updates.geometry, world);
             worldVerticesUpdated = true;
-            // Point/Line の頂点追加の場合も newlyAddedVerticesDataForHistory に追加する（必要であれば）
-            // 今回の修正はリング追加に限定するため、ここでは追加しない。
         }
         if (processedGeometry.vertexIds !== undefined) {
           if (updatedFeature && typeof updatedFeature.withVertexIds === 'function') {
@@ -181,7 +180,6 @@ export class UpdateFeatureUseCase {
         await this._worldRepository.saveWorld(world); 
     }
 
-    // 戻り値をオブジェクトに変更
     return { 
         feature: updatedFeature, 
         newlyAddedVerticesData: newlyAddedVerticesDataForHistory.length > 0 ? newlyAddedVerticesDataForHistory : undefined 

@@ -1,3 +1,12 @@
+// src/domain/entities/Feature.js
+import { TimePoint } from '../value-objects/TimePoint.js';
+import { Property } from '../value-objects/Property.js';
+// サブクラスのインポートを削除します。これにより循環参照が解消されます。
+// import { Point as DomainPoint } from './Point.js';
+// import { Line as DomainLine } from './Line.js';
+// import { Polygon as DomainPolygon } from './Polygon.js';
+
+
 /**
  * 地理オブジェクトの基底クラス
  */
@@ -6,19 +15,28 @@ export class Feature {
    * 地理オブジェクトを作成
    * @param {string} id - 一意のID
    * @param {string[]} vertexIds - 頂点IDの配列
-   * @param {Property[]} properties - 時間依存プロパティの配列
+   * @param {Property[]} properties - 時間依存プロパティの配列 (現在の単純化モデルでは要素数1を期待)
    * @param {string} layerId - 所属レイヤーID
    */
   constructor(id, vertexIds, properties, layerId) {
     this._id = id;
     this._vertexIds = [...vertexIds];
-    this._properties = [...properties];
+
+    if (Array.isArray(properties) && properties.length > 0 && properties[0] instanceof Property) {
+        this._properties = [properties[0]]; // 最初の有効なPropertyのみ格納
+    } else if (properties instanceof Property) { // 単一Propertyインスタンスが直接渡された場合
+        this._properties = [properties];
+    } else {
+        console.warn(`Feature constructor (id: ${id}): properties array is empty, invalid, or not a Property instance. Initializing with a default Property at year 0. Received:`, properties);
+        // フォールバックとして、0年から始まるデフォルトPropertyを生成
+        const defaultTimePoint = new TimePoint(0); // このTimePointは Propertyの_timePointと_startTimeに使われる
+        this._properties = [new Property(defaultTimePoint, "Default Name", "Default Description", {}, defaultTimePoint, null)];
+    }
     this._layerId = layerId;
 
-    // vertexIdsとpropertiesは変更可能だが、内部要素は不変
     Object.freeze(this._vertexIds);
-    Object.freeze(this._properties);
-
+    Object.freeze(this._properties); // properties 配列自体を凍結
+    // properties 配列の要素である Property インスタンスは、Propertyクラスのコンストラクタで既に凍結されている
   }
 
   /**
@@ -38,7 +56,7 @@ export class Feature {
   }
 
   /**
-   * 時間依存プロパティの配列を取得
+   * 時間依存プロパティの配列を取得 (現在の単純化モデルでは要素数1の配列)
    * @returns {Property[]} プロパティの配列
    */
   get properties() {
@@ -54,36 +72,18 @@ export class Feature {
   }
 
   /**
-   * 特定の時点でのプロパティを取得
+   * 特定の時点でのプロパティを取得 (現在の単純化モデルでは、唯一のプロパティが存在期間内かを返す)
    * @param {TimePoint} timePoint - 時点
    * @returns {Property|null} 適用されるプロパティまたはnull
    */
   getPropertyAt(timePoint) {
-    // 1. timePointにおいて有効なプロパティをフィルタリング
-    //    (isActiveAt は startTime/endTime のみで判定するよう修正済み)
-    const activeProperties = this._properties.filter(property =>
-      property.isActiveAt(timePoint)
-    );
-
-    // 2. 有効なプロパティがない場合は null を返す
-    if (activeProperties.length === 0) {
+    if (this._properties.length === 0) {
+      // このケースはコンストラクタのフォールバックにより通常発生しないはず
+      console.error(`Feature.getPropertyAt (id: ${this._id}): _properties array is empty.`);
       return null;
     }
-
-    // 3. 有効なプロパティの中から、最もtimePointが新しいもの(最も後から定義されたもの)を選択する
-    //    指定された timePoint とプロパティ定義の timePoint の前後関係は考慮しない。
-    let latestProperty = activeProperties[0]; // 暫定で最初のを設定
-    for (let i = 1; i < activeProperties.length; i++) {
-        const currentProperty = activeProperties[i];
-        // latestProperty の timePoint より currentProperty の timePoint が後なら更新
-        if (latestProperty.timePoint.isBefore(currentProperty.timePoint)) {
-            latestProperty = currentProperty;
-        }
-        // timePoint が同じ場合はどうするか？ -> 仕様上は同じ時点に複数の定義はない想定だが、
-        // もし存在した場合、現状では配列の後ろにある方が優先される。明確なルールが必要なら追加。
-    }
-
-    return latestProperty; // 最も後から定義された有効なプロパティを返す
+    const property = this._properties[0]; // 常に最初の（唯一の）Propertyを参照
+    return property.isActiveAt(timePoint) ? property : null;
   }
 
   /**
@@ -92,70 +92,66 @@ export class Feature {
    * @returns {boolean} オブジェクトが存在すればtrue
    */
   existsAt(timePoint) {
-    // getPropertyAtがnullでないかで判定
     return this.getPropertyAt(timePoint) !== null;
   }
 
   /**
    * 新しい頂点IDの配列で新インスタンスを作成
+   * 注意: このメソッドはサブクラスでオーバーライドされることを強く推奨します。
+   *       基底クラスの実装ではサブクラス固有のプロパティが失われる可能性があります。
    * @param {string[]} vertexIds - 新しい頂点IDの配列
-   * @returns {Feature} 新しい地理オブジェクト
+   * @returns {Feature} 新しいFeatureオブジェクト（サブクラスの型情報は失われる可能性がある）
    */
   withVertexIds(vertexIds) {
-    // サブクラスがオーバーライドする必要があるが、基底クラスでも動作するように
-    // this.constructor を使うことで、呼び出されたサブクラスのコンストラクタを呼ぶ
-    // ただし、サブクラスが追加の引数を必要とする場合は、サブクラスでのオーバーライドが必須
-    if (this.constructor === Feature) {
-        return new Feature(this._id, vertexIds, this._properties, this._layerId);
-    } else {
-        // サブクラスのインスタンスから呼ばれた場合、サブクラスのコンストラクタを期待
-        // これはサブクラスのオーバーライドに依存するため、警告を出すか、
-        // またはサブクラスが必ずオーバーライドすることを前提とする
-        // console.warn(`Feature.withVertexIds called on subclass ${this.constructor.name}. Subclass should override this method.`);
-        // 簡易的なフォールバック (サブクラスの固有状態は失われる可能性がある)
-        // → ポリゴンクラスでオーバーライドされているのでこの警告は基本出ないはず
-        return new this.constructor(this._id, vertexIds, this._properties, this._layerId);
-    }
+    console.warn(`Feature.withVertexIds (id: ${this._id}) was called on a Feature instance. Subclasses should override this method to return an instance of their own type.`);
+    return new Feature(this._id, vertexIds, this._properties, this._layerId);
   }
 
   /**
-   * 新しいプロパティの配列で新インスタンスを作成
-   * @param {Property[]} properties - 新しいプロパティの配列
-   * @returns {Feature} 新しい地理オブジェクト
+   * 新しいプロパティの配列で新インスタンスを作成 (現在の単純化モデルでは要素数1の配列を期待)
+   * 注意: このメソッドはサブクラスでオーバーライドされることを強く推奨します。
+   *       基底クラスの実装ではサブクラス固有のプロパティが失われる可能性があります。
+   * @param {Property[]} properties - 新しいプロパティの配列 (要素数1を期待)
+   * @returns {Feature} 新しいFeatureオブジェクト（サブクラスの型情報は失われる可能性がある）
    */
   withProperties(properties) {
-    // withVertexIdsと同様
-    if (this.constructor === Feature) {
-        return new Feature(this._id, this._vertexIds, properties, this._layerId);
+    console.warn(`Feature.withProperties (id: ${this._id}) was called on a Feature instance. Subclasses should override this method to return an instance of their own type.`);
+    let singlePropertyArray;
+    if (Array.isArray(properties) && properties.length > 0 && properties[0] instanceof Property) {
+        singlePropertyArray = [properties[0]];
+    } else if (properties instanceof Property) {
+        singlePropertyArray = [properties];
     } else {
-        // console.warn(`Feature.withProperties called on subclass ${this.constructor.name}. Subclass should override this method.`);
-        // → ポリゴンクラスでオーバーライドされているのでこの警告は基本出ないはず
-        return new this.constructor(this._id, this._vertexIds, properties, this._layerId);
+        console.warn(`Feature.withProperties (id: ${this._id}): new properties array is empty, invalid, or not a Property instance. Keeping original properties. Received:`, properties);
+        singlePropertyArray = this._properties;
     }
+    return new Feature(this._id, this._vertexIds, singlePropertyArray, this._layerId);
   }
 
   /**
    * 既存のプロパティ配列に新しいプロパティを追加した新インスタンスを作成
-   * @param {Property} property - 追加するプロパティ
+   * (現在の単純化モデルでは、このメソッドは実質的にwithPropertiesと同じ意味になる)
+   * @param {Property} property - 追加するプロパティ (Propertyインスタンスを期待)
    * @returns {Feature} 新しい地理オブジェクト
    */
   addProperty(property) {
-    return this.withProperties([...this._properties, property]);
+    if (!(property instanceof Property)) {
+        console.error(`Feature.addProperty (id: ${this._id}): Provided property is not an instance of Property. Keeping original properties. Received:`, property);
+        return this; // 不正な場合は変更しない
+    }
+    // 常に新しい property で既存のものを置き換える (要素数1の配列として渡す)
+    return this.withProperties([property]);
   }
 
   /**
    * 新しいレイヤーIDで新インスタンスを作成
+   * 注意: このメソッドはサブクラスでオーバーライドされることを強く推奨します。
+   *       基底クラスの実装ではサブクラス固有のプロパティが失われる可能性があります。
    * @param {string} layerId - 新しいレイヤーID
-   * @returns {Feature} 新しい地理オブジェクト
+   * @returns {Feature} 新しいFeatureオブジェクト（サブクラスの型情報は失われる可能性がある）
    */
   withLayerId(layerId) {
-    // withVertexIdsと同様
-     if (this.constructor === Feature) {
-        return new Feature(this._id, this._vertexIds, this._properties, layerId);
-    } else {
-        // console.warn(`Feature.withLayerId called on subclass ${this.constructor.name}. Subclass should override this method.`);
-        // → ポリゴンクラスでオーバーライドされているのでこの警告は基本出ないはず
-        return new this.constructor(this._id, this._vertexIds, this._properties, layerId);
-    }
+    console.warn(`Feature.withLayerId (id: ${this._id}) was called on a Feature instance. Subclasses should override this method to return an instance of their own type.`);
+    return new Feature(this._id, this._vertexIds, this._properties, layerId);
   }
 }

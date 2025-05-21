@@ -25,93 +25,81 @@ export class AddFeatureUseCase {
     this._layerService = layerService;
     this._generateId = generateId;
     this._processGeometry = processGeometry;
-    this._getVerticesFromIds = getVerticesFromIds; // 検証用に保持
+    this._getVerticesFromIds = getVerticesFromIds;
   }
 
   /**
    * 新しい地理オブジェクトを追加
    * @param {string} featureType - オブジェクトタイプ ('point', 'line', 'polygon')
-   * @param {Property[]} properties - プロパティ情報 (Propertyインスタンスの配列)
+   * @param {Property[]} properties - プロパティ情報 (Propertyインスタンスの配列、要素数1を期待)
    * @param {Object} geometry - 形状情報 { vertices?: {x,y}[], vertexIds?: string[], holesVertexIds?: string[][], parentId?: string, isMultiPolygon?: boolean, subPolygons?: object[] }
    * @param {string} layerId - レイヤーID
    * @returns {Promise<Feature>} 追加されたオブジェクト
    */
   async execute(featureType, properties, geometry, layerId) {
-    if (!Array.isArray(properties) || !properties.every(p => p instanceof Property)) {
-      console.error("AddFeatureUseCase: properties must be an array of Property instances.", properties);
-      throw new Error("Invalid properties format.");
+    // properties が要素数1の Property インスタンスの配列であることをバリデーション
+    if (!Array.isArray(properties) || properties.length !== 1 || !(properties[0] instanceof Property)) {
+      console.error("AddFeatureUseCase: properties must be an array containing a single Property instance. Received:", properties);
+      throw new Error("Invalid properties format for AddFeatureUseCase. Expected a single Property instance in an array.");
     }
     const world = await this._worldRepository.getWorld();
 
-    // IDの生成
     const featureId = this._generateId(featureType);
 
-    // 形状情報の検証とID割り当て (EditFeatureUseCaseのヘルパーを利用)
-    // processedGeometry は { vertexIds?, holesVertexIds?, parentId?, isMultiPolygon?, subPolygons? } を持つ
-    // 注意: _processGeometry は world.vertices を変更する副作用を持つ
-    const processedGeometry = this._processGeometry(geometry, world);
+    const processedGeometry = this._processGeometry(geometry, world); // vertexIds を生成
 
-    // 適切なファクトリーメソッドを使用して地物オブジェクトを作成
     let feature;
+    // properties は既に要素数1の配列なので、そのまま渡す
+    const singlePropertyArray = properties;
+
     switch (featureType) {
       case 'point':
         if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length !== 1) {
           throw new Error("Point geometry must have exactly one vertexId.");
         }
+        // Point.create のシグネチャ (id, properties, geometry, layerId) に合わせる
         const pointGeometry = { vertexId: processedGeometry.vertexIds[0] };
-        // Point.create は内部で new Point(...) を呼ぶ
-        feature = Point.create(featureId, properties, pointGeometry, layerId);
+        feature = Point.create(featureId, singlePropertyArray, pointGeometry, layerId);
         break;
       case 'line':
         if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 2) {
           throw new Error("Line geometry must have at least two vertexIds.");
         }
+        // Line.create のシグネチャ (id, properties, geometry, layerId) に合わせる
         const lineGeometry = { vertexIds: processedGeometry.vertexIds };
-        // Line.create は内部で new Line(...) を呼ぶ
-        feature = Line.create(featureId, properties, lineGeometry, layerId);
+        feature = Line.create(featureId, singlePropertyArray, lineGeometry, layerId);
         break;
       case 'polygon':
-        // リングベースの Polygon コンストラクタを直接呼び出す
         if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 3) {
           throw new Error("Polygon geometry must have at least three vertexIds for the outer ring.");
         }
-
-        // 自己交差チェックを追加
-        const outerRingVertices = this._getVerticesFromIds(processedGeometry.vertexIds, world); // Vertexインスタンスの配列を取得
+        const outerRingVertices = this._getVerticesFromIds(processedGeometry.vertexIds, world);
         if (this._geometryService.isPolygonSelfIntersecting(outerRingVertices)) {
             throw new Error("新規ポリゴンの外周リングが自己交差しています。");
         }
-
-        // 単純なポリゴン追加なので、外周リングを1つ作成
+        // Polygon コンストラクタ (id, properties, layerId, parentId, childIds, rings)
         const outerRing = {
-            id: this._generateId('ring'), // リングIDを生成
-            vertexIds: [...processedGeometry.vertexIds], // 頂点IDをコピー
-            isOuter: true, // 外周フラグ
-            parentId: null  // 最外周リングなので親はnull
+            id: this._generateId('ring'),
+            vertexIds: [...processedGeometry.vertexIds],
+            isOuter: true,
+            parentId: null
         };
         const rings = [outerRing];
-
-        // コンストラクタ呼び出し
         feature = new Polygon(
             featureId,
-            properties,
+            singlePropertyArray, // 要素数1の配列
             layerId,
-            processedGeometry.parentId || "0", // 親ポリゴンID (あれば)
+            processedGeometry.parentId || "0",
             [], // 新規作成なので childIds は空
-            rings // 生成したリング配列
+            rings
         );
         break;
       default:
         throw new Error(`Unknown feature type: ${featureType}`);
     }
 
-    // オブジェクトを追加
-    // 注意: world は _processGeometry で変更されている可能性がある
     world.features.push(feature);
-
-    // 世界データを保存
     await this._worldRepository.saveWorld(world);
-
     return feature;
   }
 
@@ -123,41 +111,8 @@ export class AddFeatureUseCase {
    * @private
    */
    _validatePolygonAddition(geometry, layerId, world) {
-    // TODO: リングベース移行後、この検証ロジックは PolygonEditService に移動または再実装される
-    // 現在は一時的にコメントアウト
-
-    /*
-    // 自己交差チェック
-    if (geometry.vertexIds && geometry.vertexIds.length >= 3) {
-        const vertices = this._getVerticesFromIds(geometry.vertexIds, world);
-        if (this._geometryService.isPolygonSelfIntersecting(vertices)) {
-             throw new Error("Polygon cannot self-intersect.");
-        }
-    }
-    geometry.holesVertexIds?.forEach(holeIds => {
-        if (holeIds.length >= 3) {
-             const vertices = this._getVerticesFromIds(holeIds, world);
-             if (this._geometryService.isPolygonSelfIntersecting(vertices)) {
-                 throw new Error("Polygon hole cannot self-intersect.");
-             }
-        }
-    });
-    geometry.subPolygons?.forEach(sub => {
-         if (sub.vertexIds && sub.vertexIds.length >= 3) {
-             const vertices = this._getVerticesFromIds(sub.vertexIds, world);
-             if (this._geometryService.isPolygonSelfIntersecting(vertices)) {
-                 throw new Error("Sub-polygon cannot self-intersect.");
-             }
-         }
-         sub.holesVertexIds?.forEach(holeIds => {
-            if (holeIds.length >= 3) {
-                const vertices = this._getVerticesFromIds(holeIds, world);
-                if (this._geometryService.isPolygonSelfIntersecting(vertices)) {
-                    throw new Error("Sub-polygon hole cannot self-intersect.");
-                }
-            }
-         });
-    });
-    */
-  }
+    // このメソッドはリングベースの PolygonEditService の validatePolygonRings に
+    // 責務が移譲されているため、ここでは詳細な実装は不要。
+    // AddFeatureUseCase 内での自己交差チェックは既に実行されている。
+   }
 }

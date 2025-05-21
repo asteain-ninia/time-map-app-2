@@ -37,10 +37,6 @@ export class EditingViewModel {
     this._eventBus.subscribe('HistoryChanged', this._onHistoryChanged.bind(this));
   }
 
-  // _deserializeTimePoint, _deserializeProperty は HistorySerializer に移管したので削除
-
-  // _serializeForHistory, _deserializeFromHistory は HistorySerializer に移管したので削除
-
   /**
    * 編集モードを設定
    */
@@ -204,7 +200,13 @@ export class EditingViewModel {
     if (this._targetPolygon !== null) { this._targetPolygon = null; changed = true; }
     if (this._addingSubMode !== null) { this._addingSubMode = null; changed = true; }
     if (this._targetRingIdForHole !== null) { this._targetRingIdForHole = null; changed = true; }
-    if (changed) { this._notifyObservers('addingState'); }
+    if (changed) { this._notifyObservers('addingState'); } // 一括で通知する場合
+    else { // 個別に通知する場合 (より細かいUI更新が可能)
+        if (this._addingPoints.length > 0) this._notifyObservers('addingPoints');
+        if (this._targetPolygon !== null) this._notifyObservers('targetPolygon');
+        if (this._addingSubMode !== null) this._notifyObservers('addingSubMode');
+        if (this._targetRingIdForHole !== null) this._notifyObservers('targetRingIdForHole');
+    }
   }
 
 
@@ -229,7 +231,7 @@ export class EditingViewModel {
 
   /**
    * 地物の追加を確定
-   * @param {Object} properties - プロパティ (Property インスタンスの配列)
+   * @param {Property[]} properties - プロパティ (Property インスタンスの配列、要素数1を期待)
    * @param {string} layerId - レイヤーID
    * @returns {Promise<Object>} 追加された地物インスタンス
    */
@@ -237,17 +239,20 @@ export class EditingViewModel {
     if (this._mode !== 'add' || !this._tool || this._addingPoints.length === 0) {
       throw new Error('地物の追加状態ではありません');
     }
-    if (!Array.isArray(properties) || !properties.every(p => p instanceof Property)) {
-        throw new Error("Invalid properties format.");
+    // properties が要素数1の Property インスタンスの配列であることをバリデーション
+    if (!Array.isArray(properties) || properties.length !== 1 || !(properties[0] instanceof Property)) {
+        console.error("EditingViewModel.confirmAddFeature: properties must be an array containing a single Property instance. Received:", properties);
+        throw new Error("Invalid properties format. Expected a single Property instance in an array for confirmAddFeature.");
     }
     try {
       const geometryData = { vertices: [...this._addingPoints] };
-      // EditFeatureUseCase.addFeature は Feature インスタンスを返す
+      // EditFeatureUseCase.addFeature は要素数1のプロパティ配列をそのまま渡す
       const feature = await this._editFeatureUseCase.addFeature(this._tool, properties, geometryData, layerId);
 
       // HistoryService に履歴追加を依頼
+      // feature.properties は要素数1のはず (ドメイン層で強制される)
       await this._historyService.addHistoryEntry('add', {
-        featureInstance: feature, // ドメインインスタンスを渡す
+        featureInstance: feature, 
         featureType: this._tool
       });
 
@@ -473,6 +478,7 @@ export class EditingViewModel {
     try {
        // HistoryService に渡すために、削除「前」の feature インスタンスが必要
        await this._editFeatureUseCase.deleteFeature(featureId);
+       // feature.properties は要素数1のはず
        await this._historyService.addHistoryEntry('delete', {
          featureInstance: feature // 削除前のドメインインスタンス
        });
@@ -548,24 +554,31 @@ export class EditingViewModel {
    * @param {Property[]} newProperties - 新しいプロパティ配列 (Property インスタンスの配列)
    * @returns {Promise<Object>} 更新された地物インスタンス
    */
-  async updateFeatureProperties(featureId, newProperties) { // newProperties は Propertyインスタンスの配列
+  async updateFeatureProperties(featureId, newProperties) {
     try {
-      const worldRepository = this._editFeatureUseCase._worldRepository; // 仮
+      // newProperties が要素数1の Property インスタンスの配列であることをバリデーション
+      if (!Array.isArray(newProperties) || newProperties.length !== 1 || !(newProperties[0] instanceof Property)) {
+        console.error("EditingViewModel.updateFeatureProperties: newProperties must be an array containing a single Property instance. Received:", newProperties);
+        throw new Error("Invalid newProperties format. Expected a single Property instance in an array for updateFeatureProperties.");
+      }
+
+      const worldRepository = this._editFeatureUseCase._worldRepository;
       const world = await worldRepository.getWorld();
       const featureBefore = world.features.find(f => f.id === featureId);
       if (!featureBefore) { throw new Error(`Feature not found: ${featureId}`); }
       
-      const oldPropertiesInstances = [...featureBefore.properties]; // 変更前のPropertyインスタンス配列 (ディープコピーが望ましい)
+      // featureBefore.properties も要素数1のはず (ドメイン層で強制)
+      const oldPropertiesInstances = (featureBefore.properties && featureBefore.properties.length > 0)
+                                      ? [featureBefore.properties[0]]
+                                      : [];
 
-      // EditFeatureUseCase.updateFeature は更新後の Feature インスタンスを返す
       const updateResult = await this._editFeatureUseCase.updateFeature(featureId, { properties: newProperties });
-      const updatedFeature = updateResult.feature; // UpdateFeatureUseCaseの戻り値に合わせて修正
+      const updatedFeature = updateResult.feature; // updatedFeature.properties も要素数1のはず
 
-      // HistoryService に履歴追加を依頼
       await this._historyService.addHistoryEntry('updateProperties', {
           featureId: featureId,
-          oldProperties: oldPropertiesInstances, // 変更前のPropertyインスタンス配列
-          newProperties: [...updatedFeature.properties] // 更新後のPropertyインスタンス配列
+          oldProperties: oldPropertiesInstances, // 要素数1の配列
+          newProperties: updatedFeature.properties // 要素数1の配列のはず
       });
 
       this._eventBus.publish('FeatureUpdated', { feature: updatedFeature });
@@ -678,6 +691,7 @@ export class EditingViewModel {
   /**
    * 観測者に通知
    * @param {string} type - 変更タイプ
+   * @param {any} [dataOverride] - 通知するデータを上書きする場合に指定
    * @private
    */
   _notifyObservers(type, dataOverride) {

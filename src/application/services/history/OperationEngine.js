@@ -36,6 +36,7 @@ export class OperationEngine {
           operation.addedVerticesData.forEach(vDataPlain => {
             const vertexInstance = this._serializer.deserialize(vDataPlain);
             if (vertexInstance instanceof Vertex && !world.vertices.some(wv => wv.id === vertexInstance.id)) {
+              // プレーンオブジェクトとして頂点を保存 (WorldRepositoryの仕様に依存)
               world.vertices.push({ id: vertexInstance.id, x: vertexInstance.x, y: vertexInstance.y });
               verticesActuallyAddedToWorld = true;
             }
@@ -85,8 +86,10 @@ export class OperationEngine {
 
       case 'updateProperties':
         const newPropsInstancesUpdate = operation.newProperties.map(pPlain => this._serializer.deserialize(pPlain)).filter(Boolean);
-        const updatedFeatureProps = await this._editFeatureUseCase.updateFeature(operation.featureId, { properties: newPropsInstancesUpdate });
-        resultInfo = { updatedFeature: updatedFeatureProps, eventType: 'FeatureUpdated', eventPayload: { feature: updatedFeatureProps }};
+        // _editFeatureUseCase.updateFeature は { feature: DomainInstance, ... } を返す
+        const updateResultRedo = await this._editFeatureUseCase.updateFeature(operation.featureId, { properties: newPropsInstancesUpdate });
+        const updatedFeatureInstanceRedo = updateResultRedo.feature; // ドメインインスタンスを正しく取り出す
+        resultInfo = { updatedFeature: updatedFeatureInstanceRedo, eventType: 'FeatureUpdated', eventPayload: { feature: updatedFeatureInstanceRedo }};
         break;
       
       case 'addRing':
@@ -108,8 +111,10 @@ export class OperationEngine {
         // 2. リングをポリゴンに追加 (UpdateFeatureUseCase経由でPolygonEditService.addRingWithIdを呼ぶ)
         const ringToAddPlainExecute = operation.addedRing; // プレーンオブジェクト
         if (ringToAddPlainExecute && typeof ringToAddPlainExecute.id === 'string') {
-            const geometryUpdate = { existingRingData: [ringToAddPlainExecute] }; // PolygonEditService.addRingWithIdが呼ばれる
-            const updatedPolygonRing = await this._editFeatureUseCase.updateFeature(operation.polygonId, { geometry: geometryUpdate });
+            const geometryUpdate = { existingRingData: [ringToAddPlainExecute] };
+            // _editFeatureUseCase.updateFeature は { feature: DomainInstance, ... } を返す
+            const updateResultAddRing = await this._editFeatureUseCase.updateFeature(operation.polygonId, { geometry: geometryUpdate });
+            const updatedPolygonRing = updateResultAddRing.feature; // ドメインインスタンスを正しく取り出す
             resultInfo = { updatedFeature: updatedPolygonRing, eventType: 'FeatureUpdated', eventPayload: { feature: updatedPolygonRing } };
         }
         break;
@@ -187,6 +192,13 @@ export class OperationEngine {
                 const indexInWorld = world.features.findIndex(f => f.id === featureInstanceToRestore.id);
                 if (indexInWorld !== -1) { // 地物がまだ存在する場合 (更新されたケースのUndo)
                     world.features[indexInWorld] = featureInstanceToRestore;
+                    // この操作は複数の地物に影響する可能性があるので、個別のFeatureUpdatedイベントはここでは発行せず、
+                    // 呼び出し元(HistoryService)がVerticesDeletedCustomのような包括的なイベントを発行するか、
+                    // あるいは個別に updatedFeature を resultInfo に詰めて返す。
+                    // 今回は、affectedFeaturesBefore 全体を復元する操作なので、resultInfo.eventType は
+                    // 'MultipleFeaturesRestored' のようなカスタムイベントにするか、
+                    // または、各 FeatureUpdated/FeatureAdded イベントを配列で返す必要がある。
+                    // 簡単のため、ここでは最後に更新/追加されたものを resultInfo に含める。
                     resultInfo = { updatedFeature: featureInstanceToRestore, eventType: 'FeatureUpdated', eventPayload: { feature: featureInstanceToRestore } };
                 } else { // 地物が削除されていた場合 (削除された地物のUndo)
                     world.features.push(featureInstanceToRestore);
@@ -195,6 +207,12 @@ export class OperationEngine {
                 featuresStateRestored = true;
             }
             if (featuresStateRestored) await this._worldRepository.saveWorld(world);
+            // TODO: deleteVerticesのUndoでは複数の地物が影響を受ける可能性があるため、resultInfoの扱いやイベント発行方法を再検討する必要がある。
+            // 現状では最後に処理された地物の情報のみがresultInfoに残る。
+            // ひとまず、eventType を 'VerticesRestoredCustom'のようなものにして、ペイロードに affectedFeaturesBefore を渡すのが良いかもしれない。
+            if (featuresStateRestored) {
+                resultInfo = { eventType: 'VerticesRestoredCustom', eventPayload: { restoredFeatureIds: operation.affectedFeaturesBefore.map(f => f.id), verticesToRestoreData: operation.verticesToRestoreData }};
+            }
         }
         break;
 
@@ -213,15 +231,19 @@ export class OperationEngine {
 
       case 'updateProperties': // プロパティ更新のUndo (古いプロパティに戻す)
         const oldPropsInstancesUpdate = operation.oldProperties.map(pPlain => this._serializer.deserialize(pPlain)).filter(Boolean);
-        const revertedFeatureProps = await this._editFeatureUseCase.updateFeature(operation.featureId, { properties: oldPropsInstancesUpdate });
-        resultInfo = { updatedFeature: revertedFeatureProps, eventType: 'FeatureUpdated', eventPayload: { feature: revertedFeatureProps }};
+        // _editFeatureUseCase.updateFeature は { feature: DomainInstance, ... } を返す
+        const updateResultUndo = await this._editFeatureUseCase.updateFeature(operation.featureId, { properties: oldPropsInstancesUpdate });
+        const revertedFeatureInstance = updateResultUndo.feature; // ドメインインスタンスを正しく取り出す
+        resultInfo = { updatedFeature: revertedFeatureInstance, eventType: 'FeatureUpdated', eventPayload: { feature: revertedFeatureInstance }};
         break;
 
       case 'addRing': // リング追加のUndo (リング削除と関連頂点削除)
         const ringToRemovePlainUndo = operation.addedRing; // プレーンオブジェクト
         if (ringToRemovePlainUndo && typeof ringToRemovePlainUndo.id === 'string') {
              const geometryUpdateUndo = { removedRingIds: [ringToRemovePlainUndo.id] };
-             const updatedPolygonUndo = await this._editFeatureUseCase.updateFeature(operation.polygonId, { geometry: geometryUpdateUndo });
+             // _editFeatureUseCase.updateFeature は { feature: DomainInstance, ... } を返す
+             const updateResultUndoAddRing = await this._editFeatureUseCase.updateFeature(operation.polygonId, { geometry: geometryUpdateUndo });
+             const updatedPolygonUndo = updateResultUndoAddRing.feature; // ドメインインスタンスを正しく取り出す
              resultInfo = { updatedFeature: updatedPolygonUndo, eventType: 'FeatureUpdated', eventPayload: { feature: updatedPolygonUndo } };
 
              // 関連する頂点を削除 (他の地物で使われていなければ)
