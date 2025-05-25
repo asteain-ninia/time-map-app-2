@@ -1,4 +1,4 @@
-// src\presentation\views\map\MapViewInteractionLogic.js
+// src/presentation/views/map/MapViewInteractionLogic.js
 
 import { Point as DomainPoint } from '../../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../../domain/entities/Line.js';
@@ -14,12 +14,14 @@ export class MapViewInteractionLogic {
    * @param {EditingViewModel} editingViewModel
    * @param {GeometryService} geometryService
    * @param {Function} getClickToleranceSq - クリック許容範囲(二乗)を返す関数
+   * @param {Function} getWorldWidthFunc - ワールド幅を返す関数
    */
-  constructor(viewModel, editingViewModel, geometryService, getClickToleranceSq) {
+  constructor(viewModel, editingViewModel, geometryService, getClickToleranceSq, getWorldWidthFunc) { // getWorldWidthFunc を追加
     this._viewModel = viewModel;
     this._editingViewModel = editingViewModel;
     this._geometryService = geometryService;
-    this._getClickToleranceSq = getClickToleranceSq; // 関数として受け取る
+    this._getClickToleranceSq = getClickToleranceSq;
+    this._getWorldWidthFunc = getWorldWidthFunc; // 保存
   }
 
   /**
@@ -52,15 +54,21 @@ export class MapViewInteractionLogic {
     let closestVertexData = null;
     let minDistanceSq = this._getClickToleranceSq(); // 動的に取得
 
+    const worldWidth = this._getWorldWidthFunc();
+    const offsets = [0, -worldWidth, worldWidth];
+
     for (const vertexId of visibleVertexIds) {
-      const vertexData = verticesMap.get(vertexId);
-      if (vertexData && typeof vertexData.x === 'number' && typeof vertexData.y === 'number') {
-        const distanceSq = this._geometryService.calculateDistanceSq(
-            worldPoint.x, worldPoint.y, vertexData.x, vertexData.y
-        );
-        if (distanceSq < minDistanceSq) {
-            minDistanceSq = distanceSq;
-            closestVertexData = vertexData;
+      const vertexDataOriginal = verticesMap.get(vertexId); // 元の頂点データ
+      if (vertexDataOriginal && typeof vertexDataOriginal.x === 'number' && typeof vertexDataOriginal.y === 'number') {
+        for (const offsetX of offsets) { // 各オフセットでチェック
+          const currentX = vertexDataOriginal.x + offsetX;
+          const distanceSq = this._geometryService.calculateDistanceSq(
+              worldPoint.x, worldPoint.y, currentX, vertexDataOriginal.y // Yはオフセットなし
+          );
+          if (distanceSq < minDistanceSq) {
+              minDistanceSq = distanceSq;
+              closestVertexData = vertexDataOriginal; // 保存するのはオフセットなしの元のデータ
+          }
         }
       }
     }
@@ -85,6 +93,8 @@ export class MapViewInteractionLogic {
       let candidatesNearby = []; // 境界線に近い地物候補 ({ feature, distanceSq })
 
       const clickToleranceSq = this._getClickToleranceSq(); // クリック許容範囲(二乗)
+      const worldWidth = this._getWorldWidthFunc();
+      const offsets = [0, -worldWidth, worldWidth];
 
       const verticesMap = new Map(world.vertices.map(v => [v.id, {id:v.id, x:v.x, y:v.y}]));
       const getVerticesByIds = (ids) => ids?.map(id => verticesMap.get(id)).filter(v => v && typeof v.x === 'number' && typeof v.y === 'number') || [];
@@ -93,35 +103,45 @@ export class MapViewInteractionLogic {
            if (!feature || typeof feature !== 'object') continue;
 
            if (feature instanceof DomainPoint) {
-               const featureVertices = getVerticesByIds(feature.vertexIds);
-               if (featureVertices?.length === 1) {
-                   const distanceSq = this._geometryService.calculateDistanceSq(
-                       worldPoint.x, worldPoint.y, featureVertices[0].x, featureVertices[0].y
-                   );
-                   if (distanceSq < clickToleranceSq) {
-                       candidatesNearby.push({ feature, distanceSq });
+               const featureVerticesOriginal = getVerticesByIds(feature.vertexIds);
+               if (featureVerticesOriginal?.length === 1) {
+                   let minDistanceSqOverall = Infinity;
+                   for (const offsetX of offsets) {
+                       const currentX = featureVerticesOriginal[0].x + offsetX;
+                       const distanceSq = this._geometryService.calculateDistanceSq(
+                           worldPoint.x, worldPoint.y, currentX, featureVerticesOriginal[0].y
+                       );
+                       minDistanceSqOverall = Math.min(minDistanceSqOverall, distanceSq);
+                   }
+                   if (minDistanceSqOverall < clickToleranceSq) {
+                       candidatesNearby.push({ feature, distanceSq: minDistanceSqOverall });
                    }
                }
           } else if (feature instanceof DomainLine) {
-               const featureVertices = getVerticesByIds(feature.vertexIds);
-               if (featureVertices?.length >= 2) {
-                    let minSegmentDistSq = Infinity;
-                    for (let i = 0; i < featureVertices.length - 1; i++) {
-                        if (featureVertices[i] && featureVertices[i+1]) {
-                            const segmentDistSq = this._geometryService.distancePointSegmentSq(
-                                worldPoint, featureVertices[i], featureVertices[i + 1]
-                            );
-                            minSegmentDistSq = Math.min(minSegmentDistSq, segmentDistSq);
+               const featureVerticesOriginal = getVerticesByIds(feature.vertexIds);
+               if (featureVerticesOriginal?.length >= 2) {
+                    let minSegmentDistSqOverall = Infinity;
+                    for (const offsetX of offsets) {
+                        const featureVerticesWithOffset = featureVerticesOriginal.map(v => ({x: v.x + offsetX, y: v.y}));
+                        let minSegmentDistSqForOffset = Infinity;
+                        for (let i = 0; i < featureVerticesWithOffset.length - 1; i++) {
+                             if (featureVerticesWithOffset[i] && featureVerticesWithOffset[i+1]) {
+                                const segmentDistSq = this._geometryService.distancePointSegmentSq(
+                                    worldPoint, featureVerticesWithOffset[i], featureVerticesWithOffset[i + 1]
+                                );
+                                minSegmentDistSqForOffset = Math.min(minSegmentDistSqForOffset, segmentDistSq);
+                            }
                         }
+                       minSegmentDistSqOverall = Math.min(minSegmentDistSqOverall, minSegmentDistSqForOffset);
                     }
-                   if (minSegmentDistSq < clickToleranceSq) {
-                       candidatesNearby.push({ feature, distanceSq: minSegmentDistSq });
+                   if (minSegmentDistSqOverall < clickToleranceSq) {
+                       candidatesNearby.push({ feature, distanceSq: minSegmentDistSqOverall });
                    }
                }
           } else if (feature instanceof DomainPolygon) {
               // ポリゴンの包含関係と境界近接をチェック
-              const locationInfo = this.locatePointInPolygon(worldPoint, feature, verticesMap);
-              const isNearBoundary = this.isPointNearPolygonBoundary(worldPoint, feature, verticesMap);
+              const locationInfo = this.locatePointInPolygon(worldPoint, feature, verticesMap); // これは既にオフセットを考慮
+              const isNearBoundary = this.isPointNearPolygonBoundary(worldPoint, feature, verticesMap); // これもオフセットを考慮
 
               // locatePointInPolygon の結果に基づいて候補を分類
               if (locationInfo.type === 'inside_outer') {
@@ -129,7 +149,7 @@ export class MapViewInteractionLogic {
                   candidatesInside.push({ feature, nestingLevel: locationInfo.nestingLevel });
               } else if (locationInfo.type !== 'inside_hole' && isNearBoundary) {
                   // 穴内部でなく、境界線に近い場合 (typeがoutsideで境界に近い場合など)
-                  const distanceSq = this._calculateDistanceToPolygon(worldPoint, feature, verticesMap);
+                  const distanceSq = this._calculateDistanceToPolygon(worldPoint, feature, verticesMap); // これもオフセットを考慮
                    if (distanceSq < clickToleranceSq) { // 念のため再チェック
                        candidatesNearby.push({ feature, distanceSq });
                    }
@@ -196,7 +216,7 @@ export class MapViewInteractionLogic {
   }
 
   /**
-   * 点がポリゴンの境界線近くにあるか判定 (リングベース対応)
+   * 点がポリゴンの境界線近くにあるか判定 (リングベース対応、オフセット考慮)
    * @param {object} point - ワールド座標 {x, y}
    * @param {DomainPolygon} polygon - 対象ポリゴン
    * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
@@ -205,16 +225,23 @@ export class MapViewInteractionLogic {
   isPointNearPolygonBoundary(point, polygon, verticesMap) {
         if (!polygon || !Array.isArray(polygon.rings)) return false;
 
-        const toleranceSq = this._getClickToleranceSq(); // 動的に取得
-        const getVertices = (ids) => ids?.map(id => verticesMap.get(id)).filter(Boolean) || [];
+        const worldWidth = this._getWorldWidthFunc();
+        const offsets = [0, -worldWidth, worldWidth];
+        const toleranceSq = this._getClickToleranceSq();
+        
+        const getVerticesWithOffset = (ids, offsetX) => ids?.map(id => {
+            const v = verticesMap.get(id);
+            return v ? { x: v.x + offsetX, y: v.y } : null;
+        }).filter(Boolean) || [];
 
-        // すべてのリングの境界をチェック
-        for (const ring of polygon.rings) {
-            if (ring.vertexIds && ring.vertexIds.length >= 2) {
-                const ringVertices = getVertices(ring.vertexIds);
-                // GeometryServiceの isPointOnPolygonBoundary を使う
-                if (this._geometryService.isPointOnPolygonBoundary(point, ringVertices, toleranceSq)) {
-                    return true;
+        for (const offsetX of offsets) {
+            for (const ring of polygon.rings) {
+                if (ring.vertexIds && ring.vertexIds.length >= 2) {
+                    const ringVerticesWithOffset = getVerticesWithOffset(ring.vertexIds, offsetX);
+                    // GeometryServiceの isPointOnPolygonBoundary を使う
+                    if (this._geometryService.isPointOnPolygonBoundary(point, ringVerticesWithOffset, toleranceSq)) {
+                        return true; // いずれかのオフセットで境界に近ければ true
+                    }
                 }
             }
         }
@@ -222,7 +249,7 @@ export class MapViewInteractionLogic {
   }
 
   /**
-   * 点がポリゴン内部（穴を除く）にあるか判定 (リングベース対応)
+   * 点がポリゴン内部（穴を除く）にあるか判定 (リングベース対応、オフセット考慮)
    * @param {object} point - ワールド座標 {x, y}
    * @param {DomainPolygon} polygon - 対象ポリゴン
    * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
@@ -230,14 +257,14 @@ export class MapViewInteractionLogic {
    */
   isPointInsidePolygon(point, polygon, verticesMap) {
         if (!polygon || !Array.isArray(polygon.rings)) return false;
-        // リングベースの位置判定ヘルパーを使用
+        // リングベースの位置判定ヘルパーを使用 (これは既にオフセットを考慮する)
         const location = this.locatePointInPolygon(point, polygon, verticesMap);
         // 'inside_outer' (外周リングの内側かつ穴の外側) の場合に true
         return location.type === 'inside_outer';
   }
 
    /**
-    * 点からポリゴンまでの最短距離の二乗を計算 (リングベース対応)
+    * 点からポリゴンまでの最短距離の二乗を計算 (リングベース対応、オフセット考慮)
     * @param {object} point - ワールド座標 {x, y}
     * @param {DomainPolygon} polygon - 対象ポリゴン
     * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
@@ -246,41 +273,45 @@ export class MapViewInteractionLogic {
    _calculateDistanceToPolygon(point, polygon, verticesMap) {
        if (!polygon || !Array.isArray(polygon.rings)) return Infinity;
 
-       let minDistanceSq = Infinity;
-       const getVertices = (ids) => ids?.map(id => verticesMap.get(id)).filter(Boolean) || [];
+       const worldWidth = this._getWorldWidthFunc();
+       const offsets = [0, -worldWidth, worldWidth];
+       let minDistanceOverallSq = Infinity;
 
-       // 点がポリゴン内部 (穴を除く) かまずチェック
-       if (this.isPointInsidePolygon(point, polygon, verticesMap)) {
-           return 0; // 内部なら距離0
-       }
+       const getVerticesWithOffset = (ids, offsetX) => ids?.map(id => {
+           const v = verticesMap.get(id);
+           return v ? { x: v.x + offsetX, y: v.y } : null;
+       }).filter(Boolean) || [];
 
-       // 内部でない場合、すべてのリングの境界までの最短距離を計算
-       const calculateMinDistToRing = (vertexIds) => {
-           if (!vertexIds || vertexIds.length < 2) return Infinity;
-           const vertices = getVertices(vertexIds);
-           if (vertices.length < 2) return Infinity;
-           const closedVertices = [...vertices, vertices[0]]; // 閉じたパスにする
-           let minDistSq = Infinity;
-           for (let i = 0; i < closedVertices.length - 1; i++) {
-               const a = closedVertices[i];
-               const b = closedVertices[i + 1];
-               if (a && b) {
-                   minDistSq = Math.min(minDistSq, this._geometryService.distancePointSegmentSq(point, a, b));
-               }
+       for (const offsetX of offsets) {
+           // このオフセットでのポリゴンが点を含んでいれば距離0
+           const locationInfoForOffset = this.locatePointInPolygonForSpecificOffset(point, polygon, verticesMap, offsetX);
+           if (locationInfoForOffset.type === 'inside_outer') {
+               return 0; // 内部なら距離0
            }
-           return minDistSq;
-       };
 
-        // すべてのリングの境界までの最短距離を計算
-        polygon.rings.forEach(ring => {
-            minDistanceSq = Math.min(minDistanceSq, calculateMinDistToRing(ring.vertexIds));
-        });
-
-       return minDistanceSq;
+           let minDistanceForOffsetSq = Infinity;
+           polygon.rings.forEach(ring => {
+               const ringVertices = getVerticesWithOffset(ring.vertexIds, offsetX);
+                if (ringVertices.length < 2) return;
+                // ポリゴンを閉じるために最初の頂点を最後に追加 (GeometryService.isPointOnPolygonBoundaryが期待する形式に合わせる場合)
+                // ただし、distancePointSegmentSq は閉じたパスを期待しないので、そのまま使う
+                let minDistSqForRing = Infinity;
+                for (let i = 0; i < ringVertices.length; i++) { // リングの各セグメントに対して
+                    const a = ringVertices[i];
+                    const b = ringVertices[(i + 1) % ringVertices.length]; // 次の頂点 (最後は最初に戻る)
+                    if (a && b) {
+                        minDistSqForRing = Math.min(minDistSqForRing, this._geometryService.distancePointSegmentSq(point, a, b));
+                    }
+                }
+                minDistanceForOffsetSq = Math.min(minDistanceForOffsetSq, minDistSqForRing);
+           });
+           minDistanceOverallSq = Math.min(minDistanceOverallSq, minDistanceForOffsetSq);
+       }
+       return minDistanceOverallSq;
    }
 
    /**
-    * 点がポリゴンのどの部分にあるか判定するヘルパー (リングベース実装 - ネストレベル偶奇判定)
+    * 点がポリゴンのどの部分にあるか判定するヘルパー (リングベース実装 - ネストレベル偶奇判定、オフセット考慮)
     * @param {object} point - ワールド座標 {x, y}
     * @param {DomainPolygon} polygon - 対象ポリゴン (リング構造を持つ前提)
     * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
@@ -291,26 +322,101 @@ export class MapViewInteractionLogic {
        return { type: 'outside', ringId: null, nestingLevel: 0 };
      }
 
-     const getVertices = (ids) =>
-       ids?.map(id => verticesMap.get(id)).filter(Boolean) || [];
+     const worldWidth = this._getWorldWidthFunc();
+     const offsets = [0, -worldWidth, worldWidth];
+     let bestLocationInfo = { type: 'outside', ringId: null, nestingLevel: 0 };
+     
+     const getVerticesWithOffset = (ids, offsetX) =>
+       ids?.map(id => {
+           const v = verticesMap.get(id);
+           return v ? { x: v.x + offsetX, y: v.y } : null;
+       }).filter(Boolean) || [];
 
-     // 境界線上なら outside
-     if (this.isPointNearPolygonBoundary(point, polygon, verticesMap)) {
-       return { type: 'outside', ringId: null, nestingLevel: 0 };
+     for (const offsetX of offsets) {
+         // このオフセットでの境界判定
+         let isOnBoundaryWithOffset = false;
+         for (const ring of polygon.rings) {
+             const ringVerticesWithOffset = getVerticesWithOffset(ring.vertexIds, offsetX);
+             if (ringVerticesWithOffset.length >=2 && this._geometryService.isPointOnPolygonBoundary(point, ringVerticesWithOffset, this._getClickToleranceSq())) {
+                 isOnBoundaryWithOffset = true;
+                 break;
+             }
+         }
+         if (isOnBoundaryWithOffset) {
+             if (bestLocationInfo.nestingLevel === 0) {
+                 bestLocationInfo = { type: 'outside', ringId: null, nestingLevel: 0 };
+             }
+             continue; 
+         }
+
+         const insideRingsForThisOffset = [];
+         for (const ring of polygon.rings) {
+           const vertsWithOffset = getVerticesWithOffset(ring.vertexIds, offsetX);
+           if (vertsWithOffset.length >= 3 &&
+               this._geometryService.isPointInPolygon(point, vertsWithOffset, false)) {
+             insideRingsForThisOffset.push(ring);
+           }
+         }
+
+         const nestingLevelForThisOffset = insideRingsForThisOffset.length;
+         if (nestingLevelForThisOffset > bestLocationInfo.nestingLevel) {
+             const isInsideOuter = nestingLevelForThisOffset % 2 === 1;
+             bestLocationInfo = {
+                 type: isInsideOuter ? 'inside_outer' : 'inside_hole',
+                 ringId: insideRingsForThisOffset[nestingLevelForThisOffset - 1]?.id || null,
+                 nestingLevel: nestingLevelForThisOffset
+             };
+         } else if (nestingLevelForThisOffset === bestLocationInfo.nestingLevel && nestingLevelForThisOffset > 0) {
+             const isInsideOuterCurrent = nestingLevelForThisOffset % 2 === 1;
+             const isInsideOuterBest = bestLocationInfo.nestingLevel % 2 === 1;
+             if (isInsideOuterCurrent && !isInsideOuterBest) {
+                bestLocationInfo = {
+                    type: 'inside_outer',
+                    ringId: insideRingsForThisOffset[nestingLevelForThisOffset - 1]?.id || null,
+                    nestingLevel: nestingLevelForThisOffset
+                };
+             }
+         }
      }
+     return bestLocationInfo;
+   }
 
-     // ❶ 何本のリングが point を包含しているかを偶奇で判定
-     const insideRings = [];
-     for (const ring of polygon.rings) {
-       const verts = getVertices(ring.vertexIds);
-       // GeometryService の isPointInPolygon を使用 (includeBoundary=false)
-       if (verts.length >= 3 &&
-           this._geometryService.isPointInPolygon(point, verts, false)) {
-         insideRings.push(ring);
-       }
-     }
+   /**
+    * 特定のオフセットでの内外判定を行うヘルパー (主に _calculateDistanceToPolygon から使用)
+    * @param {object} point - ワールド座標 {x, y}
+    * @param {DomainPolygon} polygon - 対象ポリゴン
+    * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
+    * @param {number} offsetX - 適用するXオフセット
+    * @returns {{type: 'outside' | 'inside_outer' | 'inside_hole', ringId: string | null, nestingLevel: number}}
+    * @private
+    */
+   locatePointInPolygonForSpecificOffset(point, polygon, verticesMap, offsetX) {
+        const getVertices = (ids) => ids?.map(id => {
+             const v = verticesMap.get(id);
+             return v ? {x: v.x + offsetX, y: v.y } : null; // 指定されたoffsetXを適用
+        }).filter(Boolean) || [];
 
-     const nestingLevel = insideRings.length;
+        // 境界判定
+        let isOnBoundary = false;
+        for (const ring of polygon.rings) {
+            const ringVertices = getVertices(ring.vertexIds);
+            if (ringVertices.length >=2 && this._geometryService.isPointOnPolygonBoundary(point, ringVertices, this._getClickToleranceSq())) {
+                isOnBoundary = true;
+                break;
+            }
+        }
+        if (isOnBoundary) return { type: 'outside', ringId: null, nestingLevel: 0 };
+
+        const insideRings = [];
+        for (const ring of polygon.rings) {
+            const verts = getVertices(ring.vertexIds);
+            // GeometryService の isPointInPolygon を使用 (includeBoundary=false)
+            if (verts.length >= 3 && this._geometryService.isPointInPolygon(point, verts, false)) {
+                insideRings.push(ring); // 元のリングオブジェクト
+            }
+        }
+
+        const nestingLevel = insideRings.length;
      if (nestingLevel === 0) {
        return { type: 'outside', ringId: null, nestingLevel: 0 };
      }
@@ -323,11 +429,11 @@ export class MapViewInteractionLogic {
      // ネストレベルの偶奇で判定
      const isInsideOuter = nestingLevel % 2 === 1; // 奇数: 塗りつぶし領域
 
-     return {
-       type: isInsideOuter ? 'inside_outer' : 'inside_hole',
-       ringId: innermostRing.id, // 最も内側のリングIDを返す
-       nestingLevel
-     };
+        return {
+            type: isInsideOuter ? 'inside_outer' : 'inside_hole',
+            ringId: insideRings[nestingLevel - 1]?.id || null, // このリングIDはオフセット前のもの
+            nestingLevel
+        };
    }
 
    /**

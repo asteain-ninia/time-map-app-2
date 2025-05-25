@@ -1,4 +1,4 @@
-// src\presentation\views\map\MapViewRendererHelper.js
+// src/presentation/views/map/MapViewRendererHelper.js
 
 import { Point as DomainPoint } from '../../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../../domain/entities/Line.js';
@@ -51,26 +51,15 @@ export class MapViewRendererHelper {
     const currentTime = this._viewModel.getCurrentTime();
     if (!world || !world.vertices) return; // verticesの存在チェック追加
     const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo();
-    const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // Mapを作成
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
 
-    const getVertexPos = (vertexId) => {
-        const dragInfo = draggingVerticesInfo.get(vertexId);
-        if (dragInfo) return dragInfo.currentPosition;
-        const v = verticesMap.get(vertexId); // Mapから取得
-        return v ? { x: v.x, y: v.y } : null;
-    };
+    const worldWidth = this._renderer.getWorldWidth(); // ワールド幅を取得
+    const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
 
-    const drawHighlightLine = (vertices, style) => {
-        if (vertices && vertices.length >= 2) {
-            const elem = this._renderer.drawLine(vertices, style, viewport);
-            if (elem) this._selectionElements.push(elem);
-        }
-    };
-
-    const drawHighlightClosedLine = (vertices, style) => {
-        if (vertices && vertices.length >= 3) {
-             drawHighlightLine([...vertices, vertices[0]], style);
-        }
+    // ドラッグ中でない頂点の元の位置を取得する関数
+    const getOriginalVertexPos = (vertexId) => {
+        if (draggingVerticesInfo.has(vertexId)) return null; // ドラッグ中の頂点はここでは扱わない
+        return verticesMap.get(vertexId); // {id, x, y}
     };
 
     // 主選択地物
@@ -78,25 +67,37 @@ export class MapViewRendererHelper {
         const feature = this._viewModel.getFeatures().find(f => f.id === selectedFeatureId);
         if (feature && feature.existsAt(currentTime)) {
             const style = { stroke: '#00ffff', strokeWidth: 4, fill: 'none', strokeDasharray: '4,4' };
-
-            if (feature instanceof DomainPoint) {
-                const vertexPos = getVertexPos(feature.vertexId);
-                if (vertexPos) {
-                    const elem = this._renderer.drawPoint(vertexPos.x, vertexPos.y, { radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'}, viewport);
-                    if (elem) this._selectionElements.push(elem);
+            for (const offsetX of finalOffsets) { // オフセットループ
+                if (feature instanceof DomainPoint) {
+                    const vData = getOriginalVertexPos(feature.vertexId);
+                    if (vData) {
+                        // オフセットを適用したワールド座標で描画
+                        const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, { radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'}, viewport);
+                        if (elem) this._selectionElements.push(elem);
+                    }
+                } else if (feature instanceof DomainLine) {
+                    const linePoints = feature.vertexIds.map(id => {
+                        const v = getOriginalVertexPos(id);
+                        return v ? { x: v.x + offsetX, y: v.y } : null; // X座標にオフセット適用
+                    }).filter(Boolean);
+                    if (linePoints.length >= 2) {
+                        const elem = this._renderer.drawLine(linePoints, style, viewport);
+                        if (elem) this._selectionElements.push(elem);
+                    }
+                } else if (feature instanceof DomainPolygon) {
+                    if (feature.rings && Array.isArray(feature.rings)) {
+                        feature.rings.forEach(ring => {
+                             const ringPoints = ring.vertexIds.map(id => {
+                                 const v = getOriginalVertexPos(id);
+                                 return v ? { x: v.x + offsetX, y: v.y } : null; // X座標にオフセット適用
+                             }).filter(Boolean);
+                             if (ringPoints.length >= 3) {
+                                 const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport); // 閉じた線
+                                 if (elem) this._selectionElements.push(elem);
+                             }
+                        });
+                    }
                 }
-            } else if (feature instanceof DomainLine) {
-                const vertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
-                drawHighlightLine(vertices, style);
-            } else if (feature instanceof DomainPolygon) {
-                // リングベースで描画
-                if (feature.rings && Array.isArray(feature.rings)) {
-                    feature.rings.forEach(ring => {
-                         const ringVertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
-                         drawHighlightClosedLine(ringVertices, style);
-                    });
-                }
-                // 古い形式へのフォールバックは削除
             }
         }
     }
@@ -105,29 +106,42 @@ export class MapViewRendererHelper {
         const feature = this._viewModel.getFeatures().find(f => f.id === highlightedFeatureId);
         if (feature && feature.existsAt(currentTime)) {
             const style = { stroke: '#0088aa', strokeWidth: 2, fill: 'none', strokeDasharray: '2,2' };
-
-            if (feature instanceof DomainLine) {
-                const vertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
-                drawHighlightLine(vertices, style);
-            } else if (feature instanceof DomainPolygon) {
-                 // リングベースで描画
-                 if (feature.rings && Array.isArray(feature.rings)) {
-                    feature.rings.forEach(ring => {
-                         const ringVertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
-                         drawHighlightClosedLine(ringVertices, style);
-                    });
-                 }
-                 // 古い形式へのフォールバックは削除
+            for (const offsetX of finalOffsets) { // オフセットループ
+                if (feature instanceof DomainLine) {
+                     const linePoints = feature.vertexIds.map(id => {
+                        const v = getOriginalVertexPos(id);
+                        return v ? { x: v.x + offsetX, y: v.y } : null;
+                    }).filter(Boolean);
+                    if (linePoints.length >= 2) {
+                        const elem = this._renderer.drawLine(linePoints, style, viewport);
+                        if (elem) this._selectionElements.push(elem);
+                    }
+                } else if (feature instanceof DomainPolygon) {
+                     if (feature.rings && Array.isArray(feature.rings)) {
+                        feature.rings.forEach(ring => {
+                             const ringPoints = ring.vertexIds.map(id => {
+                                 const v = getOriginalVertexPos(id);
+                                 return v ? { x: v.x + offsetX, y: v.y } : null;
+                             }).filter(Boolean);
+                             if (ringPoints.length >= 3) {
+                                 const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport);
+                                 if (elem) this._selectionElements.push(elem);
+                             }
+                        });
+                     }
+                }
             }
         }
     }
     // 主選択頂点
     selectedVertexIds.forEach(vertexId => {
-        if (draggingVerticesInfo.has(vertexId)) return; // ドラッグ中の頂点は別途描画される
-        const vertexPos = getVertexPos(vertexId);
-        if (vertexPos) {
-            const elem = this._renderer.drawPoint(vertexPos.x, vertexPos.y, { radius: 6, fill: '#00ffff', stroke: '#0000ff', strokeWidth: 2 }, viewport);
-            if (elem) this._selectionElements.push(elem);
+        const vData = getOriginalVertexPos(vertexId); // ドラッグ中でない元の頂点データ
+        if (vData) {
+            for (const offsetX of finalOffsets) { // オフセットループ
+                // オフセットを適用したワールド座標で描画
+                const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, { radius: 6, fill: '#00ffff', stroke: '#0000ff', strokeWidth: 2 }, viewport);
+                if (elem) this._selectionElements.push(elem);
+            }
         }
     });
     this._selectionElements.forEach(el => el.classList.add('temp-drawing', 'selection-highlight'));
@@ -148,15 +162,21 @@ export class MapViewRendererHelper {
     const world = this._viewModel.getWorld();
     const viewport = this._viewportManager.getViewport();
     if (!world || !world.vertices) return; // verticesの存在チェック追加
-    const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // Mapを作成
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
 
-    // ドラッグ中の頂点マーカー
+    const worldWidth = this._renderer.getWorldWidth(); // ワールド幅を取得
+    const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
+
+    // ドラッグ中の頂点マーカー (各オフセットで描画)
     for (const [vertexId, info] of draggingVerticesInfo.entries()) {
-        const marker = this._renderer.drawPoint(info.currentPosition.x, info.currentPosition.y, { fill: '#ff00ff', radius: 7, stroke: '#ffffff', strokeWidth: 2 }, viewport);
-        if (marker) this._dragPreviewElements.push(marker);
+        for (const offsetX of finalOffsets) { // オフセットループ
+            // オフセットを適用したワールド座標で描画
+            const marker = this._renderer.drawPoint(info.currentPosition.x + offsetX, info.currentPosition.y, { fill: '#ff00ff', radius: 7, stroke: '#ffffff', strokeWidth: 2 }, viewport);
+            if (marker) this._dragPreviewElements.push(marker);
+        }
     }
 
-    // 影響を受ける地物の仮形状
+    // 影響を受ける地物の仮形状 (各オフセットで描画)
     const draggedVertexIds = new Set(draggingVerticesInfo.keys());
     // world.features 全体を対象に影響を受ける地物を探す
     const affectedFeatures = world.features.filter(f => Array.from(draggedVertexIds).some(draggedId => {
@@ -166,34 +186,36 @@ export class MapViewRendererHelper {
                (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(draggedId))); // Polygon
     }));
 
-    const getVertexPos = (vertexId) => {
+    const getVertexPosWithOffset = (vertexId, offsetX) => { // offsetX を引数に追加
         const dragInfo = draggingVerticesInfo.get(vertexId);
-        if (dragInfo) return dragInfo.currentPosition;
-        const v = verticesMap.get(vertexId); // Mapから取得
-        return v ? { x: v.x, y: v.y } : null;
+        // ドラッグ中の頂点はドラッグ先の currentPosition を使用、それ以外は元の位置
+        if (dragInfo) return { x: dragInfo.currentPosition.x + offsetX, y: dragInfo.currentPosition.y };
+        const v = verticesMap.get(vertexId);
+        return v ? { x: v.x + offsetX, y: v.y } : null;
     };
 
     affectedFeatures.forEach(feature => {
         const style = { stroke: '#ff00ff', strokeWidth: 2, fill: 'none', strokeDasharray: '3,3' };
-        if (feature instanceof DomainLine) {
-            const lineVertices = feature.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
-            if (lineVertices.length >= 2) {
-                const elem = this._renderer.drawLine(lineVertices, style, viewport);
-                if (elem) this._dragPreviewElements.push(elem);
+        for (const offsetX of finalOffsets) { // オフセットループ
+            if (feature instanceof DomainLine) {
+                const lineVertices = feature.vertexIds.map(id => getVertexPosWithOffset(id, offsetX)).filter(Boolean);
+                if (lineVertices.length >= 2) {
+                    const elem = this._renderer.drawLine(lineVertices, style, viewport);
+                    if (elem) this._dragPreviewElements.push(elem);
+                }
+            } else if (feature instanceof DomainPolygon) {
+                // リングベースで仮形状を描画
+                if (feature.rings && Array.isArray(feature.rings)) {
+                    feature.rings.forEach(ring => {
+                        const vertices = ring.vertexIds.map(id => getVertexPosWithOffset(id, offsetX)).filter(Boolean);
+                        if (vertices.length >= 3) {
+                            // 閉じた線を描画
+                            const elem = this._renderer.drawLine([...vertices, vertices[0]], style, viewport);
+                            if (elem) this._dragPreviewElements.push(elem);
+                        }
+                    });
+                }
             }
-        } else if (feature instanceof DomainPolygon) {
-            // リングベースで仮形状を描画
-            if (feature.rings && Array.isArray(feature.rings)) {
-                feature.rings.forEach(ring => {
-                    const vertices = ring.vertexIds.map(id => getVertexPos(id)).filter(Boolean);
-                    if (vertices.length >= 3) {
-                        // 閉じた線を描画
-                        const elem = this._renderer.drawLine([...vertices, vertices[0]], style, viewport);
-                        if (elem) this._dragPreviewElements.push(elem);
-                    }
-                });
-            }
-            // 古い形式へのフォールバックは削除
         }
     });
     this._dragPreviewElements.forEach(el => el.classList.add('temp-drawing', 'drag-preview'));
@@ -229,6 +251,11 @@ export class MapViewRendererHelper {
                   : subMode === 'enclave' ? { stroke: '#ff8800', strokeWidth: 3, strokeDasharray: '5,5' }
                   : { stroke: '#aaaaaa', strokeWidth: 3, strokeDasharray: '5,5' }; // サブモード未決定時
     }
+    
+    // 追加中のプレビューは、通常ワールドの端をまたいで作成することは想定しづらいため、
+    // オフセット描画は行わない (常にオフセット0で描画)
+    // もし必要であれば、SVGRenderer と同様のオフセットロジックをここにも追加する
+    // 現状はオフセットなしで描画
 
     if (tool === 'point') {
         if (addingPoints.length === 1) {
@@ -269,6 +296,8 @@ export class MapViewRendererHelper {
     if (!isMeasuring || measurePoints.length === 0) return;
 
     const viewport = this._viewportManager.getViewport();
+    // 距離測定のプレビューも、通常ワールドの端をまたいで行うことは稀なので、
+    // オフセット描画は行わない。
 
     measurePoints.forEach((point, index) => {
         const pointElem = this._renderer.drawPoint(point.x, point.y, { fill: '#ffff00', radius: 4, stroke: '#000000', strokeWidth: 1 }, viewport);
@@ -319,6 +348,7 @@ export class MapViewRendererHelper {
     this.clearGenericTemporaryElements();
     const elements = this._editingViewModel.getTemporaryElements();
     const viewport = this._viewportManager.getViewport();
+    // 汎用一時要素も、現状オフセット描画は不要と判断。
 
     elements.forEach(element => {
         let elem = null;

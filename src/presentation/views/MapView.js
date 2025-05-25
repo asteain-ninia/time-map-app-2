@@ -47,12 +47,13 @@ export class MapView {
     this._clickToleranceSq = 0; // ワールド座標での二乗値 (動的に更新)
 
     // サブクラスのインスタンス化
-    // InteractionLogic にはクリック許容範囲(二乗)を返す関数を渡す
+    // InteractionLogic にはクリック許容範囲(二乗)を返す関数とワールド幅取得関数を渡す
     this._interactionLogic = new MapViewInteractionLogic(
         viewModel,
         editingViewModel,
         viewModel._geometryService, // GeometryServiceはViewModelが持っている想定
-        () => this._clickToleranceSq // クリック許容範囲(二乗)を返す関数
+        () => this._clickToleranceSq, // クリック許容範囲(二乗)を返す関数
+        () => this._renderer.getWorldWidth() // ワールド幅取得関数を追加
     );
     this._rendererHelper = new MapViewRendererHelper(
         renderer,
