@@ -49,16 +49,26 @@ export class PropertiesTabView {
    * タブの表示を更新 (SidebarViewの_switchTabから呼び出される想定)
    */
   update() {
-    const selectedFeature = this._mapViewModel.getSelectedFeature();
+    // --- 変更ここから ---
+    let featureForProperties = this._mapViewModel.getSelectedFeature(); // 主選択された地物を取得
+    if (!featureForProperties) {
+      // 主選択がなければ、ハイライトされた地物を取得 (頂点選択時の暗黙的選択)
+      featureForProperties = this._mapViewModel.getHighlightedFeature();
+    }
+    // --- 変更ここまで ---
+
     this._propertiesContainer.innerHTML = ''; // 既存の内容をクリア
 
-    if (!selectedFeature) {
+    // --- 変更ここから ---
+    if (!featureForProperties) {
       const noSelectionMsg = document.createElement('p');
-      noSelectionMsg.textContent = '地物が選択されていません';
+      // メッセージをより包括的に変更
+      noSelectionMsg.textContent = '地物または頂点が選択されていません';
       this._propertiesContainer.appendChild(noSelectionMsg);
       return;
     }
-    this._buildPropertyForm(selectedFeature);
+    this._buildPropertyForm(featureForProperties);
+    // --- 変更ここまで ---
   }
 
   /**
