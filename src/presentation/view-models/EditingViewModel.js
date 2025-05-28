@@ -476,12 +476,16 @@ export class EditingViewModel {
   async deleteFeature(featureId, feature) { // feature は削除前のインスタンス
     if (!feature) { throw new Error("Missing feature data for deletion history."); }
     try {
+       // --- 変更ここから ---
        // HistoryService に渡すために、削除「前」の feature インスタンスが必要
-       await this._editFeatureUseCase.deleteFeature(featureId);
        // feature.properties は要素数1のはず
        await this._historyService.addHistoryEntry('delete', {
          featureInstance: feature // 削除前のドメインインスタンス
        });
+
+       await this._editFeatureUseCase.deleteFeature(featureId); // 地物削除処理
+       // --- 変更ここまで ---
+
        this._eventBus.publish('FeatureDeleted', { featureId });
        this._eventBus.publish('ClearSelection');
     } catch (error) {
