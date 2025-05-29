@@ -172,7 +172,7 @@ export class MapViewModel {
      //        this._notifyObservers('projectSettingsChanged', this.getProjectSettings());
      //    }
      // });
-
+    this._eventBus.subscribe('LayersChanged', this._onLayersChanged.bind(this));
   }
 
   /**
@@ -422,6 +422,29 @@ export class MapViewModel {
     }
     // 表示地物リストも再計算が必要 (頂点削除で地物が消える/変わる可能性があるため)
     this._loadFeaturesForCurrentTime();
+  }
+
+  /**
+   * レイヤーデータ変更イベントのハンドラ (レイヤー追加・削除・名前変更など)
+   * @private
+   */
+  async _onLayersChanged() {
+    if (!this._world) return;
+
+    // worldRepository から最新の world データを取得して _world を更新
+    // ManageLayersUseCase が worldRepository のキャッシュを更新しているため、
+    // これにより _world.layers が最新になる。
+    const worldRepository = this._editFeatureUseCase._worldRepository;
+    this._world = await worldRepository.getWorld();
+
+    // MapViewModel が保持する _features リストも、レイヤー変更（特に削除や可視性変更）
+    // によって影響を受ける可能性があるため、再ロードする。
+    await this._loadFeaturesForCurrentTime();
+
+    // オブザーバーに layers と world の変更を通知
+    this._notifyObservers('layers');
+    this._notifyObservers('world');
+    // _loadFeaturesForCurrentTime() の中で 'features' も通知される。
   }
 
   /**
@@ -906,7 +929,7 @@ export class MapViewModel {
    * @returns {Promise<void>}
    * @throws {Error} 更新に失敗した場合
    */
-  async updateProjectSettings(newSettings) { // 新規追加
+  async updateProjectSettings(newSettings) {
       try {
           const updatedSettings = await this._updateProjectSettingsUseCase.execute(newSettings);
           this._projectSettings = updatedSettings; // ViewModelの内部状態を更新
@@ -934,7 +957,7 @@ export class MapViewModel {
    * デフォルトのプロジェクト設定を取得する (JSONWorldRepository の定義と同期)
    * @returns {object} デフォルト設定オブジェクト
    */
-  getDefaultProjectSettings() { // 新規追加
+  getDefaultProjectSettings() {
       // この値は JSONWorldRepository._createEmptyWorld の settings と一致させる
       return {
           equatorLength: 40000,
