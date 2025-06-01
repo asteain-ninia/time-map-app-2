@@ -1,9 +1,9 @@
-// src\application\usecases\feature\VertexEditUseCase.js
+// src/application/usecases/feature/VertexEditUseCase.js
 
 import { Point } from '../../../domain/entities/Point';
 import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon'; // Polygon をインポート
-import { Vertex } from '../../../domain/entities/Vertex'; // 比較用
+import { Vertex } from '../../../domain/entities/Vertex'; // Vertex をインポート
 
 /**
  * 頂点の編集（移動、共有、削除）を専門に処理するユースケース
@@ -546,6 +546,131 @@ export class VertexEditUseCase {
     await this._worldRepository.saveWorld(world);
     // 更新後の feature を返す
     return { newVertex: newVertex, updatedFeature: world.features[featureIndex] };
+  }
+
+  /**
+   * 地物のエッジに頂点を追加する
+   * @param {string} featureId - 対象の地物ID
+   * @param {string} segmentStartVertexId - 線分の開始頂点ID
+   * @param {string} segmentEndVertexId - 線分の終了頂点ID
+   * @param {{x: number, y: number}} newVertexPosition - 新しい頂点のワールド座標
+   * @param {string | null} [ringId=null] - ポリゴンの場合、対象リングのID
+   * @returns {Promise<{newVertex: Vertex, updatedFeature: Feature}>} 追加された頂点と更新された地物のインスタンス
+   */
+  async addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId = null) {
+    const world = await this._worldRepository.getWorld();
+    const newVertexId = this._generateId('vertex');
+    const newVertexData = { id: newVertexId, x: newVertexPosition.x, y: newVertexPosition.y };
+    world.vertices.push(newVertexData);
+
+    const featureIndex = world.features.findIndex(f => f.id === featureId);
+    if (featureIndex === -1) {
+      // 追加した頂点をロールバック
+      world.vertices = world.vertices.filter(v => v.id !== newVertexId);
+      throw new Error(`Feature not found with ID: ${featureId}`);
+    }
+
+    let featureToUpdate = world.features[featureIndex];
+    let successfullyUpdated = false;
+
+    try {
+      if (featureToUpdate instanceof Line) {
+        const oldVertexIds = featureToUpdate.vertexIds;
+        const startIndex = oldVertexIds.indexOf(segmentStartVertexId);
+        const endIndex = oldVertexIds.indexOf(segmentEndVertexId);
+
+        if (startIndex === -1 || endIndex === -1) {
+          throw new Error(`Segment vertices not found in Line ${featureId}`);
+        }
+        // 連続するセグメントかどうかのチェック (配列の隣同士であるか)
+        if (Math.abs(startIndex - endIndex) !== 1) {
+             // 順序が逆の可能性も考慮 (例: startがindex 2, endがindex 1など)
+             // ただし、通常は InteractionLogic で正しい順序のセグメントが渡されるはず
+            throw new Error(`Segment ${segmentStartVertexId}-${segmentEndVertexId} is not a direct segment in Line ${featureId}.`);
+        }
+
+        const insertBeforeIndex = Math.max(startIndex, endIndex);
+        const newVertexIds = [
+          ...oldVertexIds.slice(0, insertBeforeIndex),
+          newVertexId,
+          ...oldVertexIds.slice(insertBeforeIndex)
+        ];
+        featureToUpdate = featureToUpdate.withVertexIds(newVertexIds);
+        successfullyUpdated = true;
+
+      } else if (featureToUpdate instanceof Polygon) {
+        if (!ringId) {
+          throw new Error(`ringId is required for adding a vertex to a Polygon edge.`);
+        }
+        const targetRingIndex = featureToUpdate.rings.findIndex(r => r.id === ringId);
+        if (targetRingIndex === -1) {
+          throw new Error(`Ring with ID ${ringId} not found in Polygon ${featureId}`);
+        }
+        const targetRing = featureToUpdate.rings[targetRingIndex];
+        const oldRingVertexIds = targetRing.vertexIds;
+        const startIndex = oldRingVertexIds.indexOf(segmentStartVertexId);
+        const endIndex = oldRingVertexIds.indexOf(segmentEndVertexId);
+
+        if (startIndex === -1 || endIndex === -1) {
+          throw new Error(`Segment vertices not found in Ring ${ringId} of Polygon ${featureId}`);
+        }
+
+        let insertBeforeIndex = -1;
+        // リングの頂点配列で、startIndexとendIndexが隣接しているか確認
+        if ((startIndex + 1) % oldRingVertexIds.length === endIndex) { // 正順
+            insertBeforeIndex = endIndex;
+        } else if ((endIndex + 1) % oldRingVertexIds.length === startIndex) { // 逆順 (通常はInteractionLogicで順序は保証されるはずだが念のため)
+            insertBeforeIndex = startIndex;
+        } else {
+            throw new Error(`Segment ${segmentStartVertexId}-${segmentEndVertexId} is not a direct segment in Ring ${ringId}.`);
+        }
+        
+        const newRingVertexIds = [
+          ...oldRingVertexIds.slice(0, insertBeforeIndex),
+          newVertexId,
+          ...oldRingVertexIds.slice(insertBeforeIndex)
+        ];
+        featureToUpdate = featureToUpdate.withUpdatedRingVertices(ringId, newRingVertexIds);
+        successfullyUpdated = true;
+
+      } else {
+        throw new Error(`Unsupported feature type for adding vertex to edge: ${featureToUpdate.constructor.name}`);
+      }
+
+      // 自己交差チェック
+      if (featureToUpdate instanceof Polygon) {
+        const getVerticesByIdsForPolygon = (ids, currentWorldVertices) => {
+            const vertexMap = new Map(currentWorldVertices.map(v => [v.id, v]));
+            return ids?.map(id => {
+                const vData = vertexMap.get(id);
+                return vData ? new Vertex(vData.id, vData.x, vData.y) : null;
+            }).filter(Boolean) || [];
+        };
+        for (const ring of featureToUpdate.rings) {
+            const ringVertices = getVerticesByIdsForPolygon(ring.vertexIds, world.vertices);
+            if (this._geometryService.isPolygonSelfIntersecting(ringVertices)) {
+                throw new Error(`Adding vertex to edge resulted in self-intersection in Polygon ${featureId}, Ring ${ring.id}.`);
+            }
+        }
+      }
+
+
+      world.features[featureIndex] = featureToUpdate;
+      await this._worldRepository.saveWorld(world);
+      return {
+        newVertex: new Vertex(newVertexData.id, newVertexData.x, newVertexData.y),
+        updatedFeature: featureToUpdate
+      };
+
+    } catch (error) {
+      // エラーが発生したら、追加した頂点をロールバック
+      if (!successfullyUpdated) { // 地物更新前にエラーが発生した場合のみ
+          world.vertices = world.vertices.filter(v => v.id !== newVertexId);
+          // saveWorld はここでは呼ばない (エラーなので状態を戻すのが主目的)
+      }
+      console.error("Error in addVertexToFeatureEdge:", error);
+      throw error; // エラーを再スローして呼び出し元で処理
+    }
   }
 
   /**

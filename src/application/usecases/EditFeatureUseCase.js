@@ -1,3 +1,5 @@
+// src/application/usecases/EditFeatureUseCase.js
+
 import { Polygon } from '../../domain/entities/Polygon';
 import { Vertex } from '../../domain/entities/Vertex';
 
@@ -89,6 +91,19 @@ export class EditFeatureUseCase {
 
   async unlinkSharedVertex(vertexId, featureId) {
     return this._vertexEditUseCase.unlinkSharedVertex(vertexId, featureId);
+  }
+
+  /**
+   * 地物のエッジに頂点を追加する (VertexEditUseCaseに委譲)
+   * @param {string} featureId - 対象の地物ID
+   * @param {string} segmentStartVertexId - 線分の開始頂点ID
+   * @param {string} segmentEndVertexId - 線分の終了頂点ID
+   * @param {{x: number, y: number}} newVertexPosition - 新しい頂点のワールド座標
+   * @param {string | null} [ringId=null] - ポリゴンの場合、対象リングのID
+   * @returns {Promise<{newVertex: Vertex, updatedFeature: Feature}>} 追加された頂点と更新された地物のインスタンス
+   */
+  async addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId = null) {
+    return this._vertexEditUseCase.addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId);
   }
 
   // --- ポリゴン固有操作 (リングベース移行後は PolygonEditService へ委譲) ---

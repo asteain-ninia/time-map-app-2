@@ -77,6 +77,99 @@ export class MapViewInteractionLogic {
   }
 
   /**
+   * クリックされたワールド座標に最も近いエッジ（線分のこと）を探す
+   * @param {object} worldPoint - ワールド座標 {x, y}
+   * @returns {object | null} 見つかったエッジ情報、またはnull。
+   *          情報は { featureId, ringId?, segmentStartVertexId, segmentEndVertexId, projectionPoint }
+   */
+  findClosestEdge(worldPoint) {
+    const features = this._viewModel.getFeatures(); // 表示中の地物のみ
+    const world = this._viewModel.getWorld();
+    if (!features || features.length === 0 || !world || !world.vertices) {
+      return null;
+    }
+
+    const verticesMap = new Map(world.vertices.map(v => [v.id, { id: v.id, x: v.x, y: v.y }]));
+    let minDistanceSq = this._getClickToleranceSq();
+    let closestEdgeInfo = null;
+
+    const worldWidth = this._getWorldWidthFunc();
+    const offsets = [0, -worldWidth, worldWidth];
+
+    for (const feature of features) {
+      if (feature instanceof DomainLine) {
+        if (!feature.vertexIds || feature.vertexIds.length < 2) continue;
+
+        for (let i = 0; i < feature.vertexIds.length - 1; i++) {
+          const vStartId = feature.vertexIds[i];
+          const vEndId = feature.vertexIds[i + 1];
+          const vStartOriginal = verticesMap.get(vStartId);
+          const vEndOriginal = verticesMap.get(vEndId);
+
+          if (!vStartOriginal || !vEndOriginal) continue;
+
+          for (const offsetX of offsets) {
+            const segmentStartOffset = { x: vStartOriginal.x + offsetX, y: vStartOriginal.y };
+            const segmentEndOffset = { x: vEndOriginal.x + offsetX, y: vEndOriginal.y };
+
+            const distSq = this._geometryService.distancePointSegmentSq(worldPoint, segmentStartOffset, segmentEndOffset);
+
+            if (distSq < minDistanceSq) {
+              minDistanceSq = distSq;
+              let projection = this._geometryService.projectPointToEdge(worldPoint, segmentStartOffset, segmentEndOffset);
+              // 投影点をオフセット0の座標系に戻す
+              const projectionOriginalX = projection.x - offsetX;
+              closestEdgeInfo = {
+                featureId: feature.id,
+                ringId: null,
+                segmentStartVertexId: vStartId,
+                segmentEndVertexId: vEndId,
+                projectionPoint: { x: projectionOriginalX, y: projection.y }
+              };
+            }
+          }
+        }
+      } else if (feature instanceof DomainPolygon) {
+        if (!feature.rings || feature.rings.length === 0) continue;
+
+        for (const ring of feature.rings) {
+          if (!ring.vertexIds || ring.vertexIds.length < 2) continue; // リングは通常3頂点以上だが、線分としては2頂点必要
+
+          for (let i = 0; i < ring.vertexIds.length; i++) {
+            const vStartId = ring.vertexIds[i];
+            const vEndId = ring.vertexIds[(i + 1) % ring.vertexIds.length]; // リングなので最後は最初に戻る
+            const vStartOriginal = verticesMap.get(vStartId);
+            const vEndOriginal = verticesMap.get(vEndId);
+
+            if (!vStartOriginal || !vEndOriginal) continue;
+
+            for (const offsetX of offsets) {
+              const segmentStartOffset = { x: vStartOriginal.x + offsetX, y: vStartOriginal.y };
+              const segmentEndOffset = { x: vEndOriginal.x + offsetX, y: vEndOriginal.y };
+
+              const distSq = this._geometryService.distancePointSegmentSq(worldPoint, segmentStartOffset, segmentEndOffset);
+
+              if (distSq < minDistanceSq) {
+                minDistanceSq = distSq;
+                let projection = this._geometryService.projectPointToEdge(worldPoint, segmentStartOffset, segmentEndOffset);
+                const projectionOriginalX = projection.x - offsetX;
+                closestEdgeInfo = {
+                  featureId: feature.id,
+                  ringId: ring.id,
+                  segmentStartVertexId: vStartId,
+                  segmentEndVertexId: vEndId,
+                  projectionPoint: { x: projectionOriginalX, y: projection.y }
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+    return closestEdgeInfo;
+  }
+
+  /**
    * クリックされたワールド座標に最も近い地物を探す (包含関係と境界線上の近さを考慮)
    * @param {object} worldPoint - ワールド座標 {x, y}
    * @returns {Feature | null} 最も適切な地物オブジェクト、またはnull
@@ -343,8 +436,8 @@ export class MapViewInteractionLogic {
              }
          }
          if (isOnBoundaryWithOffset) {
-             if (bestLocationInfo.nestingLevel === 0) {
-                 bestLocationInfo = { type: 'outside', ringId: null, nestingLevel: 0 };
+             if (bestLocationInfo.nestingLevel === 0) { // どのオフセットでも内部でなかった場合のみ境界を考慮
+                 bestLocationInfo = { type: 'outside', ringId: null, nestingLevel: 0 }; // 境界は outside とみなす
              }
              continue; 
          }
@@ -353,7 +446,7 @@ export class MapViewInteractionLogic {
          for (const ring of polygon.rings) {
            const vertsWithOffset = getVerticesWithOffset(ring.vertexIds, offsetX);
            if (vertsWithOffset.length >= 3 &&
-               this._geometryService.isPointInPolygon(point, vertsWithOffset, false)) {
+               this._geometryService.isPointInPolygon(point, vertsWithOffset, false)) { // includeBoundary=false で厳密な内部判定
              insideRingsForThisOffset.push(ring);
            }
          }
@@ -369,6 +462,7 @@ export class MapViewInteractionLogic {
          } else if (nestingLevelForThisOffset === bestLocationInfo.nestingLevel && nestingLevelForThisOffset > 0) {
              const isInsideOuterCurrent = nestingLevelForThisOffset % 2 === 1;
              const isInsideOuterBest = bestLocationInfo.nestingLevel % 2 === 1;
+             // 同じネストレベルの場合、inside_outer (塗りつぶし領域) を優先する
              if (isInsideOuterCurrent && !isInsideOuterBest) {
                 bestLocationInfo = {
                     type: 'inside_outer',
@@ -405,7 +499,7 @@ export class MapViewInteractionLogic {
                 break;
             }
         }
-        if (isOnBoundary) return { type: 'outside', ringId: null, nestingLevel: 0 };
+        if (isOnBoundary) return { type: 'outside', ringId: null, nestingLevel: 0 }; // 境界はoutside
 
         const insideRings = [];
         for (const ring of polygon.rings) {

@@ -1,4 +1,4 @@
-// src\presentation\views\map\MapViewEventHandler.js
+// src/presentation/views/map/MapViewEventHandler.js
 
 import { Point as DomainPoint } from '../../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../../domain/entities/Line.js';
@@ -128,6 +128,17 @@ export class MapViewEventHandler {
         if (tool === 'add-hole') {
           // 穴/飛び地追加モードのクリック処理
           this._handleAddHoleOrEnclaveClick(worldPoint);
+        } else if (tool === 'add-vertex-on-edge') {
+          const closestEdgeInfo = this._interactionLogic.findClosestEdge(worldPoint);
+          if (closestEdgeInfo) {
+            this._editingViewModel.addVertexToEdge(closestEdgeInfo)
+              .catch(error => {
+                console.error("[EventHandler] Error calling addVertexToEdge:", error);
+                alert(`線上への頂点追加に失敗しました: ${error.message}`);
+              });
+          } else {
+            console.log('[EventHandler] No close edge found for add-vertex-on-edge.');
+          }
         } else { // 選択、移動など
             const clickedVertex = this._interactionLogic.findClosestVertex(worldPoint);
             if (clickedVertex) {
@@ -256,6 +267,7 @@ export class MapViewEventHandler {
         }
         // 'add' モードのクリックは MouseDown で点追加済み
         // 'edit' + 'add-hole' モードのクリックも MouseDown で処理済み
+        // 'edit' + 'add-vertex-on-edge' のクリックも MouseDown で処理済み
     }
 
     // 状態リセット

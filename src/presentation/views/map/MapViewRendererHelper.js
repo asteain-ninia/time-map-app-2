@@ -44,21 +44,25 @@ export class MapViewRendererHelper {
   renderSelection() {
     this.clearSelectionHighlights();
     const selectedFeatureId = this._viewModel.getSelectedFeatureId();
-    const selectedVertexIds = this._viewModel.getSelectedVertexIds();
+    const selectedVertexIds = this._viewModel.getSelectedVertexIds(); // Set<string>
     const highlightedFeatureId = this._viewModel.getHighlightedFeatureId();
     const viewport = this._viewportManager.getViewport();
     const world = this._viewModel.getWorld();
     const currentTime = this._viewModel.getCurrentTime();
-    if (!world || !world.vertices) return; // verticesの存在チェック追加
-    const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo();
-    const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+    if (!world || !world.vertices) return;
+    const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo(); // Map<string, {originalPosition, currentPosition}>
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // {id, x, y} のマップ
 
-    const worldWidth = this._renderer.getWorldWidth(); // ワールド幅を取得
-    const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
+    const worldWidth = this._renderer.getWorldWidth();
+    const finalOffsets = [0, -worldWidth, worldWidth];
+
+    // 通常頂点マーカーのスタイル
+    const normalVertexStyle = { radius: 3, fill: 'rgba(0, 150, 255, 0.5)', stroke: 'rgba(0, 100, 200, 0.7)', strokeWidth: 1, pointerEvents: 'none' };
 
     // ドラッグ中でない頂点の元の位置を取得する関数
-    const getOriginalVertexPos = (vertexId) => {
-        if (draggingVerticesInfo.has(vertexId)) return null; // ドラッグ中の頂点はここでは扱わない
+    const getOriginalVertexPosIfNeitherSelectedNorDragged = (vertexId) => {
+        if (selectedVertexIds.has(vertexId)) return null; // 主選択頂点ならここでは描画しない
+        if (draggingVerticesInfo.has(vertexId)) return null; // ドラッグ中頂点もここでは描画しない
         return verticesMap.get(vertexId); // {id, x, y}
     };
 
@@ -67,34 +71,49 @@ export class MapViewRendererHelper {
         const feature = this._viewModel.getFeatures().find(f => f.id === selectedFeatureId);
         if (feature && feature.existsAt(currentTime)) {
             const style = { stroke: '#00ffff', strokeWidth: 4, fill: 'none', strokeDasharray: '4,4' };
-            for (const offsetX of finalOffsets) { // オフセットループ
+            for (const offsetX of finalOffsets) {
                 if (feature instanceof DomainPoint) {
-                    const vData = getOriginalVertexPos(feature.vertexId);
-                    if (vData) {
-                        // オフセットを適用したワールド座標で描画
+                    const vData = verticesMap.get(feature.vertexId); // Points always have original data for this
+                    if (vData && !selectedVertexIds.has(vData.id) && !draggingVerticesInfo.has(vData.id)) { // Only draw if not specially handled
                         const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, { radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'}, viewport);
                         if (elem) this._selectionElements.push(elem);
                     }
                 } else if (feature instanceof DomainLine) {
                     const linePoints = feature.vertexIds.map(id => {
-                        const v = getOriginalVertexPos(id);
-                        return v ? { x: v.x + offsetX, y: v.y } : null; // X座標にオフセット適用
+                        const v = verticesMap.get(id); // Always use current data for path
+                        return v ? { x: v.x + offsetX, y: v.y } : null;
                     }).filter(Boolean);
                     if (linePoints.length >= 2) {
                         const elem = this._renderer.drawLine(linePoints, style, viewport);
                         if (elem) this._selectionElements.push(elem);
                     }
+                    // 通常頂点マーカー
+                    feature.vertexIds.forEach(id => {
+                        const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
+                        if (vData) {
+                            const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                            if (marker) this._selectionElements.push(marker);
+                        }
+                    });
                 } else if (feature instanceof DomainPolygon) {
                     if (feature.rings && Array.isArray(feature.rings)) {
                         feature.rings.forEach(ring => {
                              const ringPoints = ring.vertexIds.map(id => {
-                                 const v = getOriginalVertexPos(id);
-                                 return v ? { x: v.x + offsetX, y: v.y } : null; // X座標にオフセット適用
+                                 const v = verticesMap.get(id); // Always use current data for path
+                                 return v ? { x: v.x + offsetX, y: v.y } : null;
                              }).filter(Boolean);
                              if (ringPoints.length >= 3) {
-                                 const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport); // 閉じた線
+                                 const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport);
                                  if (elem) this._selectionElements.push(elem);
                              }
+                             // 通常頂点マーカー
+                             ring.vertexIds.forEach(id => {
+                                 const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
+                                 if (vData) {
+                                     const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                                     if (marker) this._selectionElements.push(marker);
+                                 }
+                             });
                         });
                     }
                 }
@@ -106,10 +125,10 @@ export class MapViewRendererHelper {
         const feature = this._viewModel.getFeatures().find(f => f.id === highlightedFeatureId);
         if (feature && feature.existsAt(currentTime)) {
             const style = { stroke: '#0088aa', strokeWidth: 2, fill: 'none', strokeDasharray: '2,2' };
-            for (const offsetX of finalOffsets) { // オフセットループ
+            for (const offsetX of finalOffsets) {
                 if (feature instanceof DomainLine) {
                      const linePoints = feature.vertexIds.map(id => {
-                        const v = getOriginalVertexPos(id);
+                        const v = verticesMap.get(id);
                         return v ? { x: v.x + offsetX, y: v.y } : null;
                     }).filter(Boolean);
                     if (linePoints.length >= 2) {
@@ -120,7 +139,7 @@ export class MapViewRendererHelper {
                      if (feature.rings && Array.isArray(feature.rings)) {
                         feature.rings.forEach(ring => {
                              const ringPoints = ring.vertexIds.map(id => {
-                                 const v = getOriginalVertexPos(id);
+                                 const v = verticesMap.get(id);
                                  return v ? { x: v.x + offsetX, y: v.y } : null;
                              }).filter(Boolean);
                              if (ringPoints.length >= 3) {
@@ -133,9 +152,9 @@ export class MapViewRendererHelper {
             }
         }
     }
-    // 主選択頂点
+    // 主選択頂点 (これは他のマーカーより手前に描画されるべきなので、最後に描画する)
     selectedVertexIds.forEach(vertexId => {
-        const vData = getOriginalVertexPos(vertexId); // ドラッグ中でない元の頂点データ
+        const vData = verticesMap.get(vertexId); // 主選択頂点の現在の位置
         if (vData) {
             for (const offsetX of finalOffsets) { // オフセットループ
                 // オフセットを適用したワールド座標で描画

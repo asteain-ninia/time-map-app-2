@@ -1,6 +1,9 @@
 // src/application/services/history/OperationEngine.js
 import { Vertex } from '../../../domain/entities/Vertex.js';
-// Point, Line, Polygon, Property は HistorySerializer がインスタンス化するため、ここでは不要
+import { Point } from '../../../domain/entities/Point.js'; // executeReverseでのインスタンス生成のため
+import { Line as DomainLine } from '../../../domain/entities/Line.js'; // 同上
+import { Polygon as DomainPolygon } from '../../../domain/entities/Polygon.js'; // 同上
+// Property は HistorySerializer がインスタンス化するため、ここでは不要
 
 export class OperationEngine {
   _worldRepository; // EditFeatureUseCase を使わない場合のフォールバック用に残すか、完全に削除するか検討
@@ -41,13 +44,19 @@ export class OperationEngine {
               verticesActuallyAddedToWorld = true;
             }
           });
-          if (verticesActuallyAddedToWorld) await this._worldRepository.saveWorld(world);
+          if (verticesActuallyAddedToWorld) await this._worldRepository.saveWorld(world); // 頂点追加後に一度保存
         }
         // 2. 地物をワールドに「追加」する (EditFeatureUseCaseには履歴からの復元用addがないため、WorldRepositoryを直接操作)
         if (operation.featureData) {
           const featureInstance = this._serializer.deserialize(operation.featureData);
           if (featureInstance && !world.features.some(f => f.id === featureInstance.id)) {
-            world.features.push(featureInstance);
+            // world.features.push(featureInstance); // ここでドメインインスタンスを直接push
+             const existingFeatureIndex = world.features.findIndex(f => f.id === featureInstance.id);
+             if (existingFeatureIndex !== -1) {
+                 world.features[existingFeatureIndex] = featureInstance;
+             } else {
+                 world.features.push(featureInstance);
+             }
             await this._worldRepository.saveWorld(world);
             resultInfo = { addedFeature: featureInstance, eventType: 'FeatureAdded', eventPayload: { feature: featureInstance } };
           }
@@ -118,6 +127,79 @@ export class OperationEngine {
             resultInfo = { updatedFeature: updatedPolygonRing, eventType: 'FeatureUpdated', eventPayload: { feature: updatedPolygonRing } };
         }
         break;
+      
+      case 'addVertexToEdge': // Redo時の処理
+        const newVertexPlainRedo = this._serializer.deserialize(operation.addedVertexData);
+        if (!newVertexPlainRedo || !(newVertexPlainRedo instanceof Vertex)) {
+            throw new Error("Invalid vertex data in history for addVertexToEdge redo.");
+        }
+        // 1. 頂点をワールドに追加 (重複チェック)
+        if (!world.vertices.some(v => v.id === newVertexPlainRedo.id)) {
+            world.vertices.push({ id: newVertexPlainRedo.id, x: newVertexPlainRedo.x, y: newVertexPlainRedo.y });
+            // この後、地物更新と合わせて一度だけsaveWorldする
+        }
+
+        // 2. 地物の頂点リストを更新
+        const featureIndexRedo = world.features.findIndex(f => f.id === operation.featureId);
+        if (featureIndexRedo === -1) {
+            throw new Error(`Feature ${operation.featureId} not found for addVertexToEdge redo.`);
+        }
+        let featureToUpdateRedo = world.features[featureIndexRedo];
+
+        if (featureToUpdateRedo instanceof DomainLine) {
+            const oldVertexIds = featureToUpdateRedo.vertexIds;
+            const startIndex = oldVertexIds.indexOf(operation.segmentStartVertexId);
+            const endIndex = oldVertexIds.indexOf(operation.segmentEndVertexId);
+            if (startIndex === -1 || endIndex === -1 || Math.abs(startIndex - endIndex) !== 1) {
+                 throw new Error(`Invalid segment for Line in addVertexToEdge redo: ${operation.segmentStartVertexId}-${operation.segmentEndVertexId}`);
+            }
+            const insertBeforeIndex = Math.max(startIndex, endIndex);
+            const newVertexIdsLine = [
+                ...oldVertexIds.slice(0, insertBeforeIndex),
+                newVertexPlainRedo.id,
+                ...oldVertexIds.slice(insertBeforeIndex)
+            ];
+            featureToUpdateRedo = featureToUpdateRedo.withVertexIds(newVertexIdsLine);
+        } else if (featureToUpdateRedo instanceof DomainPolygon) {
+            if (!operation.ringId) throw new Error("ringId missing for Polygon in addVertexToEdge redo.");
+            const targetRingIndex = featureToUpdateRedo.rings.findIndex(r => r.id === operation.ringId);
+            if (targetRingIndex === -1) throw new Error(`Ring ${operation.ringId} not found in Polygon for redo.`);
+            
+            const targetRing = featureToUpdateRedo.rings[targetRingIndex];
+            const oldRingVertexIds = targetRing.vertexIds;
+            const startIndex = oldRingVertexIds.indexOf(operation.segmentStartVertexId);
+            const endIndex = oldRingVertexIds.indexOf(operation.segmentEndVertexId);
+
+            let insertBeforeIndexRing = -1;
+            if ((startIndex + 1) % oldRingVertexIds.length === endIndex) { // 正順
+                insertBeforeIndexRing = endIndex;
+            } else if ((endIndex + 1) % oldRingVertexIds.length === startIndex) { // 逆順で閉路の終端と始点
+                insertBeforeIndexRing = startIndex;
+            } else {
+                 throw new Error(`Invalid segment for Polygon Ring in addVertexToEdge redo: ${operation.segmentStartVertexId}-${operation.segmentEndVertexId}`);
+            }
+            const newRingVertexIdsPoly = [
+                ...oldRingVertexIds.slice(0, insertBeforeIndexRing),
+                newVertexPlainRedo.id,
+                ...oldRingVertexIds.slice(insertBeforeIndexRing)
+            ];
+            featureToUpdateRedo = featureToUpdateRedo.withUpdatedRingVertices(operation.ringId, newRingVertexIdsPoly);
+        } else {
+            throw new Error(`Unsupported feature type for addVertexToEdge redo: ${featureToUpdateRedo.constructor.name}`);
+        }
+        
+        world.features[featureIndexRedo] = featureToUpdateRedo;
+        await this._worldRepository.saveWorld(world);
+        resultInfo = { 
+            updatedFeature: featureToUpdateRedo, 
+            eventType: 'VertexAddedToEdge', // カスタムイベントタイプ
+            eventPayload: { 
+                featureId: featureToUpdateRedo.id, 
+                addedVertex: newVertexPlainRedo, // Vertexインスタンス
+                updatedFeature: featureToUpdateRedo // 更新後地物インスタンス
+            }
+        };
+        break;
 
       default:
         console.warn(`OperationEngine.execute: Unsupported operation type: ${operation.type}`);
@@ -151,13 +233,19 @@ export class OperationEngine {
                     verticesRestored = true;
                 }
             });
-            if (verticesRestored) await this._worldRepository.saveWorld(world);
+            if (verticesRestored) await this._worldRepository.saveWorld(world); // 頂点復元後に一度保存
         }
         // 2. 地物をワールドに「追加」
         if (operation.featureData) {
             const featureInstance = this._serializer.deserialize(operation.featureData);
-            if (featureInstance && !world.features.some(f => f.id === featureInstance.id)) {
-                world.features.push(featureInstance);
+            if (featureInstance) { // 存在チェックはせずに上書きまたは追加
+                // world.features.push(featureInstance);
+                 const existingFeatureIndex = world.features.findIndex(f => f.id === featureInstance.id);
+                 if (existingFeatureIndex !== -1) {
+                     world.features[existingFeatureIndex] = featureInstance; // 既存なら上書き
+                 } else {
+                     world.features.push(featureInstance); // なければ追加
+                 }
                 await this._worldRepository.saveWorld(world);
                 resultInfo = { addedFeature: featureInstance, eventType: 'FeatureAdded', eventPayload: { feature: featureInstance } };
             }
@@ -260,6 +348,36 @@ export class OperationEngine {
                  }
              }
         }
+        break;
+
+      case 'addVertexToEdge': // Undo時の処理
+        // 1. 頂点をワールドから削除
+        world.vertices = world.vertices.filter(v => v.id !== operation.newVertexId);
+        
+        // 2. 地物の状態を操作前に戻す (featureBeforeData を使用)
+        const featureToRestoreUndo = this._serializer.deserialize(operation.featureBeforeData);
+        if (!featureToRestoreUndo) {
+            throw new Error("Failed to deserialize featureBeforeData for addVertexToEdge undo.");
+        }
+        const featureIndexUndo = world.features.findIndex(f => f.id === operation.featureId);
+        if (featureIndexUndo === -1) {
+             // 地物が何らかの理由で見つからない場合 (通常はありえない)、エラーまたは警告
+            console.warn(`Feature ${operation.featureId} not found during addVertexToEdge undo, cannot restore its state.`);
+             // この場合、頂点削除のみで終了する可能性がある
+        } else {
+            world.features[featureIndexUndo] = featureToRestoreUndo;
+        }
+        
+        await this._worldRepository.saveWorld(world);
+        resultInfo = { 
+            updatedFeature: featureToRestoreUndo, // 復元された地物
+            eventType: 'VertexRemovedFromEdge', // カスタムイベントタイプ
+            eventPayload: { 
+                featureId: operation.featureId, 
+                removedVertexId: operation.newVertexId,
+                updatedFeature: featureToRestoreUndo 
+            }
+        };
         break;
 
       default:

@@ -1,3 +1,5 @@
+// src/presentation/views/ToolbarView.js
+
 /**
  * ツールバー表示
  */
@@ -132,20 +134,17 @@ export class ToolbarView {
     const editTools = [
       { id: 'select', label: '選択', icon: '◉' },
       { id: 'move', label: '移動', icon: '↔' },
+      { id: 'add-vertex-on-edge', label: '線上点追加', icon: '⌖' }, // 修正: 新しいツールを追加
       { id: 'add-hole', label: '穴追加', icon: '◎' },
       { id: 'split', label: '分割', icon: '✂' }
     ];
     editTools.forEach(tool => {
       const button = createButton(tool, () => {
-        // 'add-hole' ツール選択時にモードも 'edit' にする
-        if (this._editingViewModel.getMode() !== 'edit') {
+        // 'add-hole' または 'add-vertex-on-edge' ツール選択時にモードも 'edit' にする
+        if (this._editingViewModel.getMode() !== 'edit' && (tool.id === 'add-hole' || tool.id === 'add-vertex-on-edge')) {
              this._editingViewModel.setMode('edit');
         }
         this._editingViewModel.setTool(tool.id);
-        // if (tool.id === 'add-hole') {
-        //    // 穴追加モードの開始は MapView 側でポリゴン選択後に行う
-        //    console.log("穴追加ツール選択。次にマップ上のポリゴンをクリックしてください。");
-        // }
       });
        button.dataset.mode = 'edit';
       toolSection.appendChild(button);

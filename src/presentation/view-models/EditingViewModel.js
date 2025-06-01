@@ -1,4 +1,4 @@
-// src\presentation\view-models\EditingViewModel.js
+// src/presentation/view-models/EditingViewModel.js
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { Property } from '../../domain/value-objects/Property.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
@@ -592,6 +592,66 @@ export class EditingViewModel {
       throw error;
     }
   }
+
+  /**
+   * 指定されたエッジに頂点を追加する
+   * @param {object} edgeInfo - エッジ情報 { featureId, ringId?, segmentStartVertexId, segmentEndVertexId, projectionPoint }
+   * @returns {Promise<void>}
+   */
+  async addVertexToEdge(edgeInfo) {
+    if (!edgeInfo || !edgeInfo.featureId || !edgeInfo.segmentStartVertexId || !edgeInfo.segmentEndVertexId || !edgeInfo.projectionPoint) {
+      console.error("Invalid edgeInfo provided to addVertexToEdge", edgeInfo);
+      throw new Error("頂点追加のためのエッジ情報が不完全です。");
+    }
+
+    try {
+      const worldRepository = this._editFeatureUseCase._worldRepository;
+      const worldBefore = await worldRepository.getWorld();
+      const featureBeforeUpdate = worldBefore.features.find(f => f.id === edgeInfo.featureId);
+      if (!featureBeforeUpdate) {
+        throw new Error(`対象の地物が見つかりません: ${edgeInfo.featureId}`);
+      }
+
+      // UseCaseを呼び出し (VertexEditUseCaseに新しいメソッドを追加する想定)
+      const result = await this._editFeatureUseCase.addVertexToFeatureEdge(
+        edgeInfo.featureId,
+        edgeInfo.segmentStartVertexId,
+        edgeInfo.segmentEndVertexId,
+        edgeInfo.projectionPoint, // {x, y}
+        edgeInfo.ringId // ポリゴンの場合のみ ringId を渡す
+      );
+      // result は { newVertex: Vertex, updatedFeature: Feature } を想定
+
+      if (!result || !result.newVertex || !result.updatedFeature) {
+        throw new Error("VertexEditUseCase.addVertexToFeatureEdge did not return expected result.");
+      }
+
+      // HistoryService に履歴追加を依頼
+      await this._historyService.addHistoryEntry('addVertexToEdge', {
+        featureId: edgeInfo.featureId,
+        ringId: edgeInfo.ringId, // ポリゴンの場合のみ
+        segmentStartVertexId: edgeInfo.segmentStartVertexId,
+        segmentEndVertexId: edgeInfo.segmentEndVertexId,
+        newVertexId: result.newVertex.id,
+        newVertexPosition: { x: result.newVertex.x, y: result.newVertex.y }, // プレーンオブジェクト
+        featureBeforeData: this._historyService._serializer.serialize(featureBeforeUpdate) // 更新前の地物データ
+      });
+
+      // イベント発行
+      this._eventBus.publish('VertexAddedToEdge', {
+        newVertex: result.newVertex, // Vertexインスタンス
+        updatedFeature: result.updatedFeature // Featureインスタンス
+      });
+      // 地物全体の更新としても通知
+      this._eventBus.publish('FeatureUpdated', { feature: result.updatedFeature });
+
+    } catch (error) {
+      console.error('エッジへの頂点追加に失敗しました (EditingViewModel)', error);
+      alert(`エッジへの頂点追加に失敗: ${error.message}`);
+      throw error; // 必要に応じて呼び出し元でさらに処理
+    }
+  }
+
 
   /**
    * 一時的な表示要素を追加

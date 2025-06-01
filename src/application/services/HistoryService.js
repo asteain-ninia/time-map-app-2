@@ -151,6 +151,22 @@ export class HistoryService {
                 addedVerticesData: payload.addedVerticesDataFromUseCase // 既にプレーンオブジェクト
             };
             break;
+        case 'addVertexToEdge': // 新しい操作タイプ
+            // payload: { featureId, ringId?, segmentStartVertexId, segmentEndVertexId, newVertexId, newVertexPosition (plain {x,y}), featureBeforeData (serialized plain object) }
+            if (!payload || !payload.featureId || !payload.segmentStartVertexId || !payload.segmentEndVertexId || !payload.newVertexId || !payload.newVertexPosition || !payload.featureBeforeData) {
+                throw new Error("Invalid payload for addVertexToEdge history entry.");
+            }
+            const addedVertexDataForEdge = this._serializer.serialize(new Vertex(payload.newVertexId, payload.newVertexPosition.x, payload.newVertexPosition.y));
+            historyEntryData = {
+                featureId: payload.featureId,
+                ringId: payload.ringId, // ポリゴンの場合のみ、なければnull
+                segmentStartVertexId: payload.segmentStartVertexId,
+                segmentEndVertexId: payload.segmentEndVertexId,
+                newVertexId: payload.newVertexId,
+                addedVertexData: addedVertexDataForEdge, // シリアライズされたVertexデータ
+                featureBeforeData: payload.featureBeforeData // 既にシリアライズされている前提
+            };
+            break;
         default:
             console.warn(`HistoryService.addHistoryEntry: Unsupported operation type: ${operationType}`);
             return;
