@@ -1,3 +1,5 @@
+// src/domain/entities/Point.js
+
 import { Feature } from './Feature.js';
 import { Property } from '../value-objects/Property.js'; // Propertyをインポート
 
@@ -39,10 +41,10 @@ export class Point extends Feature {
    */
   static create(id, properties, geometry, layerId) {
     // properties が要素数1の Property インスタンスの配列であることをバリデーション
-    if (!Array.isArray(properties) || properties.length !== 1 || !(properties[0] instanceof Property)) {
-        console.warn("Point.create: properties must be an array with a single Property instance. Received:", properties);
-        // 不正な場合はフォールバックするよりエラーの方が良いかもしれないが、Featureコンストラクタのフォールバックに任せる
-    }
+    // (バリデーションは AddFeatureUseCase で行うので、ここではそのまま渡す)
+    // if (!Array.isArray(properties) || properties.length !== 1 || !(properties[0] instanceof Property)) {
+    //     console.warn("Point.create: properties must be an array with a single Property instance. Received:", properties);
+    // }
     return new Point(id, [geometry.vertexId], properties, layerId);
   }
 
@@ -52,6 +54,7 @@ export class Point extends Feature {
    * @returns {Point} 新しい点情報オブジェクト
    */
   withProperties(properties) {
+    // Feature.withProperties と同様のロジック
     let singlePropertyArray;
     if (Array.isArray(properties) && properties.length > 0 && properties[0] instanceof Property) {
         singlePropertyArray = [properties[0]];
@@ -70,6 +73,7 @@ export class Point extends Feature {
    * @returns {Point} 新しい点情報オブジェクト
    */
   withLayerId(layerId) {
+    // this._properties を引き継ぐ
     return new Point(this._id, this._vertexIds, this._properties, layerId);
   }
 
@@ -82,6 +86,7 @@ export class Point extends Feature {
     if (!Array.isArray(vertexIds) || vertexIds.length !== 1) {
       throw new Error('Point.withVertexIds expects an array with exactly one vertexId.');
     }
+    // this._properties を引き継ぐ
     return new Point(this._id, vertexIds, this._properties, this._layerId);
   }
 }

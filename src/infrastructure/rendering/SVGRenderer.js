@@ -171,7 +171,7 @@ render(world, viewport, currentTime, projectSettings) {
 
     // このレイヤーに属する地物をフィルタリング
     const layerFeatures = world.features.filter(f =>
-      f.layerId === layer.id && f.existsAt(currentTime)
+      f.layerId === layer.id && f.existsAt(currentTime) // 修正: Feature.existsAt を使用
     );
 
     // console.log(`レイヤー ${layer.name} の地物数:`, layerFeatures.length);
@@ -185,21 +185,21 @@ render(world, viewport, currentTime, projectSettings) {
 
     // 面 → 線 → 点の順で描画
     for (const polygon of polygons) {
-      const element = this._renderPolygon(polygon, world.vertices, currentTime, viewport);
+      const element = this._renderPolygon(polygon, world.vertices, currentTime, viewport); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
     }
 
     for (const line of lines) {
-      const element = this._renderLine(line, world.vertices, currentTime, viewport);
+      const element = this._renderLine(line, world.vertices, currentTime, viewport); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
     }
 
     for (const point of points) {
-      const element = this._renderPoint(point, world.vertices, currentTime, viewport);
+      const element = this._renderPoint(point, world.vertices, currentTime, viewport); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
@@ -411,12 +411,12 @@ _renderGrid(viewport, gridSettings) {
    * @param {Vertex[]} vertices - 頂点配列
    * @param {TimePoint} currentTime - 現在の時間点
    * @param {Object} viewport - ビューポート情報
-   * @returns {SVGElement} SVG要素
+   * @returns {SVGElement | null} SVG要素
    * @private
    */
   _renderPoint(point, vertices, currentTime, viewport) {
-    const property = point.getPropertyAt(currentTime);
-    if (!property) return null;
+    const property = point.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
+    if (!property) return null; // 修正: property が null なら描画しない
 
     // 頂点を取得
     const vertexId = point.vertexId;
@@ -490,12 +490,12 @@ _renderGrid(viewport, gridSettings) {
    * @param {Vertex[]} vertices - 頂点配列
    * @param {TimePoint} currentTime - 現在の時間点
    * @param {Object} viewport - ビューポート情報
-   * @returns {SVGElement} SVG要素
+   * @returns {SVGElement | null} SVG要素
    * @private
    */
   _renderLine(line, vertices, currentTime, viewport) {
-    const property = line.getPropertyAt(currentTime);
-    if (!property) return null;
+    const property = line.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
+    if (!property) return null; // 修正: property が null なら描画しない
 
     // 頂点を取得 (元座標)
     const lineVerticesOriginal = line.vertexIds.map(id => vertices.find(v => v.id === id));
@@ -585,8 +585,8 @@ _renderGrid(viewport, gridSettings) {
    * @private
    */
   _renderPolygon(polygon, vertices, currentTime, viewport) {
-    const property = polygon.getPropertyAt(currentTime);
-    if (!property) return null;
+    const property = polygon.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
+    if (!property) return null; // 修正: property が null なら描画しない
 
     // リングが存在しない場合は描画しない (子ポリゴンのみの場合は描画しないルール)
     if (!polygon.rings || polygon.rings.length === 0) {

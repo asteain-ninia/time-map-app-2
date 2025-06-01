@@ -1,3 +1,5 @@
+// src/domain/entities/Polygon.js
+
 import { Feature } from './Feature.js';
 import { Property } from '../value-objects/Property.js';
 // Vertex は直接使わないが、概念として関連
@@ -141,10 +143,19 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withProperties(properties) {
-    // リング構造や他のPolygon固有プロパティは維持
+    // Feature.withProperties と同様のロジックで singlePropertyArray を準備
+    let singlePropertyArray;
+    if (Array.isArray(properties) && properties.length > 0 && properties[0] instanceof Property) {
+        singlePropertyArray = [properties[0]];
+    } else if (properties instanceof Property) {
+        singlePropertyArray = [properties];
+    } else {
+        console.warn(`Polygon.withProperties (id: ${this._id}): new properties array is empty, invalid, or not a Property instance. Keeping original properties.`);
+        singlePropertyArray = this._properties; // 元のプロパティを維持
+    }
     return new Polygon(
       this._id,
-      properties, // 新しいプロパティ
+      singlePropertyArray, // 準備した配列を使用
       this._layerId,
       this._parentId,
       this._childIds,

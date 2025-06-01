@@ -1,4 +1,4 @@
-// src\application\usecases\feature\AddFeatureUseCase.js
+// src/application/usecases/feature/AddFeatureUseCase.js
 
 import { Feature } from '../../../domain/entities/Feature';
 import { Point } from '../../../domain/entities/Point';
@@ -49,8 +49,7 @@ export class AddFeatureUseCase {
     const processedGeometry = this._processGeometry(geometry, world); // vertexIds を生成
 
     let feature;
-    // properties は既に要素数1の配列なので、そのまま渡す
-    const singlePropertyArray = properties;
+    // properties は検証済みの要素数1の Property[] 配列
 
     switch (featureType) {
       case 'point':
@@ -59,7 +58,7 @@ export class AddFeatureUseCase {
         }
         // Point.create のシグネチャ (id, properties, geometry, layerId) に合わせる
         const pointGeometry = { vertexId: processedGeometry.vertexIds[0] };
-        feature = Point.create(featureId, singlePropertyArray, pointGeometry, layerId);
+        feature = Point.create(featureId, properties, pointGeometry, layerId); // 修正: properties を直接使用
         break;
       case 'line':
         if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 2) {
@@ -67,7 +66,7 @@ export class AddFeatureUseCase {
         }
         // Line.create のシグネチャ (id, properties, geometry, layerId) に合わせる
         const lineGeometry = { vertexIds: processedGeometry.vertexIds };
-        feature = Line.create(featureId, singlePropertyArray, lineGeometry, layerId);
+        feature = Line.create(featureId, properties, lineGeometry, layerId); // 修正: properties を直接使用
         break;
       case 'polygon':
         if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 3) {
@@ -87,7 +86,7 @@ export class AddFeatureUseCase {
         const rings = [outerRing];
         feature = new Polygon(
             featureId,
-            singlePropertyArray, // 要素数1の配列
+            properties, // 修正: properties を直接使用
             layerId,
             processedGeometry.parentId || "0",
             [], // 新規作成なので childIds は空

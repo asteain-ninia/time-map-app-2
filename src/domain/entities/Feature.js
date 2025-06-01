@@ -29,8 +29,8 @@ export class Feature {
     } else {
         console.warn(`Feature constructor (id: ${id}): properties array is empty, invalid, or not a Property instance. Initializing with a default Property at year 0. Received:`, properties);
         // フォールバックとして、0年から始まるデフォルトPropertyを生成
-        const defaultTimePoint = new TimePoint(0); // このTimePointは Propertyの_timePointと_startTimeに使われる
-        this._properties = [new Property(defaultTimePoint, "Default Name", "Default Description", {}, defaultTimePoint, null)];
+        const defaultTimePointForProperty = new TimePoint(0); // このTimePointは Propertyの_timePointと_startTimeに使われる
+        this._properties = [new Property(defaultTimePointForProperty, "Default Name", "Default Description", {}, defaultTimePointForProperty, null)];
     }
     this._layerId = layerId;
 
@@ -72,18 +72,18 @@ export class Feature {
   }
 
   /**
-   * 特定の時点でのプロパティを取得 (現在の単純化モデルでは、唯一のプロパティが存在期間内かを返す)
-   * @param {TimePoint} timePoint - 時点
-   * @returns {Property|null} 適用されるプロパティまたはnull
+   * 特定の時点でのプロパティを取得 (現在の単純化モデルでは、timePoint引数を無視し、唯一のプロパティを返す)
+   * @param {TimePoint} timePoint - 時点 (このステップでは無視される)
+   * @returns {Property|null} 唯一のプロパティ、または存在しない場合はnull
    */
-  getPropertyAt(timePoint) {
+  getPropertyAt(timePoint) { // timePoint引数を無視するようコメント変更
     if (this._properties.length === 0) {
       // このケースはコンストラクタのフォールバックにより通常発生しないはず
       console.error(`Feature.getPropertyAt (id: ${this._id}): _properties array is empty.`);
       return null;
     }
-    const property = this._properties[0]; // 常に最初の（唯一の）Propertyを参照
-    return property.isActiveAt(timePoint) ? property : null;
+    // timePoint引数を無視し、常に最初の（唯一の）Propertyを返す
+    return this._properties[0];
   }
 
   /**
@@ -92,7 +92,13 @@ export class Feature {
    * @returns {boolean} オブジェクトが存在すればtrue
    */
   existsAt(timePoint) {
-    return this.getPropertyAt(timePoint) !== null;
+    // getPropertyAtはtimePointを無視して_properties[0]を返すので、
+    // そのpropertyが指定されたtimePointでアクティブかを確認する
+    const propertyInstance = this.getPropertyAt(timePoint); // This will be _properties[0]
+    if (!propertyInstance) {
+      return false; // _propertiesが空の場合はコンストラクタのフォールバックで発生しないはず
+    }
+    return propertyInstance.isActiveAt(timePoint);
   }
 
   /**
