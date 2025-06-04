@@ -3,6 +3,11 @@
 import { Point } from '../../domain/entities/Point.js';
 import { Line } from '../../domain/entities/Line.js';
 import { Polygon } from '../../domain/entities/Polygon.js';
+import {
+  getPointStyle,
+  getLineStyle,
+  getPolygonStyle,
+} from './RenderStyleProvider.js';
 
 /**
  * SVGベースの地図レンダリング
@@ -760,58 +765,7 @@ toWorldY(svgY, viewport) {
    * @private
    */
   _getPointStyle(property) {
-    // カテゴリに基づいたスタイルのマッピング
-    const categoryStyles = {
-      city: {
-        radius: 5,
-        fill: "#ff0000",
-        stroke: "#000000",
-        strokeWidth: 1,
-        textColor: "#000000",
-        fontSize: 12,
-        showLabel: true
-      },
-      town: {
-        radius: 3,
-        fill: "#ff3333",
-        stroke: "#000000",
-        strokeWidth: 1,
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      },
-      battle: {
-        radius: 4,
-        fill: "#ff0000",
-        stroke: "#000000",
-        strokeWidth: 1,
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      },
-      ruin: {
-        radius: 4,
-        fill: "#996633",
-        stroke: "#000000",
-        strokeWidth: 1,
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      },
-      // デフォルトスタイル
-      default: {
-        radius: 4,
-        fill: "#3388ff",
-        stroke: "#000000",
-        strokeWidth: 1,
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      }
-    };
-
-    const category = property.getAttribute("category", "default");
-    return categoryStyles[category] || categoryStyles.default;
+    return getPointStyle(property);
   }
 
   /**
@@ -821,61 +775,7 @@ toWorldY(svgY, viewport) {
    * @private
    */
   _getLineStyle(property) {
-    // カテゴリに基づいたスタイルのマッピング
-    const categoryStyles = {
-      road: {
-        stroke: "#996633",
-        strokeWidth: 2, // 線幅の基準値 (必要なら調整)
-        strokeDasharray: "",
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      },
-      railway: {
-        stroke: "#333333",
-        strokeWidth: 2, // 線幅の基準値
-        strokeDasharray: "5,5",
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      },
-      river: {
-        stroke: "#3388ff",
-        strokeWidth: 2, // 線幅の基準値
-        strokeDasharray: "",
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      },
-      trade_route: {
-        stroke: "#ff8800",
-        strokeWidth: 2, // 線幅の基準値
-        strokeDasharray: "10,2",
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      },
-      border: {
-        stroke: "#ff0000",
-        strokeWidth: 3, // 国境は少し太めに
-        strokeDasharray: "",
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: false
-      },
-      // デフォルトスタイル
-      default: {
-        stroke: "#3388ff",
-        strokeWidth: 2, // 線幅の基準値
-        strokeDasharray: "",
-        textColor: "#000000",
-        fontSize: 10,
-        showLabel: true
-      }
-    };
-
-    const category = property.getAttribute("category", "default");
-    return categoryStyles[category] || categoryStyles.default;
+    return getLineStyle(property);
   }
 
   /**
@@ -885,67 +785,7 @@ toWorldY(svgY, viewport) {
    * @private
    */
   _getPolygonStyle(property) {
-    // カテゴリに基づいたスタイルのマッピング
-    const categoryStyles = {
-      kingdom: {
-        fill: "#ff8888",
-        stroke: "#ff0000",
-        strokeWidth: 2, // 線幅の基準値
-        fillOpacity: 0.6,
-        textColor: "#000000",
-        fontSize: 14,
-        showLabel: true
-      },
-      empire: {
-        fill: "#8888ff",
-        stroke: "#0000ff",
-        strokeWidth: 2, // 線幅の基準値
-        fillOpacity: 0.6,
-        textColor: "#000000",
-        fontSize: 16,
-        showLabel: true
-      },
-      province: {
-        fill: "#88ff88",
-        stroke: "#008800",
-        strokeWidth: 2, // 線幅の基準値
-        fillOpacity: 0.6,
-        textColor: "#000000",
-        fontSize: 12,
-        showLabel: true
-      },
-      ocean: {
-        fill: "#3388ff",
-        stroke: "#3388ff",
-        strokeWidth: 1, // 海洋は細めに
-        fillOpacity: 0.4,
-        textColor: "#000000",
-        fontSize: 14,
-        showLabel: true
-      },
-      lake: {
-        fill: "#3388ff",
-        stroke: "#3388ff",
-        strokeWidth: 1, // 湖も細めに
-        fillOpacity: 0.6,
-        textColor: "#000000",
-        fontSize: 12,
-        showLabel: true
-      },
-      // デフォルトスタイル
-      default: {
-        fill: "#ffcc88",
-        stroke: "#ff8800",
-        strokeWidth: 2, // 線幅の基準値
-        fillOpacity: 0.6,
-        textColor: "#000000",
-        fontSize: 12,
-        showLabel: true
-      }
-    };
-
-    const category = property.getAttribute("category", "default");
-    return categoryStyles[category] || categoryStyles.default;
+    return getPolygonStyle(property);
   }
 
   /**
