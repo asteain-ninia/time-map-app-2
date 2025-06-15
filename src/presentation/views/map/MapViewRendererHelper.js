@@ -3,6 +3,7 @@
 import { Point as DomainPoint } from '../../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../../domain/entities/Polygon.js';
+import { editingStyles } from '../../../infrastructure/rendering/RenderStyleProvider.js';
 
 /**
  * MapView における描画補助（選択、プレビュー、測定など）を担当
@@ -57,7 +58,7 @@ export class MapViewRendererHelper {
     const finalOffsets = [0, -worldWidth, worldWidth];
 
     // 通常頂点マーカーのスタイル
-    const normalVertexStyle = { radius: 3, fill: 'rgba(0, 150, 255, 0.5)', stroke: 'rgba(0, 100, 200, 0.7)', strokeWidth: 1, pointerEvents: 'none' };
+    const normalVertexStyle = editingStyles.normalVertex;
 
     // ドラッグ中でない頂点の元の位置を取得する関数
     const getOriginalVertexPosIfNeitherSelectedNorDragged = (vertexId) => {
@@ -70,12 +71,12 @@ export class MapViewRendererHelper {
     if (selectedFeatureId) {
         const feature = this._viewModel.getFeatures().find(f => f.id === selectedFeatureId);
         if (feature && feature.existsAt(currentTime)) {
-            const style = { stroke: '#00ffff', strokeWidth: 4, fill: 'none', strokeDasharray: '4,4' };
+            const style = editingStyles.selectedOutline;
             for (const offsetX of finalOffsets) {
                 if (feature instanceof DomainPoint) {
                     const vData = verticesMap.get(feature.vertexId); // Points always have original data for this
                     if (vData && !selectedVertexIds.has(vData.id) && !draggingVerticesInfo.has(vData.id)) { // Only draw if not specially handled
-                        const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, { radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none', 'stroke-dasharray': '2,2'}, viewport);
+                        const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, editingStyles.selectedPointOutline, viewport);
                         if (elem) this._selectionElements.push(elem);
                     }
                 } else if (feature instanceof DomainLine) {
@@ -124,7 +125,7 @@ export class MapViewRendererHelper {
     if (highlightedFeatureId && highlightedFeatureId !== selectedFeatureId) {
         const feature = this._viewModel.getFeatures().find(f => f.id === highlightedFeatureId);
         if (feature && feature.existsAt(currentTime)) {
-            const style = { stroke: '#0088aa', strokeWidth: 2, fill: 'none', strokeDasharray: '2,2' };
+            const style = editingStyles.highlightOutline;
             for (const offsetX of finalOffsets) {
                 if (feature instanceof DomainLine) {
                      const linePoints = feature.vertexIds.map(id => {
@@ -158,7 +159,7 @@ export class MapViewRendererHelper {
         if (vData) {
             for (const offsetX of finalOffsets) { // オフセットループ
                 // オフセットを適用したワールド座標で描画
-                const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, { radius: 6, fill: '#00ffff', stroke: '#0000ff', strokeWidth: 2 }, viewport);
+                const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, editingStyles.selectedVertex, viewport);
                 if (elem) this._selectionElements.push(elem);
             }
         }
@@ -190,7 +191,7 @@ export class MapViewRendererHelper {
     for (const [vertexId, info] of draggingVerticesInfo.entries()) {
         for (const offsetX of finalOffsets) { // オフセットループ
             // オフセットを適用したワールド座標で描画
-            const marker = this._renderer.drawPoint(info.currentPosition.x + offsetX, info.currentPosition.y, { fill: '#ff00ff', radius: 7, stroke: '#ffffff', strokeWidth: 2 }, viewport);
+            const marker = this._renderer.drawPoint(info.currentPosition.x + offsetX, info.currentPosition.y, editingStyles.dragVertex, viewport);
             if (marker) this._dragPreviewElements.push(marker);
         }
     }
@@ -214,7 +215,7 @@ export class MapViewRendererHelper {
     };
 
     affectedFeatures.forEach(feature => {
-        const style = { stroke: '#ff00ff', strokeWidth: 2, fill: 'none', strokeDasharray: '3,3' };
+        const style = editingStyles.dragOutline;
         for (const offsetX of finalOffsets) { // オフセットループ
             if (feature instanceof DomainLine) {
                 const lineVertices = feature.vertexIds.map(id => getVertexPosWithOffset(id, offsetX)).filter(Boolean);
@@ -259,16 +260,16 @@ export class MapViewRendererHelper {
     if (addingPoints.length === 0) return;
     const viewport = this._viewportManager.getViewport();
 
-    const pointStyle = { fill: '#ffffff', radius: 4, stroke: '#000000', strokeWidth: 1 };
+    const pointStyle = editingStyles.addingPointPreview;
     let lineStyle = {};
     if (mode === 'add') {
-        lineStyle = tool === 'line' ? { stroke: '#0000ff', strokeWidth: 3, strokeDasharray: '5,5' }
-                  : tool === 'polygon' ? { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' }
+        lineStyle = tool === 'line' ? editingStyles.linePreviewForLine
+                  : tool === 'polygon' ? editingStyles.linePreviewForPolygon
                   : {};
     } else if (mode === 'edit' && tool === 'add-hole') {
-        lineStyle = subMode === 'hole' ? { stroke: '#ff00ff', strokeWidth: 3, strokeDasharray: '5,5' }
-                  : subMode === 'enclave' ? { stroke: '#ff8800', strokeWidth: 3, strokeDasharray: '5,5' }
-                  : { stroke: '#aaaaaa', strokeWidth: 3, strokeDasharray: '5,5' }; // サブモード未決定時
+        lineStyle = subMode === 'hole' ? editingStyles.linePreviewHole
+                  : subMode === 'enclave' ? editingStyles.linePreviewEnclave
+                  : editingStyles.linePreviewPending; // サブモード未決定時
     }
     
     // 追加中のプレビューは、通常ワールドの端をまたいで作成することは想定しづらいため、
@@ -278,7 +279,7 @@ export class MapViewRendererHelper {
 
     if (tool === 'point') {
         if (addingPoints.length === 1) {
-            const elem = this._renderer.drawPoint(addingPoints[0].x, addingPoints[0].y, { fill: '#ff0000', radius: 6, stroke: '#ffffff', strokeWidth: 2 }, viewport);
+            const elem = this._renderer.drawPoint(addingPoints[0].x, addingPoints[0].y, editingStyles.addingToolPoint, viewport);
             if (elem) this._addingElements.push(elem);
         }
     } else if (tool === 'line' || tool === 'polygon' || tool === 'add-hole') {
@@ -319,15 +320,27 @@ export class MapViewRendererHelper {
     // オフセット描画は行わない。
 
     measurePoints.forEach((point, index) => {
-        const pointElem = this._renderer.drawPoint(point.x, point.y, { fill: '#ffff00', radius: 4, stroke: '#000000', strokeWidth: 1 }, viewport);
+        const pointElem = this._renderer.drawPoint(point.x, point.y, editingStyles.measurePoint, viewport);
         if (pointElem) this._measureElements.push(pointElem);
-        const labelElem = this._renderer.drawText(point.x, point.y + 10 / viewport.zoom, String.fromCharCode(65 + index), { fontSize: 10, textColor: '#000000', textAnchor: 'middle', dominantBaseline: 'hanging'}, viewport);
+        const labelElem = this._renderer.drawText(point.x, point.y + 10 / viewport.zoom, String.fromCharCode(65 + index), editingStyles.measureLabel, viewport);
         if(labelElem) this._measureElements.push(labelElem);
     });
 
     if (measurePoints.length >= 2) {
-        const lineElem = this._renderer.drawLine(measurePoints, { stroke: '#ffff00', strokeWidth: 2, strokeDasharray: '5,5' }, viewport);
+        const lineElem = this._renderer.drawLine(measurePoints, editingStyles.measureLine, viewport);
         if (lineElem) this._measureElements.push(lineElem);
+
+        // 大圏コースを追加描画
+        const gcPoints = [];
+        for (let i = 1; i < measurePoints.length; i++) {
+            const segment = this._viewModel.calculateGreatCirclePath(measurePoints[i - 1], measurePoints[i]);
+            if (gcPoints.length > 0) segment.shift();
+            gcPoints.push(...segment);
+        }
+        if (gcPoints.length >= 2) {
+            const gcElem = this._renderer.drawLine(gcPoints, editingStyles.greatCircleLine, viewport);
+            if (gcElem) this._measureElements.push(gcElem);
+        }
 
         // 赤道長を MapViewModel から取得
         const equatorLength = this._viewModel.getEquatorLength(); 
@@ -342,15 +355,15 @@ export class MapViewRendererHelper {
             totalGreatCircle += distance.greatCircle;
             const midX = (p1.x + p2.x) / 2;
             const midY = (p1.y + p2.y) / 2;
-            const segmentLabelElem = this._renderer.drawText(midX, midY - 10 / viewport.zoom, `${distance.linear.toFixed(1)}km`, { fontSize: 9, textColor: '#333300', textAnchor: 'middle', dominantBaseline: 'alphabetic'}, viewport);
+            const segmentLabelElem = this._renderer.drawText(midX, midY - 10 / viewport.zoom, `${distance.linear.toFixed(1)}km`, editingStyles.measureSegmentLabel, viewport);
             if(segmentLabelElem) this._measureElements.push(segmentLabelElem);
         }
 
         const lastPoint = measurePoints[measurePoints.length - 1];
         const textYOffset = 15 / viewport.zoom;
-        const totalLinearElem = this._renderer.drawText(lastPoint.x + 10 / viewport.zoom, lastPoint.y + textYOffset * 2, `直線計: ${totalLinear.toFixed(1)} km`, { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging'}, viewport);
+        const totalLinearElem = this._renderer.drawText(lastPoint.x + 10 / viewport.zoom, lastPoint.y + textYOffset * 2, `直線計: ${totalLinear.toFixed(1)} km`, editingStyles.totalLabel, viewport);
         if(totalLinearElem) this._measureElements.push(totalLinearElem);
-        const totalGreatCircleElem = this._renderer.drawText(lastPoint.x + 10 / viewport.zoom, lastPoint.y + textYOffset, `大円計: ${totalGreatCircle.toFixed(1)} km`, { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging'}, viewport);
+        const totalGreatCircleElem = this._renderer.drawText(lastPoint.x + 10 / viewport.zoom, lastPoint.y + textYOffset, `大円計: ${totalGreatCircle.toFixed(1)} km`, editingStyles.totalLabel, viewport);
         if(totalGreatCircleElem) this._measureElements.push(totalGreatCircleElem);
     }
     this._measureElements.forEach(el => el.classList.add('temp-drawing', 'measure-element'));
