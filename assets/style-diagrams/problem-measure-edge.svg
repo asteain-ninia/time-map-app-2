@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="40">
+  <!-- measurement line that stops at world edge -->
+  <rect x="0" y="0" width="160" height="40" fill="#f8f8f8" />
+  <circle cx="130" cy="20" r="4" fill="#ffff00" stroke="#000" stroke-width="1" />
+  <line x1="130" y1="20" x2="160" y2="20" stroke="#ffff00" stroke-width="2" stroke-dasharray="5,5" />
+  <line x1="0" y1="20" x2="30" y2="20" stroke="#ffff00" stroke-width="2" stroke-dasharray="5,5" />
+  <circle cx="30" cy="20" r="4" fill="#ffff00" stroke="#000" stroke-width="1" />
+</svg>

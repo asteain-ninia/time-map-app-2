@@ -81,7 +81,9 @@ ViewModel から任意に追加される一時要素が存在し、用途によ�
 ### 2.7 既知の表示不具合
 
 - 頂点追加モード中に既存頂点のマーカーが非表示になる ![](assets/style-diagrams/problem-missing-vertices.svg)
-- 世界端付近でプレビュー線が折り返さず途切れる ![](assets/style-diagrams/problem-edge-preview.svg)
+- 追加プレビューや距離測定が世界端をまたぐと線が途切れる可能性がある
+  (自動スクロールの影響で再現しづらいが、コード上はオフセット描画を行っていない)
+  ![](assets/style-diagrams/problem-edge-preview.svg) ![](assets/style-diagrams/problem-measure-edge.svg)
 - ズーム時に点や線幅が固定で拡大縮小に追従しない
 - 測定モードのラベルが小さく重なりやすい
 

@@ -94,6 +94,7 @@
 | 状態 | 説明 | 図 |
 |------|------|----|
 | 頂点追加中 | 既存頂点のマーカーが消え、新しい頂点だけが表示される | ![](assets/style-diagrams/problem-missing-vertices.svg) |
-| ワールド端での追加 | プレビュー線が世界端を越えると繋がらず途切れる | ![](assets/style-diagrams/problem-edge-preview.svg) |
+| ワールド端での追加 | プレビュー線が世界端を越えると繋がらず途切れることがある (自動スクロールで目立たない場合も) | ![](assets/style-diagrams/problem-edge-preview.svg) |
+| 測定線が世界端をまたぐ場合 | 距離測定線が折り返さず分断される | ![](assets/style-diagrams/problem-measure-edge.svg) |
 
 これらの問題を解決することで、操作中でも周囲の形状を把握しやすくなり、より一貫した編集体験を提供できます。
