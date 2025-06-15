@@ -72,10 +72,19 @@ ViewModel から任意に追加される一時要素が存在し、用途によ�
 するだけで【F:src/presentation/views/map/MapViewEventHandler.js†L120-L148】、
 `MapViewModel` 側の選択状態は更新されません。
 そのため頂点追加モードに入ると既存頂点のマーカーが描かれず、地物全体の形状が把握しづらくなります。
+地物自体は描画されたままですが、頂点マーカーが消えるため細部を確認できません。
 
 また新規地物を追加する通常の "add" モードでも
 `renderAddingFeaturePreview` は追加中の点や線のみを描画し【F:src/presentation/views/map/MapViewRendererHelper.js†L248-L304】、
 既存地物の頂点は示されません。周囲の形状を参照しながら作図しにくい点がユーザビリティ上の課題となっています。
+
+### 2.7 既知の表示不具合
+
+- 頂点追加モード中に既存頂点のマーカーが非表示になる ![](assets/style-diagrams/problem-missing-vertices.svg)
+- 世界端付近でプレビュー線が折り返さず途切れる ![](assets/style-diagrams/problem-edge-preview.svg)
+- ズーム時に点や線幅が固定で拡大縮小に追従しない
+- 測定モードのラベルが小さく重なりやすい
+
 
 ## 3. 改善案
 
