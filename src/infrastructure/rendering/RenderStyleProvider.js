@@ -177,3 +177,25 @@ export function getPolygonStyle(property) {
   const category = property.getAttribute("category", "default");
   return categoryStyles[category] || categoryStyles.default;
 }
+
+export const editingStyles = {
+  normalVertex: { radius: 4, fill: 'rgba(0, 150, 255, 0.5)', stroke: 'rgba(0, 100, 200, 0.7)', strokeWidth: 1 },
+  selectedOutline: { stroke: '#00ffff', strokeWidth: 4, fill: 'none', strokeDasharray: '4,4' },
+  selectedPointOutline: { radius: 8, stroke: '#00ffff', strokeWidth: 2, fill: 'none' },
+  selectedVertex: { radius: 6, fill: '#00ffff', stroke: '#0000ff', strokeWidth: 2 },
+  highlightOutline: { stroke: '#0088aa', strokeWidth: 2, fill: 'none', strokeDasharray: '2,2' },
+  dragVertex: { fill: '#ff00ff', radius: 7, stroke: '#ffffff', strokeWidth: 2 },
+  dragOutline: { stroke: '#ff00ff', strokeWidth: 2, fill: 'none', strokeDasharray: '3,3' },
+  addingPointPreview: { fill: '#ffffff', radius: 4, stroke: '#000000', strokeWidth: 1 },
+  addingToolPoint: { fill: '#ff0000', radius: 6, stroke: '#ffffff', strokeWidth: 2 },
+  linePreviewForLine: { stroke: '#0000ff', strokeWidth: 3, strokeDasharray: '5,5' },
+  linePreviewForPolygon: { stroke: '#00ff00', strokeWidth: 3, strokeDasharray: '5,5' },
+  linePreviewHole: { stroke: '#ff00ff', strokeWidth: 3, strokeDasharray: '5,5' },
+  linePreviewEnclave: { stroke: '#ff8800', strokeWidth: 3, strokeDasharray: '5,5' },
+  linePreviewPending: { stroke: '#aaaaaa', strokeWidth: 3, strokeDasharray: '5,5' },
+  measurePoint: { fill: '#ffff00', radius: 4, stroke: '#000000', strokeWidth: 1 },
+  measureLine: { stroke: '#ffff00', strokeWidth: 2, strokeDasharray: '5,5' },
+  measureLabel: { fontSize: 10, textColor: '#000000', textAnchor: 'middle', dominantBaseline: 'hanging' },
+  measureSegmentLabel: { fontSize: 9, textColor: '#333300', textAnchor: 'middle', dominantBaseline: 'alphabetic' },
+  totalLabel: { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging' },
+};
