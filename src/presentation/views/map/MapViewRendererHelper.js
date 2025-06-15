@@ -330,6 +330,18 @@ export class MapViewRendererHelper {
         const lineElem = this._renderer.drawLine(measurePoints, editingStyles.measureLine, viewport);
         if (lineElem) this._measureElements.push(lineElem);
 
+        // 大圏コースを追加描画
+        const gcPoints = [];
+        for (let i = 1; i < measurePoints.length; i++) {
+            const segment = this._viewModel.calculateGreatCirclePath(measurePoints[i - 1], measurePoints[i]);
+            if (gcPoints.length > 0) segment.shift();
+            gcPoints.push(...segment);
+        }
+        if (gcPoints.length >= 2) {
+            const gcElem = this._renderer.drawLine(gcPoints, editingStyles.greatCircleLine, viewport);
+            if (gcElem) this._measureElements.push(gcElem);
+        }
+
         // 赤道長を MapViewModel から取得
         const equatorLength = this._viewModel.getEquatorLength(); 
         let totalLinear = 0;

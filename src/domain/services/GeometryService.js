@@ -97,6 +97,41 @@ export class GeometryService {
   }
 
   /**
+   * 2点間の大円コースを取得
+   * @param {number} lon1 - 点1の経度
+   * @param {number} lat1 - 点1の緯度
+   * @param {number} lon2 - 点2の経度
+   * @param {number} lat2 - 点2の緯度
+   * @param {number} segments - 分割数
+   * @returns {{x:number,y:number}[]} 大円上の点配列
+   */
+  calculateGreatCirclePath(lon1, lat1, lon2, lat2, segments = 32) {
+    const φ1 = this._toRadians(lat1);
+    const λ1 = this._toRadians(lon1);
+    const φ2 = this._toRadians(lat2);
+    const λ2 = this._toRadians(lon2);
+    const δ = 2 * Math.asin(Math.sqrt(
+      Math.sin((φ2 - φ1) / 2) ** 2 +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin((λ2 - λ1) / 2) ** 2
+    ));
+    if (δ === 0) return [{ x: lon1, y: lat1 }, { x: lon2, y: lat2 }];
+    const sinδ = Math.sin(δ);
+    const path = [];
+    for (let i = 0; i <= segments; i++) {
+      const f = i / segments;
+      const A = Math.sin((1 - f) * δ) / sinδ;
+      const B = Math.sin(f * δ) / sinδ;
+      const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
+      const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
+      const z = A * Math.sin(φ1) + B * Math.sin(φ2);
+      const φ = Math.atan2(z, Math.sqrt(x * x + y * y));
+      const λ = Math.atan2(y, x);
+      path.push({ x: this._toDegrees(λ), y: this._toDegrees(φ) });
+    }
+    return path;
+  }
+
+  /**
    * 度をラジアンに変換
    * @param {number} degrees - 度数
    * @returns {number} ラジアン
@@ -104,6 +139,16 @@ export class GeometryService {
    */
   _toRadians(degrees) {
     return degrees * Math.PI / 180;
+  }
+
+  /**
+   * ラジアンを度に変換
+   * @param {number} radians - ラジアン
+   * @returns {number} 度数
+   * @private
+   */
+  _toDegrees(radians) {
+    return radians * 180 / Math.PI;
   }
 
   /**

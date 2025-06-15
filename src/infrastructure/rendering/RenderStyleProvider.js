@@ -195,6 +195,7 @@ export const editingStyles = {
   linePreviewPending: { stroke: '#aaaaaa', strokeWidth: 3, strokeDasharray: '5,5' },
   measurePoint: { fill: '#ffff00', radius: 4, stroke: '#000000', strokeWidth: 1 },
   measureLine: { stroke: '#ffff00', strokeWidth: 2, strokeDasharray: '5,5' },
+  greatCircleLine: { stroke: '#ff5500', strokeWidth: 1, strokeDasharray: '2,2' },
   measureLabel: { fontSize: 10, textColor: '#000000', textAnchor: 'middle', dominantBaseline: 'hanging' },
   measureSegmentLabel: { fontSize: 9, textColor: '#333300', textAnchor: 'middle', dominantBaseline: 'alphabetic' },
   totalLabel: { fontSize: 10, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging' },

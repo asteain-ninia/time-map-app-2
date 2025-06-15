@@ -679,6 +679,23 @@ export class MapViewModel {
   }
 
   /**
+   * 2点間の大円コースを取得
+   * @param {{x:number,y:number}} point1
+   * @param {{x:number,y:number}} point2
+   * @param {number} segments
+   * @returns {{x:number,y:number}[]} 点列
+   */
+  calculateGreatCirclePath(point1, point2, segments = 32) {
+    return this._geometryService.calculateGreatCirclePath(
+      point1.x,
+      point1.y,
+      point2.x,
+      point2.y,
+      segments
+    );
+  }
+
+  /**
    * 多角形の面積を計算
    * @param {string[]} vertexIds - 頂点IDの配列 (特定のリングの頂点IDを渡す想定)
    * @param {number} equatorLength - 赤道長（km）
