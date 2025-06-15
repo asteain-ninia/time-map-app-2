@@ -645,6 +645,8 @@ export class EditingViewModel {
       // 地物全体の更新としても通知
       this._eventBus.publish('FeatureUpdated', { feature: result.updatedFeature });
 
+      return result.newVertex;
+
     } catch (error) {
       console.error('エッジへの頂点追加に失敗しました (EditingViewModel)', error);
       alert(`エッジへの頂点追加に失敗: ${error.message}`);

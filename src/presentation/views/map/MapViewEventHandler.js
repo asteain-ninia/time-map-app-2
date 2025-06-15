@@ -132,6 +132,13 @@ export class MapViewEventHandler {
           const closestEdgeInfo = this._interactionLogic.findClosestEdge(worldPoint);
           if (closestEdgeInfo) {
             this._editingViewModel.addVertexToEdge(closestEdgeInfo)
+              .then(newVertex => {
+                if (newVertex) {
+                  const map = new Map([[newVertex.id, { x: newVertex.x, y: newVertex.y }]]);
+                  this._editingViewModel.startVerticesDrag(map);
+                  this._isDragging = true;
+                }
+              })
               .catch(error => {
                 console.error("[EventHandler] Error calling addVertexToEdge:", error);
                 alert(`線上への頂点追加に失敗しました: ${error.message}`);
