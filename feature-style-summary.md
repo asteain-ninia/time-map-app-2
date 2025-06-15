@@ -63,6 +63,20 @@ o─o 線
 
 ViewModel から任意に追加される一時要素が存在し、用途によりスタイルは様々です。
 
+### 2.6 表示ロジック上の課題
+
+コード上では `MapViewRendererHelper.renderSelection` が選択地物や選択頂点の情報を
+基に頂点マーカーを描画しています【F:src/presentation/views/map/MapViewRendererHelper.js†L44-L166】。
+しかし頂点追加ツールを利用する `MapViewEventHandler` の処理では
+`EditingViewModel.addVertexToEdge` を実行後に新規頂点だけをドラッグ対象として開始
+するだけで【F:src/presentation/views/map/MapViewEventHandler.js†L120-L148】、
+`MapViewModel` 側の選択状態は更新されません。
+そのため頂点追加モードに入ると既存頂点のマーカーが描かれず、地物全体の形状が把握しづらくなります。
+
+また新規地物を追加する通常の "add" モードでも
+`renderAddingFeaturePreview` は追加中の点や線のみを描画し【F:src/presentation/views/map/MapViewRendererHelper.js†L248-L304】、
+既存地物の頂点は示されません。周囲の形状を参照しながら作図しにくい点がユーザビリティ上の課題となっています。
+
 ## 3. 改善案
 
 ### 3.1 ユーザビリティ向上
