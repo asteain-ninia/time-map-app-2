@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <rect width="200" height="200" fill="#ffffff"/>
+  <!-- polygon -->
+  <polygon points="50,50 150,50 100,150" fill="#ff8888" stroke="#ff0000" stroke-width="2" fill-opacity="0.6"/>
+  <!-- selection highlight -->
+  <polygon points="50,50 150,50 100,150" fill="none" stroke="#00ffff" stroke-width="4" stroke-dasharray="4,4"/>
+  <!-- vertices -->
+  <circle cx="50" cy="50" r="3" fill="rgba(0,150,255,0.5)" stroke="rgba(0,100,200,0.7)" stroke-width="1"/>
+  <circle cx="150" cy="50" r="3" fill="rgba(0,150,255,0.5)" stroke="rgba(0,100,200,0.7)" stroke-width="1"/>
+  <circle cx="100" cy="150" r="3" fill="rgba(0,150,255,0.5)" stroke="rgba(0,100,200,0.7)" stroke-width="1"/>
+  <!-- selected vertex -->
+  <circle cx="100" cy="150" r="6" fill="#00ffff" stroke="#0000ff" stroke-width="2"/>
+  <!-- line feature -->
+  <line x1="30" y1="180" x2="170" y2="180" stroke="#3388ff" stroke-width="2"/>
+  <!-- points -->
+  <circle cx="30" cy="180" r="5" fill="#ff0000" stroke="#000000" stroke-width="1"/>
+  <circle cx="170" cy="180" r="5" fill="#ff0000" stroke="#000000" stroke-width="1"/>
+</svg>
