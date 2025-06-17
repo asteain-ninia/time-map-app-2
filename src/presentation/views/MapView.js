@@ -268,9 +268,7 @@ export class MapView {
   setMeasuringDistance(enabled) {
     if (this._isMeasuringDistance !== enabled) {
         this._isMeasuringDistance = enabled;
-        if (!enabled) {
-            this.clearMeasurements(); // モード解除時に測定結果をクリア
-        } else {
+        if (enabled) {
             // 測定開始時に編集モードなどを解除
             this._editingViewModel.setMode('view');
             this._viewModel.clearSelection();
