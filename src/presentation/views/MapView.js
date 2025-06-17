@@ -253,6 +253,8 @@ export class MapView {
         // resize -> _onViewportChanged -> _render の流れで再描画されるため、ここでの _render() 呼び出しは不要
     } else {
         console.warn("MapView: Invalid container dimensions on resize.", { width, height });
+        // リロード直後は要素サイズが取得できない場合があるため再試行する
+        requestAnimationFrame(() => this._handleResize());
     }
   }
 
