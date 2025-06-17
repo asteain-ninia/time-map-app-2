@@ -391,6 +391,10 @@ export class MapViewEventHandler {
 
   /** キーダウン */
   handleKeyDown(event) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      return;
+    }
     const targetElement = event.target;
     const isInInputDialog = targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form');
     // 入力ダイアログが表示されている場合のEnter/Esc処理

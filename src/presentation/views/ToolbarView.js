@@ -44,6 +44,7 @@ export class ToolbarView {
     this._toolbarElement.style.display = 'flex'; // Flexboxを使用
     this._toolbarElement.style.flexWrap = 'wrap'; // 折り返し可能に
     this._toolbarElement.style.alignItems = 'center'; // 垂直方向中央揃え
+    this._toolbarElement.style.userSelect = 'none';
 
 
     // ツールバーの要素を作成
