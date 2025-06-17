@@ -313,7 +313,7 @@ export class MapViewRendererHelper {
   /** 距離測定を描画 */
   renderDistanceMeasurement(measurePoints, isMeasuring) {
     this.clearMeasureElements();
-    if (!isMeasuring || measurePoints.length === 0) return;
+    if (measurePoints.length === 0) return;
 
     const viewport = this._viewportManager.getViewport();
     // 距離測定のプレビューも、通常ワールドの端をまたいで行うことは稀なので、

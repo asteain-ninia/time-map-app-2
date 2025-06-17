@@ -383,7 +383,6 @@ export class MapViewEventHandler {
      }
      // 距離測定中に右クリックでキャンセル
      else if (this._mapView.isMeasuringDistance()) {
-         this._mapView.clearMeasurements();
          this._mapView.setMeasuringDistance(false);
          console.log("Measurement cancelled by right-click.");
      }
@@ -452,7 +451,6 @@ export class MapViewEventHandler {
          console.log("Selection cleared by ESC.");
        } else if (this._mapView.isMeasuringDistance()) {
            // 距離測定中にEsc -> キャンセル
-           this._mapView.clearMeasurements();
            this._mapView.setMeasuringDistance(false);
            console.log("Measurement cancelled by ESC.");
        } else {
