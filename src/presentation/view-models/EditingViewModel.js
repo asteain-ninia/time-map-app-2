@@ -274,7 +274,6 @@ export class EditingViewModel {
     if (this._mode !== 'edit' || this._tool !== 'add-hole' || this._addingSubMode !== 'hole' || !this._targetPolygon || !this._targetRingIdForHole || this._addingPoints.length < 3) {
         console.error('穴の追加確定の条件を満たしていません。');
         this._clearAddingState();
-        this.setTool('select'); // ツールを戻す
         return null;
     }
 
@@ -305,13 +304,11 @@ export class EditingViewModel {
 
         this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
         this._clearAddingState();
-        this.setTool('select');
         return updatedPolygon;
     } catch (error) {
         console.error('穴の追加確定に失敗しました', error);
         alert(`穴の追加に失敗しました: ${error.message}`);
         this._clearAddingState();
-        this.setTool('select');
         return null;
     }
   }
@@ -324,7 +321,6 @@ export class EditingViewModel {
     if (this._mode !== 'edit' || this._tool !== 'add-hole' || this._addingSubMode !== 'enclave' || !this._targetPolygon || this._addingPoints.length < 3) {
         console.error('飛び地の追加確定の条件を満たしていません。');
         this._clearAddingState();
-        this.setTool('select');
         return null;
     }
 
@@ -351,13 +347,11 @@ export class EditingViewModel {
         
         this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
         this._clearAddingState();
-        this.setTool('select');
         return updatedPolygon;
     } catch (error) {
         console.error('飛び地の追加確定に失敗しました', error);
         alert(`飛び地の追加に失敗しました: ${error.message}`);
         this._clearAddingState();
-        this.setTool('select');
         return null;
     }
   }
