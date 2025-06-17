@@ -1,5 +1,6 @@
 // src/presentation/views/MapView.js
 import { Property } from '../../domain/value-objects/Property.js';
+import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 // ドメインエンティティの直接インポートは不要 (ViewModel経由で扱うため)
 // import { Point as DomainPoint } from '../../domain/entities/Point.js';
 // import { Line as DomainLine } from '../../domain/entities/Line.js';
@@ -472,6 +473,27 @@ export class MapView {
     categoryRow.appendChild(categorySelect);
     form.appendChild(categoryRow);
 
+    // 存在期間入力フィールド
+    const timeRow = document.createElement('div');
+    timeRow.style.marginBottom = '10px';
+    const startLabel = document.createElement('span');
+    startLabel.textContent = '開始: ';
+    const startInput = document.createElement('input');
+    startInput.type = 'number';
+    startInput.name = 'startYear';
+    startInput.style.width = '70px';
+    const endLabel = document.createElement('span');
+    endLabel.textContent = ' 終了: ';
+    const endInput = document.createElement('input');
+    endInput.type = 'number';
+    endInput.name = 'endYear';
+    endInput.style.width = '70px';
+    timeRow.appendChild(startLabel);
+    timeRow.appendChild(startInput);
+    timeRow.appendChild(endLabel);
+    timeRow.appendChild(endInput);
+    form.appendChild(timeRow);
+
     // ボタン行
     const buttonRow = document.createElement('div');
     buttonRow.style.textAlign = 'right';
@@ -494,11 +516,19 @@ export class MapView {
 
     // 確定ボタンのクリック処理
     confirmButton.onclick = () => {
+        const startYearStr = startInput.value;
+        const endYearStr = endInput.value;
         const properties = {
             name: nameInput.value.trim() || '名称未設定', // 名前が空ならデフォルト値
             description: descInput.value.trim(),
-            category: categorySelect.value || 'default' // カテゴリが空ならデフォルト値
+            category: categorySelect.value || 'default', // カテゴリが空ならデフォルト値
+            startYear: (startYearStr !== '') ? Number(startYearStr) : null,
+            endYear: (endYearStr !== '') ? Number(endYearStr) : null
         };
+        if (properties.startYear !== null && properties.endYear !== null && properties.endYear < properties.startYear) {
+            alert('終了年は開始年より後に設定してください。');
+            return;
+        }
         // 現在のレイヤーIDを取得 (なければデフォルト)
         const currentLayerId = this._viewModel.getWorld()?.layers[0]?.id || 'layer-base';
         // 実際の地物追加処理を呼び出す
@@ -517,14 +547,16 @@ export class MapView {
     try {
         // ViewModelから現在の時間点を取得
         const correctTimePoint = this._viewModel.getCurrentTime();
-        // Propertyインスタンスを生成 (startTime, endTimeはnull)
+        const startTp = properties.startYear !== null ? new TimePoint(properties.startYear) : null;
+        const endTp = properties.endYear !== null ? new TimePoint(properties.endYear) : null;
+        const propertyTimePoint = startTp || correctTimePoint;
         const domainProperty = new Property(
-            correctTimePoint,
+            propertyTimePoint,
             properties.name,
             properties.description,
-            { category: properties.category }, // 属性としてカテゴリを渡す
-            null, // startTime
-            null  // endTime
+            { category: properties.category },
+            startTp,
+            endTp
         );
         // EditingViewModelに地物追加確定を依頼
         await this._editingViewModel.confirmAddFeature([domainProperty], layerId);
