@@ -163,7 +163,6 @@ export class MapView {
       case 'mode': // 編集モード変更
       case 'tool': // 選択ツール変更
         this._updateActionButtonsVisibility(); // ボタン表示更新
-        this._viewModel.clearSelection(); // モード変更時は選択解除
         if (this._editingViewModel.getDraggingVerticesInfo().size > 0) {
              this._editingViewModel._resetDraggingState(); // ドラッグ状態リセット
         }
