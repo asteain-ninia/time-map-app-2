@@ -110,6 +110,8 @@ export class MapViewEventHandler {
     if (!worldPoint) return;
 
     this._isMouseDown = true;
+    // Disable text selection while dragging to prevent accidental sidebar selection
+    document.body.classList.add('noselect');
     this._lastScreenPosition = { x: pageX, y: pageY };
     this._dragStartScreenPosition = { x: pageX, y: pageY };
 
@@ -280,6 +282,8 @@ export class MapViewEventHandler {
     // 状態リセット
     this._isMouseDown = false;
     this._isDragging = false;
+    // Re-enable text selection after dragging ends
+    document.body.classList.remove('noselect');
   }
 
   /** マウス離脱 */
@@ -300,6 +304,7 @@ export class MapViewEventHandler {
       // マウスダウン状態をリセット
       this._isMouseDown = false;
       this._isDragging = false;
+      document.body.classList.remove('noselect');
     }
     // ホバー状態をクリア
      this._viewModel.hoverFeature(null);
