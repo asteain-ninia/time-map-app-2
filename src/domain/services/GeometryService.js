@@ -110,9 +110,13 @@ export class GeometryService {
     const λ1 = this._toRadians(lon1);
     const φ2 = this._toRadians(lat2);
     const λ2 = this._toRadians(lon2);
+
+    // 経度差を -π〜π の範囲に正規化して最短経路を求める
+    const Δλ = this._normalizeRadians(λ2 - λ1);
+
     const δ = 2 * Math.asin(Math.sqrt(
       Math.sin((φ2 - φ1) / 2) ** 2 +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin((λ2 - λ1) / 2) ** 2
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2
     ));
     if (δ === 0) return [{ x: lon1, y: lat1 }, { x: lon2, y: lat2 }];
     const sinδ = Math.sin(δ);
@@ -121,12 +125,13 @@ export class GeometryService {
       const f = i / segments;
       const A = Math.sin((1 - f) * δ) / sinδ;
       const B = Math.sin(f * δ) / sinδ;
-      const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
-      const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
+      const λ = λ1 + f * Δλ;
+      const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ);
+      const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ);
       const z = A * Math.sin(φ1) + B * Math.sin(φ2);
       const φ = Math.atan2(z, Math.sqrt(x * x + y * y));
-      const λ = Math.atan2(y, x);
-      path.push({ x: this._toDegrees(λ), y: this._toDegrees(φ) });
+      const λOut = Math.atan2(y, x);
+      path.push({ x: this._toDegrees(λOut), y: this._toDegrees(φ) });
     }
     return path;
   }
@@ -149,6 +154,17 @@ export class GeometryService {
    */
   _toDegrees(radians) {
     return radians * 180 / Math.PI;
+  }
+
+  /**
+   * ラジアン値を -π〜π の範囲に正規化
+   * @param {number} rad - ラジアン
+   * @returns {number} 正規化されたラジアン
+   * @private
+   */
+  _normalizeRadians(rad) {
+    const twoPi = 2 * Math.PI;
+    return ((rad + Math.PI) % twoPi + twoPi) % twoPi - Math.PI;
   }
 
   /**
