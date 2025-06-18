@@ -88,70 +88,85 @@ export class FeaturesTabView {
       return;
     }
 
-    // カテゴリーごとにグループ化
-    const categorizedFeatures = this._categorizeFeaturesBy(filteredFeatures, currentTime);
+    const grouped = this._groupByTypeAndCategory(filteredFeatures, currentTime);
 
-    // カテゴリーごとに表示
-    Object.keys(categorizedFeatures).sort().forEach(categoryName => { // カテゴリ名をソートして表示
-      const categoryGroup = document.createElement('div');
-      categoryGroup.className = 'feature-category';
-      categoryGroup.style.marginBottom = '10px';
+    Object.keys(grouped).sort().forEach(typeName => {
+      const typeGroup = document.createElement('div');
+      typeGroup.className = 'feature-type-group';
+      typeGroup.style.marginBottom = '15px';
 
-      const categoryHeader = document.createElement('h3');
-      categoryHeader.textContent = categoryName;
-      categoryHeader.style.cssText = `
+      const typeHeader = document.createElement('h2');
+      typeHeader.textContent = typeName;
+      typeHeader.style.cssText = `
         margin: 5px 0;
         padding: 5px;
-        background-color: #eee;
-        cursor: pointer;
-        font-size: 0.9em;
-        font-weight: bold;
+        background-color: #ddd;
+        font-size: 1em;
       `;
+      typeGroup.appendChild(typeHeader);
 
-      const categoryContent = document.createElement('div');
-      categoryContent.className = 'category-content';
-      // categoryContent.style.display = 'none'; // 初期状態は折りたたむ場合
+      const categories = grouped[typeName];
+      Object.keys(categories).sort().forEach(categoryName => {
+        const categoryGroup = document.createElement('div');
+        categoryGroup.className = 'feature-category';
+        categoryGroup.style.marginBottom = '10px';
 
-      categoryHeader.addEventListener('click', () => {
-        categoryContent.style.display =
-          categoryContent.style.display === 'none' ? 'block' : 'none';
-      });
-
-      categorizedFeatures[categoryName].forEach(feature => {
-        const prop = feature.getPropertyAt(currentTime);
-        if (!prop) return;
-
-        const featureItem = document.createElement('div');
-        featureItem.className = 'feature-item';
-        featureItem.style.cssText = `
+        const categoryHeader = document.createElement('h3');
+        categoryHeader.textContent = categoryName;
+        categoryHeader.style.cssText = `
+          margin: 5px 0;
           padding: 5px;
-          border: 1px solid #ddd;
-          margin-bottom: 2px;
+          background-color: #eee;
           cursor: pointer;
-          background-color: #fff; /* デフォルト背景色 */
+          font-size: 0.9em;
+          font-weight: bold;
         `;
-        featureItem.dataset.featureId = feature.id; // 地物IDをdata属性に
 
-        const selectedFeatureId = this._mapViewModel.getSelectedFeatureId();
-        if (selectedFeatureId === feature.id) {
-          featureItem.style.backgroundColor = '#d0e0ff'; // 選択中の地物のスタイル
-        }
+        const categoryContent = document.createElement('div');
+        categoryContent.className = 'category-content';
 
-        const nameLabel = document.createElement('span');
-        nameLabel.textContent = prop.name || '名称なし';
-
-        featureItem.addEventListener('click', () => {
-          this._mapViewModel.selectFeature(feature.id);
-          // クリックされたアイテムのスタイル更新はViewModelの通知経由で行う
+        categoryHeader.addEventListener('click', () => {
+          categoryContent.style.display =
+            categoryContent.style.display === 'none' ? 'block' : 'none';
         });
 
-        featureItem.appendChild(nameLabel);
-        categoryContent.appendChild(featureItem);
+        categories[categoryName].forEach(feature => {
+          const prop = feature.getPropertyAt(currentTime);
+          if (!prop) return;
+
+          const featureItem = document.createElement('div');
+          featureItem.className = 'feature-item';
+          featureItem.style.cssText = `
+            padding: 5px;
+            border: 1px solid #ddd;
+            margin-bottom: 2px;
+            cursor: pointer;
+            background-color: #fff;
+          `;
+          featureItem.dataset.featureId = feature.id;
+
+          const selectedFeatureId = this._mapViewModel.getSelectedFeatureId();
+          if (selectedFeatureId === feature.id) {
+            featureItem.style.backgroundColor = '#d0e0ff';
+          }
+
+          const nameLabel = document.createElement('span');
+          nameLabel.textContent = prop.name || '名称なし';
+
+          featureItem.addEventListener('click', () => {
+            this._mapViewModel.selectFeature(feature.id);
+          });
+
+          featureItem.appendChild(nameLabel);
+          categoryContent.appendChild(featureItem);
+        });
+
+        categoryGroup.appendChild(categoryHeader);
+        categoryGroup.appendChild(categoryContent);
+        typeGroup.appendChild(categoryGroup);
       });
 
-      categoryGroup.appendChild(categoryHeader);
-      categoryGroup.appendChild(categoryContent);
-      this._featuresContainer.appendChild(categoryGroup);
+      this._featuresContainer.appendChild(typeGroup);
     });
   }
 
@@ -206,6 +221,50 @@ export class FeaturesTabView {
       categorized[category].push(feature);
     });
     return categorized;
+  }
+
+  /**
+   * 地物を種類ごと、さらにカテゴリごとにグループ化
+   * @param {Array<Feature>} features
+   * @param {TimePoint} currentTime
+   * @returns {Object}
+   * @private
+   */
+  _groupByTypeAndCategory(features, currentTime) {
+    const grouped = {};
+    features.forEach(feature => {
+      const property = feature.getPropertyAt(currentTime);
+      if (!property) return;
+
+      const typeName = this._getFeatureTypeName(feature.constructor.name);
+
+      let categoryId = property.getAttribute('category');
+      if (!categoryId || categoryId === 'default' || categoryId === '') {
+        categoryId = 'default';
+      }
+      const categoryName = this._getCategoryDisplayName(categoryId);
+
+      if (!grouped[typeName]) grouped[typeName] = {};
+      if (!grouped[typeName][categoryName]) grouped[typeName][categoryName] = [];
+      grouped[typeName][categoryName].push(feature);
+    });
+    return grouped;
+  }
+
+  /**
+   * 地物種類の表示名取得
+   * @param {string} type
+   * @returns {string}
+   * @private
+   */
+  _getFeatureTypeName(type) {
+    const typeMap = {
+      'point': '点情報',
+      'line': '線情報',
+      'polygon': '面情報',
+      'unknown': 'その他'
+    };
+    return typeMap[type.toLowerCase()] || type;
   }
 
   /**
