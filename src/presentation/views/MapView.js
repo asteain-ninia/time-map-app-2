@@ -38,6 +38,7 @@ export class MapView {
     this._mapElement = null;
     this._mapOverlay = null;
     this._actionButtonsContainer = null;
+    this._resizeObserver = null;
 
     // 状態
     this._isMeasuringDistance = false;
@@ -110,6 +111,14 @@ export class MapView {
 
     // イベントリスナー設定 (EventHandlerに委譲)
     this._eventHandler.setupEventListeners();
+
+    // コンテナサイズの変化を監視
+    if (typeof ResizeObserver !== 'undefined') {
+        this._resizeObserver = new ResizeObserver(() => {
+            this._handleResize();
+        });
+        this._resizeObserver.observe(this._container);
+    }
 
     // ウィンドウリサイズイベントの設定 (MapView自身で処理)
     window.addEventListener('resize', this._handleResize.bind(this));
@@ -289,6 +298,11 @@ export class MapView {
     this._measurePoints = []; // 測定点をクリア
     this._rendererHelper.clearMeasureElements(); // 描画ヘルパー経由で関連描画をクリア
     // this._render(); // 描画更新は不要な場合もあるが、念のため呼ぶ
+  }
+
+  /** 強制的に再描画 */
+  refresh() {
+    this._render();
   }
 
   // --- Private Helper Methods (主にEventHandlerから呼ばれる、または内部で使用) ---

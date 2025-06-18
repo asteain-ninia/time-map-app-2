@@ -185,7 +185,11 @@ class TimeMapApp {
       // レンダラーに背景地図を設定
       const renderer = this._di.get('renderer');
       renderer.loadBackgroundMap(svgContent);
-      
+
+      // 背景地図読み込み後に再描画
+      const mapView = this._di.get('mapView');
+      mapView.refresh();
+
       console.log('背景地図を読み込みました');
     } catch (error) {
       console.error('背景地図の読み込みに失敗しました', error);
