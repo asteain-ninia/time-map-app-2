@@ -38,6 +38,7 @@ export class MapView {
     this._mapElement = null;
     this._mapOverlay = null;
     this._actionButtonsContainer = null;
+    this._resizeObserver = null;
 
     // 状態
     this._isMeasuringDistance = false;
@@ -110,6 +111,14 @@ export class MapView {
 
     // イベントリスナー設定 (EventHandlerに委譲)
     this._eventHandler.setupEventListeners();
+
+    // コンテナサイズの変化を監視
+    if (typeof ResizeObserver !== 'undefined') {
+        this._resizeObserver = new ResizeObserver(() => {
+            this._handleResize();
+        });
+        this._resizeObserver.observe(this._container);
+    }
 
     // ウィンドウリサイズイベントの設定 (MapView自身で処理)
     window.addEventListener('resize', this._handleResize.bind(this));
