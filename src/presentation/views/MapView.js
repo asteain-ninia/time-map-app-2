@@ -300,6 +300,11 @@ export class MapView {
     // this._render(); // 描画更新は不要な場合もあるが、念のため呼ぶ
   }
 
+  /** 強制的に再描画 */
+  refresh() {
+    this._render();
+  }
+
   // --- Private Helper Methods (主にEventHandlerから呼ばれる、または内部で使用) ---
 
   /** アクションボタンを作成 */
