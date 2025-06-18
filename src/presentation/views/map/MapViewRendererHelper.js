@@ -150,6 +150,30 @@ export class MapViewRendererHelper {
                         });
                      }
                 }
+
+                if (selectedVertexIds.size > 0 || draggingVerticesInfo.size > 0) {
+                    if (feature instanceof DomainLine) {
+                        feature.vertexIds.forEach(id => {
+                            const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
+                            if (vData) {
+                                const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                                if (marker) this._selectionElements.push(marker);
+                            }
+                        });
+                    } else if (feature instanceof DomainPolygon) {
+                        if (feature.rings && Array.isArray(feature.rings)) {
+                            feature.rings.forEach(ring => {
+                                ring.vertexIds.forEach(id => {
+                                    const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
+                                    if (vData) {
+                                        const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                                        if (marker) this._selectionElements.push(marker);
+                                    }
+                                });
+                            });
+                        }
+                    }
+                }
             }
         }
     }
