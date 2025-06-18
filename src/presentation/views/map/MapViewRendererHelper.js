@@ -340,19 +340,24 @@ export class MapViewRendererHelper {
     if (measurePoints.length === 0) return;
 
     const viewport = this._viewportManager.getViewport();
-    // 距離測定のプレビューも、通常ワールドの端をまたいで行うことは稀なので、
-    // オフセット描画は行わない。
+    const worldWidth = this._renderer.getWorldWidth();
+    const finalOffsets = [0, -worldWidth, worldWidth];
 
     measurePoints.forEach((point, index) => {
-        const pointElem = this._renderer.drawPoint(point.x, point.y, editingStyles.measurePoint, viewport);
-        if (pointElem) this._measureElements.push(pointElem);
+        for (const offsetX of finalOffsets) {
+            const pointElem = this._renderer.drawPoint(point.x + offsetX, point.y, editingStyles.measurePoint, viewport);
+            if (pointElem) this._measureElements.push(pointElem);
+        }
         const labelElem = this._renderer.drawText(point.x, point.y + 10 / viewport.zoom, String.fromCharCode(65 + index), editingStyles.measureLabel, viewport);
         if(labelElem) this._measureElements.push(labelElem);
     });
 
     if (measurePoints.length >= 2) {
-        const lineElem = this._renderer.drawLine(measurePoints, editingStyles.measureLine, viewport);
-        if (lineElem) this._measureElements.push(lineElem);
+        for (const offsetX of finalOffsets) {
+            const offsetPoints = measurePoints.map(p => ({ x: p.x + offsetX, y: p.y }));
+            const lineElem = this._renderer.drawLine(offsetPoints, editingStyles.measureLine, viewport);
+            if (lineElem) this._measureElements.push(lineElem);
+        }
 
         // 大圏コースを追加描画
         const gcPoints = [];
@@ -362,8 +367,11 @@ export class MapViewRendererHelper {
             gcPoints.push(...segment);
         }
         if (gcPoints.length >= 2) {
-            const gcElem = this._renderer.drawLine(gcPoints, editingStyles.greatCircleLine, viewport);
-            if (gcElem) this._measureElements.push(gcElem);
+            for (const offsetX of finalOffsets) {
+                const offsetGcPoints = gcPoints.map(p => ({ x: p.x + offsetX, y: p.y }));
+                const gcElem = this._renderer.drawLine(offsetGcPoints, editingStyles.greatCircleLine, viewport);
+                if (gcElem) this._measureElements.push(gcElem);
+            }
         }
 
         // 赤道長を MapViewModel から取得
