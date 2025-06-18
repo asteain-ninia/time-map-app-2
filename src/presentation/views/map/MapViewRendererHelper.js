@@ -340,55 +340,60 @@ export class MapViewRendererHelper {
     if (measurePoints.length === 0) return;
 
     const viewport = this._viewportManager.getViewport();
-    // 距離測定のプレビューも、通常ワールドの端をまたいで行うことは稀なので、
-    // オフセット描画は行わない。
+    const worldWidth = this._renderer.getWorldWidth();
+    const finalOffsets = [0, -worldWidth, worldWidth];
 
-    measurePoints.forEach((point, index) => {
-        const pointElem = this._renderer.drawPoint(point.x, point.y, editingStyles.measurePoint, viewport);
-        if (pointElem) this._measureElements.push(pointElem);
-        const labelElem = this._renderer.drawText(point.x, point.y + 10 / viewport.zoom, String.fromCharCode(65 + index), editingStyles.measureLabel, viewport);
-        if(labelElem) this._measureElements.push(labelElem);
-    });
+    for (const offsetX of finalOffsets) {
+        measurePoints.forEach((point, index) => {
+            const px = point.x + offsetX;
+            const py = point.y;
+            const pointElem = this._renderer.drawPoint(px, py, editingStyles.measurePoint, viewport);
+            if (pointElem) this._measureElements.push(pointElem);
+            const labelElem = this._renderer.drawText(px, py + 10 / viewport.zoom, String.fromCharCode(65 + index), editingStyles.measureLabel, viewport);
+            if(labelElem) this._measureElements.push(labelElem);
+        });
 
-    if (measurePoints.length >= 2) {
-        const lineElem = this._renderer.drawLine(measurePoints, editingStyles.measureLine, viewport);
-        if (lineElem) this._measureElements.push(lineElem);
+        if (measurePoints.length >= 2) {
+            const offsetPoints = measurePoints.map(p => ({ x: p.x + offsetX, y: p.y }));
+            const lineElem = this._renderer.drawLine(offsetPoints, editingStyles.measureLine, viewport);
+            if (lineElem) this._measureElements.push(lineElem);
 
-        // 大圏コースを追加描画
-        const gcPoints = [];
-        for (let i = 1; i < measurePoints.length; i++) {
-            const segment = this._viewModel.calculateGreatCirclePath(measurePoints[i - 1], measurePoints[i]);
-            if (gcPoints.length > 0) segment.shift();
-            gcPoints.push(...segment);
+            const gcPoints = [];
+            for (let i = 1; i < measurePoints.length; i++) {
+                const segStart = { x: measurePoints[i - 1].x + offsetX, y: measurePoints[i - 1].y };
+                const segEnd = { x: measurePoints[i].x + offsetX, y: measurePoints[i].y };
+                const segment = this._viewModel.calculateGreatCirclePath(segStart, segEnd);
+                if (gcPoints.length > 0) segment.shift();
+                gcPoints.push(...segment);
+            }
+            if (gcPoints.length >= 2) {
+                const gcElem = this._renderer.drawLine(gcPoints, editingStyles.greatCircleLine, viewport);
+                if (gcElem) this._measureElements.push(gcElem);
+            }
+
+            const equatorLength = this._viewModel.getEquatorLength();
+            let totalLinear = 0;
+            let totalGreatCircle = 0;
+
+            for (let i = 1; i < measurePoints.length; i++) {
+                const p1 = measurePoints[i - 1];
+                const p2 = measurePoints[i];
+                const distance = this._viewModel.calculateDistance(p1, p2, equatorLength);
+                totalLinear += distance.linear;
+                totalGreatCircle += distance.greatCircle;
+                const midX = (p1.x + p2.x) / 2 + offsetX;
+                const midY = (p1.y + p2.y) / 2;
+                const segLabel = this._renderer.drawText(midX, midY - 10 / viewport.zoom, `${distance.linear.toFixed(1)}km`, editingStyles.measureSegmentLabel, viewport);
+                if(segLabel) this._measureElements.push(segLabel);
+            }
+
+            const lastPoint = measurePoints[measurePoints.length - 1];
+            const textYOffset = 15 / viewport.zoom;
+            const totalLinearElem = this._renderer.drawText(lastPoint.x + offsetX + 10 / viewport.zoom, lastPoint.y + textYOffset * 2, `直線計: ${totalLinear.toFixed(1)} km`, editingStyles.totalLabel, viewport);
+            if(totalLinearElem) this._measureElements.push(totalLinearElem);
+            const totalGreatCircleElem = this._renderer.drawText(lastPoint.x + offsetX + 10 / viewport.zoom, lastPoint.y + textYOffset, `大円計: ${totalGreatCircle.toFixed(1)} km`, editingStyles.totalLabel, viewport);
+            if(totalGreatCircleElem) this._measureElements.push(totalGreatCircleElem);
         }
-        if (gcPoints.length >= 2) {
-            const gcElem = this._renderer.drawLine(gcPoints, editingStyles.greatCircleLine, viewport);
-            if (gcElem) this._measureElements.push(gcElem);
-        }
-
-        // 赤道長を MapViewModel から取得
-        const equatorLength = this._viewModel.getEquatorLength(); 
-        let totalLinear = 0;
-        let totalGreatCircle = 0;
-
-        for (let i = 1; i < measurePoints.length; i++) {
-            const p1 = measurePoints[i - 1];
-            const p2 = measurePoints[i];
-            const distance = this._viewModel.calculateDistance(p1, p2, equatorLength);
-            totalLinear += distance.linear;
-            totalGreatCircle += distance.greatCircle;
-            const midX = (p1.x + p2.x) / 2;
-            const midY = (p1.y + p2.y) / 2;
-            const segmentLabelElem = this._renderer.drawText(midX, midY - 10 / viewport.zoom, `${distance.linear.toFixed(1)}km`, editingStyles.measureSegmentLabel, viewport);
-            if(segmentLabelElem) this._measureElements.push(segmentLabelElem);
-        }
-
-        const lastPoint = measurePoints[measurePoints.length - 1];
-        const textYOffset = 15 / viewport.zoom;
-        const totalLinearElem = this._renderer.drawText(lastPoint.x + 10 / viewport.zoom, lastPoint.y + textYOffset * 2, `直線計: ${totalLinear.toFixed(1)} km`, editingStyles.totalLabel, viewport);
-        if(totalLinearElem) this._measureElements.push(totalLinearElem);
-        const totalGreatCircleElem = this._renderer.drawText(lastPoint.x + 10 / viewport.zoom, lastPoint.y + textYOffset, `大円計: ${totalGreatCircle.toFixed(1)} km`, editingStyles.totalLabel, viewport);
-        if(totalGreatCircleElem) this._measureElements.push(totalGreatCircleElem);
     }
     this._measureElements.forEach(el => el.classList.add('temp-drawing', 'measure-element'));
   }
