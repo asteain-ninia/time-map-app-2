@@ -9,7 +9,7 @@ import { Property } from '../value-objects/Property.js';
  * @typedef {object} Ring
  * @property {string} id - リングの一意なID (例: "ring-1234567890-123")
  * @property {string[]} vertexIds - 頂点IDの配列 (順序付き、最低3点)
- * @property {boolean} isOuter - これが外周リングか穴リングか (true: 外周, false: 穴)
+ * @property {'territory' | 'hole'} ringType - リングの種類 ('territory': 領土, 'hole': 穴)
  * @property {string | null} parentId - このリングを直接含む外周リングのID (ポリゴンの最外周リングまたは飛び地外周リングの場合はnull)
  */
 
@@ -22,7 +22,7 @@ export class Polygon extends Feature {
   /** @type {string} */
   _parentId; // ドメイン階層における親ポリゴンのID
   /** @type {ReadonlyArray<string>} */
-  _childIds; // ドメイン階層における子ポリゴンのID配列
+  _childIds; // ドメイン階層における下位領域IDの配列
 
   /**
    * 面情報オブジェクトを作成 (リングベース)
@@ -45,7 +45,7 @@ export class Polygon extends Feature {
     this._rings = rings.map(ring => ({
         id: ring.id,
         vertexIds: [...ring.vertexIds],
-        isOuter: ring.isOuter,
+        ringType: ring.ringType,
         parentId: ring.parentId // null も許容
     }));
 
@@ -70,14 +70,12 @@ export class Polygon extends Feature {
       if (!Array.isArray(ring.vertexIds) || ring.vertexIds.length < 3) {
         throw new Error(`Ring (id: ${ring.id}) must have at least three vertices.`);
       }
-      if (typeof ring.isOuter !== 'boolean') {
-          throw new Error(`Ring (id: ${ring.id}) must have an 'isOuter' boolean property.`);
+      if (ring.ringType !== 'territory' && ring.ringType !== 'hole') {
+          throw new Error(`Ring (id: ${ring.id}) must have a 'ringType' of 'territory' or 'hole'.`);
       }
       if (ring.parentId !== null && typeof ring.parentId !== 'string') {
            throw new Error(`Ring (id: ${ring.id}) parentId must be a string or null.`);
       }
-      // parentId が null で isOuter=false (穴) は不正だが、
-      // 完全な検証は PolygonEditService で行うこととし、ここでは基本的な型と構造のみチェック
     });
   }
 
@@ -231,7 +229,7 @@ export class Polygon extends Feature {
     * @throws {Error} リングIDが重複する場合など
     */
    withAddedRing(newRing) {
-       if (!newRing || !newRing.id || !Array.isArray(newRing.vertexIds) || typeof newRing.isOuter !== 'boolean') {
+       if (!newRing || !newRing.id || !Array.isArray(newRing.vertexIds) || (newRing.ringType !== 'territory' && newRing.ringType !== 'hole')) {
            throw new Error("Invalid ring data provided.");
        }
        if (this._rings.some(r => r.id === newRing.id)) {
@@ -330,7 +328,7 @@ export class Polygon extends Feature {
   get holesVertexIds() {
     console.warn("Polygon.holesVertexIds getter is deprecated. Use polygon.rings instead.");
     // 最上位の穴リングの頂点ID配列を返す（簡易的な互換性のため）
-    return this._rings.filter(r => !r.isOuter && r.parentId === null).map(r => r.vertexIds);
+    return this._rings.filter(r => r.ringType === 'hole' && r.parentId === null).map(r => r.vertexIds);
   }
 
   /**
@@ -338,8 +336,8 @@ export class Polygon extends Feature {
    */
   get isMultiPolygon() {
     console.warn("Polygon.isMultiPolygon getter is deprecated. Use polygon.rings instead.");
-    // 複数の最上位外周リングがある場合に true を返す（簡易的な互換性のため）
-    return this._rings.filter(r => r.isOuter && r.parentId === null).length > 1;
+    // 複数の最上位領土リングがある場合に true を返す（簡易的な互換性のため）
+    return this._rings.filter(r => r.ringType === 'territory' && r.parentId === null).length > 1;
   }
 
   /**

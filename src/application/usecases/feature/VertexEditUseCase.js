@@ -76,7 +76,7 @@ export class VertexEditUseCase {
         } else if (currentFeature instanceof Polygon) {
             let polygonUpdated = false;
             const originalRings = currentFeature.rings;
-            const newRingsData = []; // {id, vertexIds, isOuter, parentId} のプレーンオブジェクト
+            const newRingsData = []; // {id, vertexIds, ringType, parentId} のプレーンオブジェクト
             const ringsToDeleteIds = new Set();
 
             for (const ring of originalRings) {

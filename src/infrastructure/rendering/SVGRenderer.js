@@ -660,10 +660,10 @@ _renderGrid(viewport, gridSettings) {
 
         // ラベルを描画（オプション）(このオフセットの中心に対して)
         if (property.name && style.showLabel) {
-          // ポリゴンの中心を計算（簡易的に、最初の最上位外周リングの重心）
-          const firstOuterRing = polygon.rings.find(r => r.isOuter && r.parentId === null);
-          if (firstOuterRing) {
-              const ringVerticesOriginal = firstOuterRing.vertexIds
+          // ポリゴンの中心を計算（簡易的に、最初の最上位領土リングの重心）
+          const firstTerritoryRing = polygon.rings.find(r => r.ringType === 'territory' && r.parentId === null);
+          if (firstTerritoryRing) {
+              const ringVerticesOriginal = firstTerritoryRing.vertexIds
                   .map(id => verticesMap.get(id))
                   .filter(v => v); // 元の頂点
 

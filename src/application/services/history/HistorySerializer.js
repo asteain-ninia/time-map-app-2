@@ -98,7 +98,7 @@ export class HistorySerializer {
         rings: Array.isArray(object.rings) ? object.rings.map(ring => ({ // リングはプレーンオブジェクトとして
           id: ring.id,
           vertexIds: [...ring.vertexIds],
-          isOuter: ring.isOuter,
+          ringType: ring.ringType,
           parentId: ring.parentId
         })) : []
       };
@@ -124,11 +124,11 @@ export class HistorySerializer {
     if (!data) return null;
 
     // リングデータは _constructorName を持たない前提で処理 (Polygonの一部として保存されているため)
-    if (data.id && Array.isArray(data.vertexIds) && typeof data.isOuter === 'boolean' && data._constructorName === undefined) {
+    if (data.id && Array.isArray(data.vertexIds) && (data.ringType === 'territory' || data.ringType === 'hole') && data._constructorName === undefined) {
       return { // リングデータはプレーンオブジェクトとして返す
         id: data.id,
         vertexIds: data.vertexIds || [],
-        isOuter: data.isOuter,
+        ringType: data.ringType,
         parentId: data.parentId !== undefined ? data.parentId : null
       };
     }
@@ -160,7 +160,7 @@ export class HistorySerializer {
           const polygonRings = (data.rings || []).map(ringData => ({ // リングはプレーンオブジェクトのまま
             id: ringData.id,
             vertexIds: ringData.vertexIds || [],
-            isOuter: ringData.isOuter,
+            ringType: ringData.ringType,
             parentId: ringData.parentId !== undefined ? ringData.parentId : null
           }));
           const polygonProps = (data.properties || []).map(pData => this.deserialize(pData)).filter(p => p instanceof Property);

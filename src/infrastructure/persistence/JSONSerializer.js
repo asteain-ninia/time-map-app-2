@@ -31,7 +31,7 @@ export class JSONSerializer {
    */
   serialize(world) {
     const data = {
-      version: "1.1-ringbased", // バージョン更新 (リングベース移行)
+      version: "1.2-ringtype", // バージョン更新 (ringType移行)
       layers: world.layers.map(layer => this._serializeLayer(layer)),
       vertices: world.vertices.map(vertex => this._serializeVertex(vertex)),
       points: [],
@@ -63,9 +63,8 @@ export class JSONSerializer {
     const data = JSON.parse(json);
 
     // バージョンチェック
-    // リングベース対応バージョン 1.1 以降を期待
-    if (!data.version || !data.version.startsWith("1.1")) {
-      console.warn(`Warning: Data version ${data.version} might not be fully compatible with ring-based polygons.`);
+    if (!data.version || !data.version.startsWith("1.2")) {
+      console.warn(`Warning: Data version ${data.version} is not the expected ringType-based version (1.2). Deserialization may fail.`);
       // ここでデータ移行ロジックを入れることも可能だが、今回は警告のみ
     }
 
@@ -370,14 +369,9 @@ export class JSONSerializer {
       rings: polygon.rings.map(ring => ({
         id: ring.id,
         vertexIds: [...ring.vertexIds], // 頂点IDをコピー
-        isOuter: ring.isOuter,
+        ringType: ring.ringType,
         parentId: ring.parentId // nullもそのまま保存
       }))
-      // 古い形式のプロパティは削除
-      // vertexIds: ...,
-      // holesVertexIds: ...,
-      // isMultiPolygon: ...,
-      // subPolygons: ...
     };
     return result;
   }
@@ -393,7 +387,7 @@ export class JSONSerializer {
     const rings = (data.rings || []).map(ringData => ({
       id: ringData.id,
       vertexIds: ringData.vertexIds || [], // 念のためデフォルト値
-      isOuter: ringData.isOuter,
+      ringType: ringData.ringType,
       parentId: ringData.parentId // nullもそのまま読み込む
     }));
 
@@ -405,11 +399,6 @@ export class JSONSerializer {
       data.parentId || "0", // parentIdがなければ "0"
       data.childIds || [], // childIdsがなければ []
       rings // 読み込んだリング配列
-      // 古い形式の引数は不要
-      // data.vertexIds || [],
-      // data.holesVertexIds || [],
-      // data.isMultiPolygon || false,
-      // data.subPolygons || []
     );
   }
 }

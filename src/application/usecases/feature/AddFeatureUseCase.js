@@ -80,7 +80,7 @@ export class AddFeatureUseCase {
         const outerRing = {
             id: this._generateId('ring'),
             vertexIds: [...processedGeometry.vertexIds],
-            isOuter: true,
+            ringType: 'territory',
             parentId: null
         };
         const rings = [outerRing];

@@ -1,6 +1,7 @@
+// src/application/services/IPolygonEditService.js
+
 /**
  * ポリゴン編集サービスのインターフェース定義
- * (リングベース構造への移行後に実装される想定)
  */
 export class IPolygonEditService {
   /**
@@ -17,7 +18,7 @@ export class IPolygonEditService {
   /**
    * ポリゴンに新しいリングを追加する
    * @param {string} polygonId - 対象ポリゴンのID
-   * @param {object} ringData - 追加するリングの情報 { vertexIds: string[], isOuter: boolean, parentId?: string }
+   * @param {object} ringData - 追加するリングの情報 { vertexIds: string[], ringType: 'territory' | 'hole', parentId?: string }
    * @returns {Promise<Polygon>} 更新されたポリゴンインスタンス
    * @abstract
    */

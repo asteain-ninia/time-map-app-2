@@ -53,8 +53,8 @@ export class UpdateFeatureUseCase {
    * @param {Object} updates - 更新内容 { properties?: Property[], geometry?: Object, layerId?: string }
    *                         properties は要素数1の Property インスタンスの配列を期待。
    *                         geometry (Polygonの場合): {
-   *                           newRingCoordinates?: { points: {x,y}[], isOuter: boolean, parentId?: string }[],
-   *                           existingRingData?: { id: string, vertexIds: string[], isOuter: boolean, parentId?: string }[],
+   *                           newRingCoordinates?: { points: {x,y}[], ringType: 'territory' | 'hole', parentId?: string }[],
+   *                           existingRingData?: { id: string, vertexIds: string[], ringType: 'territory' | 'hole', parentId?: string }[],
    *                           removedRingIds?: string[],
    *                           updatedRingVertices?: { ringId: string, newVertexIds: string[] }[]
    *                         }
@@ -125,7 +125,7 @@ export class UpdateFeatureUseCase {
                     }
                     const ringData = {
                         vertexIds: processed.vertexIds,
-                        isOuter: ringCoordData.isOuter,
+                        ringType: ringCoordData.ringType,
                         parentId: ringCoordData.parentId
                     };
                     polygonBeingUpdated = await editService.addRingToPolygon(polygonBeingUpdated.id, ringData);

@@ -285,7 +285,7 @@ export class EditingViewModel {
 
     try {
         const geometryUpdate = {
-            newRingCoordinates: [{ points: holePoints, isOuter: false, parentId: targetRingId }]
+            newRingCoordinates: [{ points: holePoints, ringType: 'hole', parentId: targetRingId }]
         };
         // UpdateFeatureUseCase.execute は { feature, newlyAddedVerticesData? } を返す
         const updateResult = await this._editFeatureUseCase.updateFeature(polygonId, { geometry: geometryUpdate });
@@ -332,7 +332,7 @@ export class EditingViewModel {
 
     try {
         const geometryUpdate = {
-            newRingCoordinates: [{ points: enclavePoints, isOuter: true, parentId: parentRingId }]
+            newRingCoordinates: [{ points: enclavePoints, ringType: 'territory', parentId: parentRingId }]
         };
         const updateResult = await this._editFeatureUseCase.updateFeature(polygonId, { geometry: geometryUpdate });
         const updatedPolygon = updateResult.feature;

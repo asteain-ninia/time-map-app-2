@@ -214,10 +214,6 @@ export class MapViewModel {
     const index = this._world.features.findIndex(f => f.id === event.feature.id);
     if (index !== -1) {
       this._world.features[index] = event.feature;
-       // もし更新された地物がworldデータ全体にも影響を与える場合(例:metadata.settingsの更新)
-       // this._projectSettingsも更新し、'projectSettingsChanged'イベントを発行する
-       // FeatureUpdateイベントでは、通常地物のプロパティや形状の変更であり、プロジェクト設定全体の変更とは区別する。
-       // プロジェクト設定の変更は updateProjectSettings メソッド経由で行い、専用のイベントを発行する。
     } else {
       // 更新対象が見つからない場合は追加 (アンドゥ/リドゥで発生する可能性)
       this._world.features.push(event.feature);
@@ -226,6 +222,14 @@ export class MapViewModel {
 
     // 現在の時間点に対応する地物をリロード
     this._loadFeaturesForCurrentTime();
+
+    // 更新された地物が選択中の場合、選択ハイライトを再描画するために通知
+    if (this._selectedFeatureId === event.feature.id) {
+        this._notifyObservers('selectedFeature', event.feature);
+    }
+    if (this._highlightedFeatureId === event.feature.id) {
+        this._notifyObservers('highlightedFeature', event.feature);
+    }
   }
 
   /**

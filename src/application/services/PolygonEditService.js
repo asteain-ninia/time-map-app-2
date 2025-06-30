@@ -60,7 +60,7 @@ export class PolygonEditService extends IPolygonEditService {
 
     // 0. リングの基本的な構造チェック
     for (const ring of rings) {
-        if (!ring || !ring.id || !Array.isArray(ring.vertexIds) || ring.vertexIds.length < 3 || typeof ring.isOuter !== 'boolean') {
+        if (!ring || !ring.id || !Array.isArray(ring.vertexIds) || ring.vertexIds.length < 3 || (ring.ringType !== 'territory' && ring.ringType !== 'hole')) {
             throw new Error(`Invalid ring structure found (ID: ${ring?.id || 'unknown'}).`);
         }
         if (ring.vertexIds.some(id => !verticesMap.has(id))) {
@@ -71,8 +71,8 @@ export class PolygonEditService extends IPolygonEditService {
         }
         if (ring.parentId) {
             const parentRing = getRingById(ring.parentId);
-            if (parentRing && !parentRing.isOuter) {
-                 throw new Error(`Ring (ID: ${ring.id}) cannot have an inner ring (ID: ${ring.parentId}) as its parent.`);
+            if (ring.ringType === 'hole' && parentRing && parentRing.ringType === 'hole') {
+                 throw new Error(`Hole ring (ID: ${ring.id}) cannot have another hole ring (ID: ${ring.parentId}) as its parent.`);
             }
         }
     }
@@ -111,12 +111,12 @@ export class PolygonEditService extends IPolygonEditService {
             const vertices1 = getVertices(ring1.id);
             const box1 = ringBBoxes.get(ring1.id);
 
-            if (!ring1.isOuter && parentRing) {
+            if (ring1.ringType === 'hole' && parentRing) {
                 if (!parentBBox || !box1 /* || !this._geometryService.boxesIntersect(box1, parentBBox) */ ) {
                     // BBoxチェックは必須ではない
                 }
                 if (!this._geometryService.isRingCompletelyInsideRing(vertices1, parentVertices)) {
-                    throw new Error(`Inner ring (Hole ID: ${ring1.id}) is not completely inside its parent outer ring (ID: ${parentRingId}).`);
+                    throw new Error(`Hole ring (ID: ${ring1.id}) is not completely inside its parent ring (ID: ${parentRingId}).`);
                 }
             }
 
@@ -133,7 +133,7 @@ export class PolygonEditService extends IPolygonEditService {
                     throw new Error(`Sibling rings (ID: ${ring1.id} and ${ring2.id}) intersect.`);
                 }
 
-                if (!ring1.isOuter && !ring2.isOuter) {
+                if (ring1.ringType === 'hole' && ring2.ringType === 'hole') {
                     if (this._geometryService.isRingCompletelyInsideRing(vertices1, vertices2)) {
                         throw new Error(`Sibling holes (ID: ${ring1.id} and ${ring2.id}) should not contain each other ( ${ring1.id} is inside ${ring2.id}).`);
                     }
@@ -149,7 +149,7 @@ export class PolygonEditService extends IPolygonEditService {
   /**
    * ポリゴンに新しいリングを追加する (IDは内部で生成)
    * @param {string} polygonId - 対象ポリゴンのID
-   * @param {object} ringData - 追加するリングの情報 { vertexIds: string[], isOuter: boolean, parentId?: string }
+   * @param {object} ringData - 追加するリングの情報 { vertexIds: string[], ringType: 'territory' | 'hole', parentId?: string }
    * @returns {Promise<Polygon>} 更新されたポリゴンインスタンス (保存は呼び出し元で行う)
    * @throws {Error} ポリゴンが見つからない場合、リングデータが無効な場合
    */
@@ -161,8 +161,8 @@ export class PolygonEditService extends IPolygonEditService {
     }
     const currentPolygon = world.features[polygonIndex];
 
-    if (!ringData || !Array.isArray(ringData.vertexIds) || ringData.vertexIds.length < 3 || typeof ringData.isOuter !== 'boolean') {
-        throw new Error("Invalid ring data provided. Requires { vertexIds: string[], isOuter: boolean, parentId?: string }.");
+    if (!ringData || !Array.isArray(ringData.vertexIds) || ringData.vertexIds.length < 3 || (ringData.ringType !== 'territory' && ringData.ringType !== 'hole')) {
+        throw new Error("Invalid ring data provided. Requires { vertexIds: string[], ringType: 'territory' | 'hole', parentId?: string }.");
     }
     if (ringData.parentId !== undefined && ringData.parentId !== null && typeof ringData.parentId !== 'string') {
         throw new Error("Invalid ringData.parentId. Must be null or a string.");
@@ -172,7 +172,7 @@ export class PolygonEditService extends IPolygonEditService {
     const newRing = {
         id: newRingId,
         vertexIds: [...ringData.vertexIds],
-        isOuter: ringData.isOuter,
+        ringType: ringData.ringType,
         parentId: ringData.parentId !== undefined ? ringData.parentId : null
     };
 
@@ -191,7 +191,7 @@ export class PolygonEditService extends IPolygonEditService {
   /**
    * ポリゴンにID指定でリングを追加する (主にアンドゥ/リドゥ用)
    * @param {string} polygonId - 対象ポリゴンのID
-   * @param {object} ringDataWithId - 追加するリングの情報 { id: string, vertexIds: string[], isOuter: boolean, parentId?: string }
+   * @param {object} ringDataWithId - 追加するリングの情報 { id: string, vertexIds: string[], ringType: 'territory' | 'hole', parentId?: string }
    * @returns {Promise<Polygon>} 更新されたポリゴンインスタンス (保存は呼び出し元で行う)
    * @throws {Error} ポリゴンが見つからない場合、リングデータが無効な場合、IDが重複する場合
    */
@@ -206,8 +206,8 @@ export class PolygonEditService extends IPolygonEditService {
     // ringDataWithId の検証 (IDを含む)
     if (!ringDataWithId || typeof ringDataWithId.id !== 'string' || !ringDataWithId.id ||
         !Array.isArray(ringDataWithId.vertexIds) || ringDataWithId.vertexIds.length < 3 ||
-        typeof ringDataWithId.isOuter !== 'boolean') {
-      throw new Error("Invalid ring data provided. Requires { id: string, vertexIds: string[], isOuter: boolean, parentId?: string }.");
+        (ringDataWithId.ringType !== 'territory' && ringDataWithId.ringType !== 'hole')) {
+      throw new Error("Invalid ring data provided. Requires { id: string, vertexIds: string[], ringType: 'territory' | 'hole', parentId?: string }.");
     }
     if (ringDataWithId.parentId !== undefined && ringDataWithId.parentId !== null && typeof ringDataWithId.parentId !== 'string') {
       throw new Error("Invalid ringDataWithId.parentId. Must be null or a string.");
@@ -222,7 +222,7 @@ export class PolygonEditService extends IPolygonEditService {
     const newRing = {
         id: ringDataWithId.id,
         vertexIds: [...ringDataWithId.vertexIds],
-        isOuter: ringDataWithId.isOuter,
+        ringType: ringDataWithId.ringType,
         parentId: ringDataWithId.parentId !== undefined ? ringDataWithId.parentId : null
     };
 
