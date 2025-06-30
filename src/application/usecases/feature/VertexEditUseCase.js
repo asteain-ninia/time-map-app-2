@@ -77,7 +77,7 @@ export class VertexEditUseCase {
             let polygonUpdated = false;
             const originalRings = currentFeature.rings;
             const newRingsData = []; // {id, vertexIds, isOuter, parentId} のプレーンオブジェクト
-            const ringsToDeleteIds = [];
+            const ringsToDeleteIds = new Set();
 
             for (const ring of originalRings) {
                 if (ring.vertexIds.some(id => verticesToDeleteSet.has(id))) {
@@ -87,16 +87,8 @@ export class VertexEditUseCase {
                         polygonUpdated = true;
                     } else {
                         // リングが無効になった -> このリングは削除対象とする
-                        ringsToDeleteIds.push(ring.id);
+                        ringsToDeleteIds.add(ring.id);
                         polygonUpdated = true; // ポリゴン形状が変更された
-                        // 注意: このリングが他の穴リングの親だった場合の処理は
-                        // PolygonEditService.removeRingFromPolygon の責務とする。
-                        // ここでは単純に無効なリングを除外する。
-                        // 子リングを持つリングを削除しようとするとremoveRingFromPolygonでエラーになる想定。
-                        // しかし、現状 removeRingFromPolygon を直接呼んでいないので、
-                        // 子が親を失うケースが発生しうる -> 後の検証でエラーになるはず。
-                        // 将来的に、ここで removeRingFromPolygon を呼ぶか、
-                        // PolygonEditService にリング削除を伴う頂点削除メソッドを設けるべきかもしれない。
                     }
                 } else {
                     newRingsData.push({ ...ring });
@@ -108,31 +100,18 @@ export class VertexEditUseCase {
                  // まず頂点ID配列が更新されたリングでポリゴンを更新
                  newRingsData.forEach(ringData => {
                      const originalRing = originalRings.find(or => or.id === ringData.id);
-                     // 変更があったリングのみ更新
                      if (originalRing && JSON.stringify(originalRing.vertexIds) !== JSON.stringify(ringData.vertexIds)) {
-                          try {
-                             tempPolygon = tempPolygon.withUpdatedRingVertices(ringData.id, ringData.vertexIds);
-                          } catch (updateError) {
-                              console.error(`${logPrefix} Error updating ring vertices for ring ${ringData.id}:`, updateError);
-                              // 更新に失敗した場合、このポリゴンをエラー状態として扱うか？
-                              // ここではエラーをログ出力し、処理を続行する。
-                          }
+                         tempPolygon = tempPolygon.withUpdatedRingVertices(ringData.id, ringData.vertexIds);
                      }
                  });
-                 // 次に無効になったリングを削除 (インスタンス更新)
-                 // 注意: 依存関係チェックは Polygon.withRemovedRing が行う
+
+                 // 次に無効になったリングを削除 (カスケード削除と親子関係再構築)
                 for (const ringId of ringsToDeleteIds) {
-                     try {
-                         tempPolygon = tempPolygon.withRemovedRing(ringId);
-                     } catch (removeError) {
-                          console.error(`${logPrefix} Error removing invalid ring ${ringId}:`, removeError);
-                          // リング削除に失敗した場合（例: 子リングが依存している）
-                          // ここで処理を中断すべきか？ あるいはエラーのまま進めるか？
-                          // 暫定: エラーをログ出力し、削除されなかったものとして進める
-                     }
-                 }
-                 currentFeature = tempPolygon;
-                 needsUpdate = true;
+                    // withRemovedRingは新しいカスケードロジックを持つ
+                    tempPolygon = tempPolygon.withRemovedRing(ringId);
+                }
+                currentFeature = tempPolygon;
+                needsUpdate = true;
             }
 
             // リング削除後、ポリゴンが空になったかチェック

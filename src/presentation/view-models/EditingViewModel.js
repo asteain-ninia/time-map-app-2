@@ -279,7 +279,7 @@ export class EditingViewModel {
 
     const polygonId = this._targetPolygon.id;
     const holePoints = [...this._addingPoints];
-    const targetRingId = this._targetRingIdForHole;
+    const targetRingId = this.getTargetRingIdForHole();
 
     const polygonBeforeUpdate = this._targetPolygon; // 更新前のポリゴンインスタンス
 
@@ -326,12 +326,13 @@ export class EditingViewModel {
 
     const polygonId = this._targetPolygon.id;
     const enclavePoints = [...this._addingPoints];
+    const parentRingId = this.getTargetRingIdForHole(); // 穴の中の飛び地なら穴のID、本土外ならnull
 
     const polygonBeforeUpdate = this._targetPolygon; // 更新前のポリゴンインスタンス
 
     try {
         const geometryUpdate = {
-            newRingCoordinates: [{ points: enclavePoints, isOuter: true, parentId: null }]
+            newRingCoordinates: [{ points: enclavePoints, isOuter: true, parentId: parentRingId }]
         };
         const updateResult = await this._editFeatureUseCase.updateFeature(polygonId, { geometry: geometryUpdate });
         const updatedPolygon = updateResult.feature;

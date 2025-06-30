@@ -243,23 +243,34 @@ export class Polygon extends Feature {
    }
 
    /**
-    * 特定のリングを削除した新しいPolygonインスタンスを返す
+    * 特定のリングを削除し、子の親子関係を再構築した新しいPolygonインスタンスを返す
     * @param {string} ringIdToRemove - 削除するリングのID
     * @returns {Polygon} 更新されたPolygonインスタンス
-    * @throws {Error} ringIdが見つからない場合、または削除により子リングの親がなくなる場合（Serviceで処理すべき）
     */
    withRemovedRing(ringIdToRemove) {
-       const ringExists = this._rings.some(r => r.id === ringIdToRemove);
-       if (!ringExists) {
+       const ringToRemove = this._rings.find(r => r.id === ringIdToRemove);
+       if (!ringToRemove) {
            console.warn(`Ring with id ${ringIdToRemove} not found in polygon ${this.id}. Returning original polygon.`);
-           return this; // 見つからない場合は変更しない
+           return this;
        }
-       // 削除対象が親となっている子リングがないかチェック (本来はServiceで)
-       const hasDependentChildren = this._rings.some(r => r.parentId === ringIdToRemove);
-       if (hasDependentChildren) {
-           throw new Error(`Cannot remove ring ${ringIdToRemove} because other rings depend on it.`);
-       }
-       const newRings = this._rings.filter(r => r.id !== ringIdToRemove);
+
+       const parentIdForGrandchildren = ringToRemove.parentId;
+       const ringsToDelete = new Set([ringIdToRemove]);
+       
+       // カスケード削除対象（直接の子）を特定
+       const directChildren = this._rings.filter(r => r.parentId === ringIdToRemove);
+       directChildren.forEach(child => ringsToDelete.add(child.id));
+
+       const newRings = this._rings
+           .filter(ring => !ringsToDelete.has(ring.id)) // 削除対象（ringIdToRemoveとその直接の子）を除外
+           .map(ring => {
+               // 孫リングの親を付け替える
+               if (ringsToDelete.has(ring.parentId)) {
+                   return { ...ring, parentId: parentIdForGrandchildren };
+               }
+               return ring;
+           });
+
        return this._withRings(newRings);
    }
 

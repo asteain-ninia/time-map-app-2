@@ -603,11 +603,11 @@ export class MapViewEventHandler {
       } else if (locationInfo.type === 'outside' || locationInfo.type === 'inside_hole') { // ポリゴン外部または穴内部の場合
         // 飛び地モードを開始
         this._editingViewModel.setAddingSubMode('enclave');
-        // 飛び地の場合、ターゲットリングIDは不要なのでnullを設定
-        this._editingViewModel.setTargetRingIdForHole(null);
+        // 飛び地の場合、親リングIDを設定 (本土外ならnull, 穴の中ならその穴のID)
+        this._editingViewModel.setTargetRingIdForHole(locationInfo.ringId);
         // 最初の点を追加
         this.handleAddPoint(worldPoint);
-        console.log(`Adding enclave (outside or inside hole ${locationInfo.ringId}).`);
+        console.log(`Adding enclave (parent ring: ${locationInfo.ringId || 'root'}).`);
       }
     } else { // 3. サブモード決定済みで、頂点を追加していく段階
       const world = this._viewModel.getWorld();
@@ -615,7 +615,7 @@ export class MapViewEventHandler {
       const verticesMap = new Map(world.vertices.map(v => [v.id, {id:v.id, x:v.x, y:v.y}]));
       const locationInfo = this._interactionLogic.locatePointInPolygon(worldPoint, targetPolygon, verticesMap);
       const isOnBoundary = this._interactionLogic.isPointNearPolygonBoundary(worldPoint, targetPolygon, verticesMap);
-      const targetRingId = this._editingViewModel.getTargetRingIdForHole(); // 穴モードの場合のターゲットリングID
+      const targetRingId = this._editingViewModel.getTargetRingIdForHole(); // 穴または飛び地の親リングID
 
       let isValidClick = false;
       if (currentSubMode === 'hole') {
@@ -623,9 +623,13 @@ export class MapViewEventHandler {
           isValidClick = locationInfo.type === 'inside_outer' && locationInfo.ringId === targetRingId && !isOnBoundary;
           if (!isValidClick) console.warn("Invalid click for hole: Must be inside the target outer ring and not on a boundary.", { clickLocation: locationInfo, targetRingId });
       } else if (currentSubMode === 'enclave') {
-          // 飛び地モード: クリック位置がポリゴンの外部 または いずれかの穴の内部 かつ 境界上ではない
-          isValidClick = (locationInfo.type === 'outside' || locationInfo.type === 'inside_hole') && !isOnBoundary;
-           if (!isValidClick) console.warn("Invalid click for enclave: Must be outside the polygon or inside a hole, and not on a boundary.", { clickLocation: locationInfo });
+          // 飛び地モード:
+          // - 本土の外側に作る場合(targetRingId: null): クリック位置がポリゴン外部
+          // - 穴の中に作る場合(targetRingId: 穴のID): クリック位置がその穴の内部
+          const condition1 = (targetRingId === null && locationInfo.type === 'outside');
+          const condition2 = (targetRingId !== null && locationInfo.type === 'inside_hole' && locationInfo.ringId === targetRingId);
+          isValidClick = (condition1 || condition2) && !isOnBoundary;
+           if (!isValidClick) console.warn("Invalid click for enclave: Must be in the correct region (outside polygon or inside parent hole) and not on a boundary.", { clickLocation: locationInfo, targetRingId });
       }
 
       if (isValidClick) {
