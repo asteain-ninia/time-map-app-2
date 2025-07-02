@@ -269,10 +269,8 @@ export class OperationEngine {
             }
         }
         // 2. 影響を受けた地物の状態を元に戻す、または削除された地物を復元
-        //    affectedFeaturesBefore: PlainFeatureObject[]
-        //    deletedFeatureIdsInOperation: string[] (UseCaseによって実際に削除された地物ID)
         if (operation.affectedFeaturesBefore && Array.isArray(operation.affectedFeaturesBefore)) {
-            let featuresStateRestored = false;
+            const restoredFeatures = [];
             for (const featureBeforePlain of operation.affectedFeaturesBefore) {
                 const featureInstanceToRestore = this._serializer.deserialize(featureBeforePlain);
                 if (!featureInstanceToRestore) continue;
@@ -280,26 +278,16 @@ export class OperationEngine {
                 const indexInWorld = world.features.findIndex(f => f.id === featureInstanceToRestore.id);
                 if (indexInWorld !== -1) { // 地物がまだ存在する場合 (更新されたケースのUndo)
                     world.features[indexInWorld] = featureInstanceToRestore;
-                    // この操作は複数の地物に影響する可能性があるので、個別のFeatureUpdatedイベントはここでは発行せず、
-                    // 呼び出し元(HistoryService)がVerticesDeletedCustomのような包括的なイベントを発行するか、
-                    // あるいは個別に updatedFeature を resultInfo に詰めて返す。
-                    // 今回は、affectedFeaturesBefore 全体を復元する操作なので、resultInfo.eventType は
-                    // 'MultipleFeaturesRestored' のようなカスタムイベントにするか、
-                    // または、各 FeatureUpdated/FeatureAdded イベントを配列で返す必要がある。
-                    // 簡単のため、ここでは最後に更新/追加されたものを resultInfo に含める。
-                    resultInfo = { updatedFeature: featureInstanceToRestore, eventType: 'FeatureUpdated', eventPayload: { feature: featureInstanceToRestore } };
                 } else { // 地物が削除されていた場合 (削除された地物のUndo)
                     world.features.push(featureInstanceToRestore);
-                    resultInfo = { addedFeature: featureInstanceToRestore, eventType: 'FeatureAdded', eventPayload: { feature: featureInstanceToRestore } };
                 }
-                featuresStateRestored = true;
+                restoredFeatures.push(featureInstanceToRestore);
             }
-            if (featuresStateRestored) await this._worldRepository.saveWorld(world);
-            // TODO: deleteVerticesのUndoでは複数の地物が影響を受ける可能性があるため、resultInfoの扱いやイベント発行方法を再検討する必要がある。
-            // 現状では最後に処理された地物の情報のみがresultInfoに残る。
-            // ひとまず、eventType を 'VerticesRestoredCustom'のようなものにして、ペイロードに affectedFeaturesBefore を渡すのが良いかもしれない。
-            if (featuresStateRestored) {
-                resultInfo = { eventType: 'VerticesRestoredCustom', eventPayload: { restoredFeatureIds: operation.affectedFeaturesBefore.map(f => f.id), verticesToRestoreData: operation.verticesToRestoreData }};
+            if (restoredFeatures.length > 0) {
+                await this._worldRepository.saveWorld(world);
+                // 復元された地物インスタンスの配列を返す
+                // これにより、HistoryServiceは個別のFeatureUpdatedイベントを発行できる
+                resultInfo = { updatedFeatures: restoredFeatures };
             }
         }
         break;

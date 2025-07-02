@@ -1,4 +1,4 @@
-// src\presentation\view-models\MapViewModel.js
+// src/presentation/view-models/MapViewModel.js
 
 import { Point as DomainPoint } from '../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../domain/entities/Line.js';
@@ -147,32 +147,27 @@ export class MapViewModel {
    * @private
    */
   _setupEventListeners() {
-    // 時間変更イベントの購読
     this._eventBus.subscribe('TimeChanged', this._onTimeChanged.bind(this));
-    // 地物追加イベントの購読
     this._eventBus.subscribe('FeatureAdded', this._onFeatureAdded.bind(this));
-    // 地物更新イベントの購読
     this._eventBus.subscribe('FeatureUpdated', this._onFeatureUpdated.bind(this));
-    // 地物削除イベントの購読
     this._eventBus.subscribe('FeatureDeleted', this._onFeatureDeleted.bind(this));
-    // レイヤー表示変更イベントの購読
     this._eventBus.subscribe('LayerVisibilityChanged', this._onLayerVisibilityChanged.bind(this));
-     // ViewModel内部のイベントで選択を解除
     this._eventBus.subscribe('ClearSelection', this.clearSelection.bind(this));
-     // 頂点移動イベントの購読
-     this._eventBus.subscribe('VertexMoved', this._onVertexMoved.bind(this));
-     // 頂点削除イベントの購読
-     this._eventBus.subscribe('VerticesDeleted', this._onVerticesDeleted.bind(this));
-     // プロジェクト設定更新イベント (TimelineViewModel等への通知用)
-     // this._eventBus.subscribe('ProjectSettingsUpdated', (payload) => {
-     //    // MapViewModel自身が発行源なので、ここでは何もしないか、
-     //    // _projectSettingsを再同期する程度
-     //    if (payload && payload.settings) {
-     //        this._projectSettings = JSON.parse(JSON.stringify(payload.settings));
-     //        this._notifyObservers('projectSettingsChanged', this.getProjectSettings());
-     //    }
-     // });
+    this._eventBus.subscribe('VertexMoved', this._onVertexMoved.bind(this));
+    this._eventBus.subscribe('VerticesDeleted', this._onVerticesDeleted.bind(this));
     this._eventBus.subscribe('LayersChanged', this._onLayersChanged.bind(this));
+    // WorldUpdatedイベントを購読
+    this._eventBus.subscribe('WorldUpdated', this._onWorldUpdated.bind(this));
+  }
+
+  /**
+   * WorldUpdated イベントのハンドラ
+   * @private
+   */
+  async _onWorldUpdated() {
+    console.log("MapViewModel: WorldUpdated event received. Refreshing world data...");
+    // リポジトリから最新のworldデータを取得して、ViewModelの状態を更新する
+    await this.loadWorld();
   }
 
   /**

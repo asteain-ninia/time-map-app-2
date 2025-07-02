@@ -195,22 +195,32 @@ export class HistoryService {
     // OperationEngineからの詳細な結果に基づいてイベントを発行
     if (operationResultInfo.eventType && operationResultInfo.eventPayload) {
         this._eventBus.publish(operationResultInfo.eventType, operationResultInfo.eventPayload);
-    } else {
-        // フォールバックまたは追加の標準イベント
-        if (operationResultInfo.addedFeature) {
-            this._eventBus.publish('FeatureAdded', { feature: operationResultInfo.addedFeature });
-        }
-        if (operationResultInfo.updatedFeature) {
-            this._eventBus.publish('FeatureUpdated', { feature: operationResultInfo.updatedFeature });
-        }
-        if (operationResultInfo.deletedFeatureId) {
-            this._eventBus.publish('FeatureDeleted', { featureId: operationResultInfo.deletedFeatureId });
-        }
-        // 必要なら 'VerticesDeletedCustom' や 'MultipleVerticesMoved' をここで汎用的なイベントに変換
     }
 
+    // 更新された地物（単体）に対するイベント
+    if (operationResultInfo.updatedFeature) {
+        this._eventBus.publish('FeatureUpdated', { feature: operationResultInfo.updatedFeature });
+    }
+    // 更新された地物（複数）に対するイベント
+    if (Array.isArray(operationResultInfo.updatedFeatures)) {
+        operationResultInfo.updatedFeatures.forEach(feature => {
+            this._eventBus.publish('FeatureUpdated', { feature });
+        });
+    }
+    // 追加された地物に対するイベント
+    if (operationResultInfo.addedFeature) {
+        this._eventBus.publish('FeatureAdded', { feature: operationResultInfo.addedFeature });
+    }
+    // 削除された地物に対するイベント
+    if (operationResultInfo.deletedFeatureId) {
+        this._eventBus.publish('FeatureDeleted', { featureId: operationResultInfo.deletedFeatureId });
+    }
+
+    // データソース全体が変更された可能性があることを通知する
     this._eventBus.publish('WorldUpdated');
+    // 選択をクリアする
     this._eventBus.publish('ClearSelection');
+    // 履歴状態の変更を通知する
     this._notifyHistoryChanged();
   }
 
