@@ -16,7 +16,7 @@ import { IdGenerationService } from '../application/services/IdGenerationService
 // --- History関連サービス ---
 import { HistoryStackManager } from '../application/services/history/HistoryStackManager.js';
 import { HistorySerializer } from '../application/services/history/HistorySerializer.js';
-import { OperationEngine } from '../application/services/history/OperationEngine.js';
+// import { OperationEngine } from '../application/services/history/OperationEngine.js'; // 削除
 import { HistoryService } from '../application/services/HistoryService.js';
 
 import { EditFeatureUseCase } from '../application/usecases/EditFeatureUseCase';
@@ -104,18 +104,14 @@ export class DependencyInjection {
     const maxHistorySize = this._container.configManager.get('history.maxSize', 100); // ConfigManagerから取得 (なければデフォルト)
     this._container.historyStackManager = new HistoryStackManager(maxHistorySize);
     this._container.historySerializer = new HistorySerializer(); // 依存なし
-    this._container.operationEngine = new OperationEngine(
-        this._container.worldRepository,      // WorldRepositoryを渡す
-        this._container.historySerializer,    // HistorySerializerを渡す
-        this._container.editFeatureUseCase    // EditFeatureUseCaseを渡す
-    );
+    // this._container.operationEngine は削除
     this._container.historyService = new HistoryService( // ファサード
         this._container.historyStackManager,
         this._container.historySerializer,
-        this._container.operationEngine,
+        null, // operationEngine は null を渡す
         this._container.eventBus,
         this._container.worldRepository,
-        this._container.editFeatureUseCase    // HistoryServiceもEditFeatureUseCaseを持つ
+        this._container.editFeatureUseCase
     );
     // --- History 関連サービスここまで ---
 

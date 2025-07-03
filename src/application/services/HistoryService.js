@@ -1,17 +1,26 @@
-// src/application/services/HistoryService.js
+// src/application/services/history/HistoryService.js
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { Point } from '../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 // HistoryStackManager, HistorySerializer, OperationEngine はDIで渡されるのでここではimport不要
 
+// 【コマンド追加方法メモ】新しいコマンドクラスをここにインポートしてください。
+import { UpdatePropertiesCommand } from './history/commands/UpdatePropertiesCommand.js';
+import { MoveVerticesCommand } from './history/commands/MoveVerticesCommand.js';
+import { AddFeatureCommand } from './history/commands/AddFeatureCommand.js';
+import { DeleteFeatureCommand } from './history/commands/DeleteFeatureCommand.js';
+import { DeleteVerticesCommand } from './history/commands/DeleteVerticesCommand.js';
+import { AddRingCommand } from './history/commands/AddRingCommand.js';
+import { AddVertexToEdgeCommand } from './history/commands/AddVertexToEdgeCommand.js';
+
 export class HistoryService {
   _stackManager;
   _serializer;
-  _operationEngine;
+  _operationEngine; // 最終的に削除される
   _eventBus;
   _worldRepository;
-  // _editFeatureUseCase は OperationEngine が持つので、HistoryService自身は直接は不要
+  _editFeatureUseCase; // Commandに渡すために保持
 
   /**
    * HistoryService (ファサード) を作成
@@ -20,7 +29,7 @@ export class HistoryService {
    * @param {OperationEngine} operationEngine
    * @param {EventBus} eventBus
    * @param {WorldRepository} worldRepository
-   * @param {EditFeatureUseCase} editFeatureUseCase - OperationEngineに渡すために必要
+   * @param {EditFeatureUseCase} editFeatureUseCase - OperationEngineとCommandに渡すために必要
    */
   constructor(stackManager, serializer, operationEngine, eventBus, worldRepository, editFeatureUseCase) {
     this._stackManager = stackManager;
@@ -28,158 +37,124 @@ export class HistoryService {
     this._operationEngine = operationEngine;
     this._eventBus = eventBus;
     this._worldRepository = worldRepository;
-    // this._editFeatureUseCase = editFeatureUseCase; // OperationEngineに渡す
-
-    // OperationEngine に EditFeatureUseCase のインスタンスを渡す (コンストラクタで行うべきだったが、後からセットする形も可)
-    // もしOperationEngineのコンストラクタで受け取るなら、ここは不要
-    if (this._operationEngine && typeof this._operationEngine.setEditFeatureUseCase === 'function') {
-        this._operationEngine.setEditFeatureUseCase(editFeatureUseCase);
-    } else if (this._operationEngine && !this._operationEngine._editFeatureUseCase) {
-        // OperationEngineがコンストラクタでDIを受ける場合、ここでのセットは不要
-        // console.warn("HistoryService: OperationEngine does not have setEditFeatureUseCase or _editFeatureUseCase already set.");
-    }
+    this._editFeatureUseCase = editFeatureUseCase;
   }
 
   async undo() {
     if (!this.canUndo()) return;
-    const operation = this._stackManager.popUndo();
-    if (!operation) return;
+    const command = this._stackManager.popUndo();
+    if (!command) return;
 
     try {
-      const resultInfo = await this._operationEngine.executeReverse(operation);
-      this._stackManager.pushRedo(operation);
-      this._publishStandardEvents(resultInfo); // 結果情報を渡す
+      // 全ての操作はコマンドオブジェクトになっているはず
+      const resultInfo = await command.reverse();
+      this._stackManager.pushRedo(command);
+      this._publishStandardEvents(resultInfo);
     } catch (error) {
-      this._stackManager.pushUndo(operation);
-      console.error('Undo operation failed in HistoryService:', error, operation);
+      this._stackManager.pushUndo(command);
+      console.error('Undo operation failed in HistoryService:', error, command);
       throw error;
     }
   }
 
   async redo() {
     if (!this.canRedo()) return;
-    const operation = this._stackManager.popRedo();
-    if (!operation) return;
+    const command = this._stackManager.popRedo();
+    if (!command) return;
 
     try {
-      const resultInfo = await this._operationEngine.execute(operation);
-      this._stackManager.pushUndoFromRedo(operation);
-      this._publishStandardEvents(resultInfo); // 結果情報を渡す
+      const resultInfo = await command.execute();
+      this._stackManager.pushUndoFromRedo(command);
+      this._publishStandardEvents(resultInfo);
     } catch (error) {
-      this._stackManager.pushRedo(operation);
-      console.error('Redo operation failed in HistoryService:', error, operation);
+      this._stackManager.pushRedo(command);
+      console.error('Redo operation failed in HistoryService:', error, command);
       throw error;
     }
   }
 
   async addHistoryEntry(operationType, payload) {
-    let historyEntryData = {};
+    let command;
+    // 【コマンド追加方法メモ】ここに新しいcaseを追加し、対応するCommandをインスタンス化してください。
+    // このコメントは削除しないでください。
+    switch (operationType) {
+      case 'add':
+        const addPayload = {
+            featureId: payload.featureInstance.id,
+            featureData: this._serializer.serialize(payload.featureInstance),
+            addedVerticesData: await this._getVerticesDataForFeatureForHistory(payload.featureInstance)
+        };
+        command = new AddFeatureCommand(addPayload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+        break;
 
-    try {
-        switch (operationType) {
-        case 'add':
-            const featureInstanceAdd = payload.featureInstance; // Domain Instance
-            const featureTypeAdd = payload.featureType;         // string
-            let vertexIdsForHistoryAdd = [];
-            if (featureInstanceAdd) {
-                if (featureTypeAdd === 'point' && featureInstanceAdd.vertexIds && featureInstanceAdd.vertexIds.length > 0) {
-                    vertexIdsForHistoryAdd = featureInstanceAdd.vertexIds;
-                } else if (featureTypeAdd === 'line' && featureInstanceAdd.vertexIds && featureInstanceAdd.vertexIds.length > 0 && (!featureInstanceAdd.rings || featureInstanceAdd.rings.length === 0)) { // Line の場合
-                    vertexIdsForHistoryAdd = featureInstanceAdd.vertexIds;
-                } else if (featureInstanceAdd.rings && featureInstanceAdd.rings.length > 0) { // Polygon やリングを持つ可能性のあるLine
-                    vertexIdsForHistoryAdd = featureInstanceAdd.rings.flatMap(r => r.vertexIds || []);
-                }
-                 if (vertexIdsForHistoryAdd.length === 0 && featureInstanceAdd.vertexIds && featureInstanceAdd.vertexIds.length > 0) {
-                    vertexIdsForHistoryAdd = featureInstanceAdd.vertexIds; // フォールバック
-                }
-            }
-            const addedVerticesDataPlain = await this._getVerticesDataForHistory(vertexIdsForHistoryAdd);
-            historyEntryData = {
-                featureId: featureInstanceAdd.id,
-                featureType: featureTypeAdd,
-                featureData: this._serializer.serialize(featureInstanceAdd),
-                addedVerticesData: addedVerticesDataPlain
-            };
-            break;
-        case 'delete':
-            const deletedFeatureInstance = payload.featureInstance; // Domain Instance
-            const verticesToRestoreDataPlainDelete = await this._getVerticesDataForFeatureForHistory(deletedFeatureInstance);
-            historyEntryData = {
-                featureId: deletedFeatureInstance.id,
-                featureData: this._serializer.serialize(deletedFeatureInstance),
-                verticesToRestoreData: verticesToRestoreDataPlainDelete
-            };
-            break;
-        case 'deleteVertices':
-            // payload: { deletedVertexIds: string[], verticesToRestore: Vertex[], affectedFeaturesBefore: Feature[], deletedFeatureIdsInOperation: string[] }
-            // verticesToRestore と affectedFeaturesBefore はドメインインスタンスの配列
-            const verticesToRestorePlainDV = payload.verticesToRestore.map(v => this._serializer.serialize(v));
-            const affectedFeaturesBeforePlainDV = payload.affectedFeaturesBefore.map(f => this._serializer.serialize(f));
-            historyEntryData = {
-                deletedVertexIds: payload.deletedVertexIds, // string[]
-                verticesToRestoreData: verticesToRestorePlainDV, // PlainObject[]
-                affectedFeaturesBefore: affectedFeaturesBeforePlainDV, // PlainObject[]
-                deletedFeatureIds: payload.deletedFeatureIdsInOperation // string[] (UseCaseの結果から)
-            };
-            break;
-        case 'moveVertices':
-            // payload: { updates: [{ vertexId: string, oldPosition: Vertex, newPosition: Vertex }] }
-            // oldPosition, newPosition はドメインインスタンス
-            const serializedUpdatesMove = payload.updates.map(u => ({
+      case 'delete':
+        const deletePayload = {
+            featureId: payload.featureInstance.id,
+            featureData: this._serializer.serialize(payload.featureInstance),
+            verticesToRestoreData: await this._getVerticesDataForFeatureForHistory(payload.featureInstance)
+        };
+        command = new DeleteFeatureCommand(deletePayload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+        break;
+
+      case 'deleteVertices':
+        const deleteVerticesPayload = {
+            deletedVertexIds: payload.deletedVertexIds,
+            verticesToRestoreData: payload.verticesToRestore.map(v => this._serializer.serialize(v)),
+            affectedFeaturesBefore: payload.affectedFeaturesBefore.map(f => this._serializer.serialize(f))
+        };
+        command = new DeleteVerticesCommand(deleteVerticesPayload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+        break;
+
+      case 'updateProperties':
+        const updatePropsPayload = {
+            featureId: payload.featureId,
+            oldProperties: payload.oldProperties.map(p => this._serializer.serialize(p)),
+            newProperties: payload.newProperties.map(p => this._serializer.serialize(p))
+        };
+        command = new UpdatePropertiesCommand(updatePropsPayload, this._editFeatureUseCase, this._serializer);
+        break;
+
+      case 'moveVertices':
+        const moveVerticesPayload = {
+            updates: payload.updates.map(u => ({
                 vertexId: u.vertexId,
                 oldPosition: this._serializer.serialize(u.oldPosition),
                 newPosition: this._serializer.serialize(u.newPosition)
-            }));
-            historyEntryData = { updates: serializedUpdatesMove };
-            break;
-        case 'updateProperties':
-            // payload: { featureId: string, oldProperties: Property[], newProperties: Property[] }
-            // oldProperties, newProperties はドメインインスタンスの配列
-            historyEntryData = {
-                featureId: payload.featureId,
-                oldProperties: payload.oldProperties.map(p => this._serializer.serialize(p)),
-                newProperties: payload.newProperties.map(p => this._serializer.serialize(p))
-            };
-            break;
-        case 'addRing':
-            // payload: { polygonId: string, addedRing: PlainRingObject, addedVerticesDataFromUseCase: PlainVertexObject[] }
-            // addedRing は PolygonEditService が返すプレーンオブジェクト
-            // addedVerticesDataFromUseCase は UpdateFeatureUseCase (newRingCoordinates) 内で _processGeometry を通して生成された頂点のデータ (プレーン)
-            historyEntryData = {
-                polygonId: payload.polygonId,
-                addedRing: payload.addedRing, // 既にプレーンオブジェクト
-                addedVerticesData: payload.addedVerticesDataFromUseCase // 既にプレーンオブジェクト
-            };
-            break;
-        case 'addVertexToEdge': // 新しい操作タイプ
-            // payload: { featureId, ringId?, segmentStartVertexId, segmentEndVertexId, newVertexId, newVertexPosition (plain {x,y}), featureBeforeData (serialized plain object) }
-            if (!payload || !payload.featureId || !payload.segmentStartVertexId || !payload.segmentEndVertexId || !payload.newVertexId || !payload.newVertexPosition || !payload.featureBeforeData) {
-                throw new Error("Invalid payload for addVertexToEdge history entry.");
-            }
-            const addedVertexDataForEdge = this._serializer.serialize(new Vertex(payload.newVertexId, payload.newVertexPosition.x, payload.newVertexPosition.y));
-            historyEntryData = {
-                featureId: payload.featureId,
-                ringId: payload.ringId, // ポリゴンの場合のみ、なければnull
-                segmentStartVertexId: payload.segmentStartVertexId,
-                segmentEndVertexId: payload.segmentEndVertexId,
-                newVertexId: payload.newVertexId,
-                addedVertexData: addedVertexDataForEdge, // シリアライズされたVertexデータ
-                featureBeforeData: payload.featureBeforeData // 既にシリアライズされている前提
-            };
-            break;
-        default:
-            console.warn(`HistoryService.addHistoryEntry: Unsupported operation type: ${operationType}`);
-            return;
-        }
-
-        const completeHistoryEntry = {
-            type: operationType,
-            ...historyEntryData
+            }))
         };
-        this._stackManager.pushUndo(completeHistoryEntry);
+        command = new MoveVerticesCommand(moveVerticesPayload, this._editFeatureUseCase, this._serializer);
+        break;
+
+      case 'addRing':
+        const addRingPayload = {
+            polygonId: payload.polygonId,
+            addedRing: payload.addedRing,
+            addedVerticesData: payload.addedVerticesDataFromUseCase
+        };
+        command = new AddRingCommand(addRingPayload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+        break;
+
+      case 'addVertexToEdge':
+        const addVertexPayload = {
+            featureId: payload.featureId,
+            ringId: payload.ringId,
+            segmentStartVertexId: payload.segmentStartVertexId,
+            segmentEndVertexId: payload.segmentEndVertexId,
+            newVertexId: payload.newVertexId,
+            addedVertexData: this._serializer.serialize(new Vertex(payload.newVertexId, payload.newVertexPosition.x, payload.newVertexPosition.y)),
+            featureBeforeData: payload.featureBeforeData
+        };
+        command = new AddVertexToEdgeCommand(addVertexPayload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+        break;
+
+      default:
+        console.error(`HistoryService.addHistoryEntry: Unsupported operation type: ${operationType}`);
+        return;
+    }
+
+    if (command) {
+        this._stackManager.pushUndo(command);
         this._notifyHistoryChanged();
-    } catch (error) {
-        console.error(`HistoryService.addHistoryEntry: Failed to add history for ${operationType}:`, error, payload);
     }
   }
 
