@@ -534,13 +534,22 @@ export class VertexEditUseCase {
    * @param {string} segmentEndVertexId - 線分の終了頂点ID
    * @param {{x: number, y: number}} newVertexPosition - 新しい頂点のワールド座標
    * @param {string | null} [ringId=null] - ポリゴンの場合、対象リングのID
+   * @param {string | null} [vertexIdToUse=null] - Redo時に再利用する頂点ID
    * @returns {Promise<{newVertex: Vertex, updatedFeature: Feature}>} 追加された頂点と更新された地物のインスタンス
    */
-  async addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId = null) {
+  async addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId = null, vertexIdToUse = null) {
     const world = await this._worldRepository.getWorld();
-    const newVertexId = this._generateId('vertex');
+    // 修正: vertexIdToUseが指定されていればそれを使用し、なければ新しいIDを生成する
+    const newVertexId = vertexIdToUse || this._generateId('vertex');
     const newVertexData = { id: newVertexId, x: newVertexPosition.x, y: newVertexPosition.y };
-    world.vertices.push(newVertexData);
+
+    // 修正: 頂点を追加する前に、既に同じIDの頂点がワールドに存在しないか確認する
+    if (!world.vertices.some(v => v.id === newVertexId)) {
+        world.vertices.push(newVertexData);
+    } else {
+        // Redo操作で頂点が既に復元されている場合など
+        console.log(`Vertex with ID ${newVertexId} already exists. Reusing it.`);
+    }
 
     const featureIndex = world.features.findIndex(f => f.id === featureId);
     if (featureIndex === -1) {

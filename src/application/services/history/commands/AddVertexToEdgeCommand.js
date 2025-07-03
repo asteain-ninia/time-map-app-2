@@ -36,20 +36,28 @@ export class AddVertexToEdgeCommand {
    * @returns {Promise<Object>} イベント発行のための情報
    */
   async execute() {
-    const { featureId, segmentStartVertexId, segmentEndVertexId, addedVertexData, ringId } = this._payload;
+    const { featureId, segmentStartVertexId, segmentEndVertexId, addedVertexData, ringId, newVertexId } = this._payload;
     const newVertex = this._serializer.deserialize(addedVertexData);
     if (!newVertex) {
       throw new Error("Failed to deserialize new vertex data for redo.");
     }
+
+    let world = await this._worldRepository.getWorld();
+    // 頂点をワールドに復元（存在しない場合のみ）
+    if (!world.vertices.some(v => v.id === newVertex.id)) {
+        world.vertices.push({ id: newVertex.id, x: newVertex.x, y: newVertex.y });
+        await this._worldRepository.saveWorld(world);
+    }
     
     // UseCaseを呼び出してエッジに頂点を追加
-    // UseCaseは内部で頂点の存在チェックと追加、地物の更新を行う
+    // 修正: 第6引数に再利用する頂点IDを渡す
     const result = await this._editFeatureUseCase.addVertexToFeatureEdge(
       featureId,
       segmentStartVertexId,
       segmentEndVertexId,
       { x: newVertex.x, y: newVertex.y }, // ワールド座標
-      ringId
+      ringId,
+      newVertexId // ★ 再利用する頂点ID
     );
 
     // イベント発行のための情報を返す

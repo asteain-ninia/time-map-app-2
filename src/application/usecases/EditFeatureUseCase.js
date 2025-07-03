@@ -100,10 +100,12 @@ export class EditFeatureUseCase {
    * @param {string} segmentEndVertexId - 線分の終了頂点ID
    * @param {{x: number, y: number}} newVertexPosition - 新しい頂点のワールド座標
    * @param {string | null} [ringId=null] - ポリゴンの場合、対象リングのID
+   * @param {string | null} [vertexIdToUse=null] - Redo時に再利用する頂点ID
    * @returns {Promise<{newVertex: Vertex, updatedFeature: Feature}>} 追加された頂点と更新された地物のインスタンス
    */
-  async addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId = null) {
-    return this._vertexEditUseCase.addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId);
+  async addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId = null, vertexIdToUse = null) {
+    // 修正: vertexIdToUse をそのまま VertexEditUseCase に渡す
+    return this._vertexEditUseCase.addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId, vertexIdToUse);
   }
 
   // --- ポリゴン固有操作 (リングベース移行後は PolygonEditService へ委譲) ---
