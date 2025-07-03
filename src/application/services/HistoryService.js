@@ -129,7 +129,10 @@ export class HistoryService {
         const addRingPayload = {
             polygonId: payload.polygonId,
             addedRing: payload.addedRing,
-            addedVerticesData: payload.addedVerticesDataFromUseCase
+            // UseCaseから受け取ったプレーンな頂点データをVertexインスタンスに変換し、シリアライズする
+            addedVerticesData: payload.addedVerticesDataFromUseCase.map(vData => 
+                this._serializer.serialize(new Vertex(vData.id, vData.x, vData.y))
+            )
         };
         command = new AddRingCommand(addRingPayload, this._editFeatureUseCase, this._worldRepository, this._serializer);
         break;
