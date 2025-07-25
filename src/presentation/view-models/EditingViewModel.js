@@ -28,6 +28,7 @@ export class EditingViewModel {
     this._addingSubMode = null;
     this._temporaryElements = [];
     this._draggingVerticesInfo = new Map();
+    this._pendingVertexAdditionInfo = null; // 線上点追加からドラッグ操作への連携用
 
     // アンドゥ・リドゥ関連のプロパティは削除: _undoStack, _redoStack, _maxHistorySize
 
@@ -48,6 +49,9 @@ export class EditingViewModel {
       if (this._draggingVerticesInfo.size > 0) {
          this._resetDraggingState();
       }
+      if (this._pendingVertexAdditionInfo) {
+          this._pendingVertexAdditionInfo = null;
+      }
       if (mode !== 'edit') {
         this.clearTemporaryElements();
       }
@@ -67,6 +71,9 @@ export class EditingViewModel {
       }
       if (this._draggingVerticesInfo.size > 0) {
          this._resetDraggingState();
+      }
+      if (this._pendingVertexAdditionInfo) {
+          this._pendingVertexAdditionInfo = null;
       }
        this.clearTemporaryElements();
       this._tool = tool;
@@ -200,6 +207,7 @@ export class EditingViewModel {
     if (this._targetPolygon !== null) { this._targetPolygon = null; changed = true; }
     if (this._addingSubMode !== null) { this._addingSubMode = null; changed = true; }
     if (this._targetRingIdForHole !== null) { this._targetRingIdForHole = null; changed = true; }
+    if (this._pendingVertexAdditionInfo !== null) { this._pendingVertexAdditionInfo = null; changed = true; }
     if (changed) { this._notifyObservers('addingState'); } // 一括で通知する場合
     else { // 個別に通知する場合 (より細かいUI更新が可能)
         if (this._addingPoints.length > 0) this._notifyObservers('addingPoints');
@@ -398,47 +406,80 @@ export class EditingViewModel {
    */
   async endVerticesDrag() {
     if (this._draggingVerticesInfo.size === 0) { return; }
-    const dragInfoCopy = new Map(this._draggingVerticesInfo); // これが originalPosition と currentPosition を持つ
-    this._resetDraggingState(); // UI上のドラッグプレビュー等をクリアするため先に呼ぶ
 
-    const vertexUpdatesForUseCase = [];
-    const historyPayloadUpdates = [];
-    let significantMovement = false;
-    const clickToleranceSq = 1e-6; // 小さな移動は無視
+    const isChainedFromVertexAddition = 
+        this._pendingVertexAdditionInfo &&
+        this._draggingVerticesInfo.has(this._pendingVertexAdditionInfo.newVertexId);
 
-    for (const [vertexId, info] of dragInfoCopy.entries()) {
-        const dx = info.currentPosition.x - info.originalPosition.x;
-        const dy = info.currentPosition.y - info.originalPosition.y;
-        if ((dx * dx + dy * dy) > clickToleranceSq) {
-            significantMovement = true;
+    const dragInfoCopy = new Map(this._draggingVerticesInfo);
+    this._resetDraggingState();
+
+    if (isChainedFromVertexAddition) {
+        const pendingInfo = this._pendingVertexAdditionInfo;
+        this._pendingVertexAdditionInfo = null; // 必ずクリア
+
+        const newVertexInfo = dragInfoCopy.get(pendingInfo.newVertexId);
+        if (!newVertexInfo) {
+            console.error("Chained vertex drag end failed: Drag info not found for new vertex.");
+            return;
         }
-        // UseCase に渡すデータ (新しい位置のみ)
-        vertexUpdatesForUseCase.push({ vertexId, newPosition: info.currentPosition });
-        // 履歴に渡すデータ (古い位置と新しい位置のVertexインスタンス)
-        historyPayloadUpdates.push({
-            vertexId,
-            oldPosition: new Vertex(vertexId, info.originalPosition.x, info.originalPosition.y),
-            newPosition: new Vertex(vertexId, info.currentPosition.x, info.currentPosition.y)
-        });
-    }
 
-    if (significantMovement) {
-        try {
-            // UseCase呼び出し (EditFeatureUseCase.moveVertices は { updatedVertices, affectedFeatures } を返す)
-            const moveResult = await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase);
-            
-            // HistoryService に履歴追加を依頼
-            await this._historyService.addHistoryEntry('moveVertices', {
-                updates: historyPayloadUpdates // oldPosition と newPosition の Vertex インスタンスを含む配列
-            });
+        const finalPosition = newVertexInfo.currentPosition;
+        const originalPosition = newVertexInfo.originalPosition;
+        const clickToleranceSq = 1e-6; 
 
-            // イベント発行 (個別のVertexMovedはUseCase内で発行されるか、moveResultを元にここで発行)
-            if (moveResult && moveResult.updatedVertices) {
-                 moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
+        if (Math.pow(finalPosition.x - originalPosition.x, 2) + Math.pow(finalPosition.y - originalPosition.y, 2) > clickToleranceSq) {
+            try {
+                await this._editFeatureUseCase.moveVertices([{ vertexId: pendingInfo.newVertexId, newPosition: finalPosition }]);
+            } catch (error) {
+                 console.error('Failed to move newly added vertex:', error);
+                 alert(`新規頂点の移動に失敗しました: ${error.message}`);
+                 return; // 移動に失敗したら履歴登録も中止
             }
-        } catch (error) {
-            console.error('複数頂点の移動確定に失敗しました', error);
-            alert(`頂点の移動に失敗しました: ${error.message}`);
+        }
+
+        const historyPayload = {
+            ...pendingInfo,
+            newVertexPosition: finalPosition,
+            addedVertexData: this._historyService._serializer.serialize(new Vertex(pendingInfo.newVertexId, finalPosition.x, finalPosition.y))
+        };
+        await this._historyService.addHistoryEntry('addVertexToEdge', historyPayload);
+
+    } else {
+        const vertexUpdatesForUseCase = [];
+        const historyPayloadUpdates = [];
+        let significantMovement = false;
+        const clickToleranceSq = 1e-6; 
+
+        for (const [vertexId, info] of dragInfoCopy.entries()) {
+            const dx = info.currentPosition.x - info.originalPosition.x;
+            const dy = info.currentPosition.y - info.originalPosition.y;
+            if ((dx * dx + dy * dy) > clickToleranceSq) {
+                significantMovement = true;
+            }
+            vertexUpdatesForUseCase.push({ vertexId, newPosition: info.currentPosition });
+            historyPayloadUpdates.push({
+                vertexId,
+                oldPosition: new Vertex(vertexId, info.originalPosition.x, info.originalPosition.y),
+                newPosition: new Vertex(vertexId, info.currentPosition.x, info.currentPosition.y)
+            });
+        }
+
+        if (significantMovement) {
+            try {
+                const moveResult = await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase);
+                
+                await this._historyService.addHistoryEntry('moveVertices', {
+                    updates: historyPayloadUpdates
+                });
+
+                if (moveResult && moveResult.updatedVertices) {
+                     moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
+                }
+            } catch (error) {
+                console.error('複数頂点の移動確定に失敗しました', error);
+                alert(`頂点の移動に失敗しました: ${error.message}`);
+            }
         }
     }
   }
@@ -607,37 +648,31 @@ export class EditingViewModel {
         throw new Error(`対象の地物が見つかりません: ${edgeInfo.featureId}`);
       }
 
-      // UseCaseを呼び出し (VertexEditUseCaseに新しいメソッドを追加する想定)
       const result = await this._editFeatureUseCase.addVertexToFeatureEdge(
         edgeInfo.featureId,
         edgeInfo.segmentStartVertexId,
         edgeInfo.segmentEndVertexId,
-        edgeInfo.projectionPoint, // {x, y}
-        edgeInfo.ringId // ポリゴンの場合のみ ringId を渡す
+        edgeInfo.projectionPoint,
+        edgeInfo.ringId
       );
-      // result は { newVertex: Vertex, updatedFeature: Feature } を想定
-
+      
       if (!result || !result.newVertex || !result.updatedFeature) {
         throw new Error("VertexEditUseCase.addVertexToFeatureEdge did not return expected result.");
       }
 
-      // HistoryService に履歴追加を依頼
-      await this._historyService.addHistoryEntry('addVertexToEdge', {
+      this._pendingVertexAdditionInfo = {
         featureId: edgeInfo.featureId,
-        ringId: edgeInfo.ringId, // ポリゴンの場合のみ
+        ringId: edgeInfo.ringId,
         segmentStartVertexId: edgeInfo.segmentStartVertexId,
         segmentEndVertexId: edgeInfo.segmentEndVertexId,
         newVertexId: result.newVertex.id,
-        newVertexPosition: { x: result.newVertex.x, y: result.newVertex.y }, // プレーンオブジェクト
-        featureBeforeData: this._historyService._serializer.serialize(featureBeforeUpdate) // 更新前の地物データ
-      });
+        featureBeforeData: this._historyService._serializer.serialize(featureBeforeUpdate)
+      };
 
-      // イベント発行
       this._eventBus.publish('VertexAddedToEdge', {
-        newVertex: result.newVertex, // Vertexインスタンス
-        updatedFeature: result.updatedFeature // Featureインスタンス
+        newVertex: result.newVertex,
+        updatedFeature: result.updatedFeature
       });
-      // 地物全体の更新としても通知
       this._eventBus.publish('FeatureUpdated', { feature: result.updatedFeature });
 
       return result.newVertex;
@@ -645,7 +680,7 @@ export class EditingViewModel {
     } catch (error) {
       console.error('エッジへの頂点追加に失敗しました (EditingViewModel)', error);
       alert(`エッジへの頂点追加に失敗: ${error.message}`);
-      throw error; // 必要に応じて呼び出し元でさらに処理
+      throw error;
     }
   }
 
