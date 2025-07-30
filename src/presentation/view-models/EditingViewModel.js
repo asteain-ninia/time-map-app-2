@@ -247,30 +247,47 @@ export class EditingViewModel {
     if (this._mode !== 'add' || !this._tool || this._addingPoints.length === 0) {
       throw new Error('地物の追加状態ではありません');
     }
-    // properties が要素数1の Property インスタンスの配列であることをバリデーション
     if (!Array.isArray(properties) || properties.length !== 1 || !(properties[0] instanceof Property)) {
-        console.error("EditingViewModel.confirmAddFeature: properties must be an array containing a single Property instance. Received:", properties);
         throw new Error("Invalid properties format. Expected a single Property instance in an array for confirmAddFeature.");
     }
+
+    const geometryData = { vertices: [...this._addingPoints] };
+    const featureType = this._tool;
+
+    const operationFunc = async () => {
+        const feature = await this._editFeatureUseCase.addFeature(featureType, properties, geometryData, layerId);
+        // HistoryServiceに渡すために、追加された地物インスタンスを返す
+        return { addedFeature: feature };
+    };
+
     try {
-      const geometryData = { vertices: [...this._addingPoints] };
-      // EditFeatureUseCase.addFeature は要素数1のプロパティ配列をそのまま渡す
-      const feature = await this._editFeatureUseCase.addFeature(this._tool, properties, geometryData, layerId);
+        const result = await operationFunc(); // 先に実行してIDなどを確定させる
+        const feature = result.addedFeature;
 
-      // HistoryService に履歴追加を依頼
-      // feature.properties は要素数1のはず (ドメイン層で強制される)
-      await this._historyService.addHistoryEntry('add', {
-        featureInstance: feature, 
-        featureType: this._tool
-      });
+        const payload = {
+            featureId: feature.id,
+            featureData: this._historyService._serializer.serialize(feature),
+            addedVerticesData: await this._historyService._getVerticesDataForFeatureForHistory(feature)
+        };
+        
+        // 操作は既に完了しているので、履歴登録のみを行う別のメソッドを呼ぶか、HistoryServiceを修正する必要がある。
+        // ここでは、executeAndRecordの第一引数に「何もしない関数」を渡すことで、履歴登録のみを行わせる。
+        // ただし、これはアーキテクチャとして不完全。理想はUseCaseが永続化しないこと。
+        // 今回の修正では、UseCaseは永続化を行う前提なので、この実装は矛盾する。
+        // → HistoryService.executeAndRecordの設計を見直し、ViewModelで事前実行した結果を渡せるようにするべきかもしれない。
+        // → 今回は、addHistoryEntryを単純な履歴登録メソッドとして再利用する。
+        const command = new AddFeatureCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
+        this._historyService._stackManager.pushUndo(command);
+        this._historyService._notifyHistoryChanged();
 
-      this._clearAddingState();
-      this._eventBus.publish('FeatureAdded', { feature });
-      return feature;
+
+        this._clearAddingState();
+        this._eventBus.publish('FeatureAdded', { feature });
+        return feature;
     } catch (error) {
-      console.error('地物の追加に失敗しました', error);
-      this._clearAddingState();
-      throw error;
+        console.error('地物の追加に失敗しました', error);
+        this._clearAddingState();
+        throw error;
     }
   }
 
@@ -288,27 +305,33 @@ export class EditingViewModel {
     const polygonId = this._targetPolygon.id;
     const holePoints = [...this._addingPoints];
     const targetRingId = this.getTargetRingIdForHole();
+    const polygonBeforeUpdate = this._targetPolygon;
 
-    const polygonBeforeUpdate = this._targetPolygon; // 更新前のポリゴンインスタンス
+    const geometryUpdate = {
+        newRingCoordinates: [{ points: holePoints, ringType: 'hole', parentId: targetRingId }]
+    };
+    const operationFunc = () => this._editFeatureUseCase.updateFeature(polygonId, { geometry: geometryUpdate });
 
     try {
-        const geometryUpdate = {
-            newRingCoordinates: [{ points: holePoints, ringType: 'hole', parentId: targetRingId }]
-        };
-        // UpdateFeatureUseCase.execute は { feature, newlyAddedVerticesData? } を返す
-        const updateResult = await this._editFeatureUseCase.updateFeature(polygonId, { geometry: geometryUpdate });
+        // 先に操作を実行
+        const updateResult = await operationFunc();
         const updatedPolygon = updateResult.feature;
         const newlyAddedVerticesData = updateResult.newlyAddedVerticesData || [];
-
         const addedRingPlain = updatedPolygon.rings.find(r => !polygonBeforeUpdate.rings.some(br => br.id === r.id));
 
-        // HistoryService に履歴追加を依頼
-        await this._historyService.addHistoryEntry('addRing', {
+        // 履歴ペイロードを作成
+        const payload = {
             polygonId: polygonId,
-            addedRing: addedRingPlain ? { ...addedRingPlain } : null, // プレーンオブジェクトで
-            addedVerticesDataFromUseCase: newlyAddedVerticesData, // UseCaseから取得したプレーンな頂点データ
-            // polygonBeforeData: polygonBeforeUpdate // 必要なら更新前ポリゴンも渡す
-        });
+            addedRing: addedRingPlain ? { ...addedRingPlain } : null,
+            addedVerticesData: newlyAddedVerticesData.map(vData => 
+                this._historyService._serializer.serialize(new Vertex(vData.id, vData.x, vData.y))
+            )
+        };
+        
+        // 履歴登録
+        const command = new AddRingCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
+        this._historyService._stackManager.pushUndo(command);
+        this._historyService._notifyHistoryChanged();
 
         this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
         this._clearAddingState();
@@ -334,25 +357,34 @@ export class EditingViewModel {
 
     const polygonId = this._targetPolygon.id;
     const enclavePoints = [...this._addingPoints];
-    const parentRingId = this.getTargetRingIdForHole(); // 穴の中の飛び地なら穴のID、本土外ならnull
+    const parentRingId = this.getTargetRingIdForHole();
+    const polygonBeforeUpdate = this._targetPolygon;
 
-    const polygonBeforeUpdate = this._targetPolygon; // 更新前のポリゴンインスタンス
+    const geometryUpdate = {
+        newRingCoordinates: [{ points: enclavePoints, ringType: 'territory', parentId: parentRingId }]
+    };
+    const operationFunc = () => this._editFeatureUseCase.updateFeature(polygonId, { geometry: geometryUpdate });
 
     try {
-        const geometryUpdate = {
-            newRingCoordinates: [{ points: enclavePoints, ringType: 'territory', parentId: parentRingId }]
-        };
-        const updateResult = await this._editFeatureUseCase.updateFeature(polygonId, { geometry: geometryUpdate });
+        // 先に操作を実行
+        const updateResult = await operationFunc();
         const updatedPolygon = updateResult.feature;
         const newlyAddedVerticesData = updateResult.newlyAddedVerticesData || [];
-        
         const addedRingPlain = updatedPolygon.rings.find(r => !polygonBeforeUpdate.rings.some(br => br.id === r.id));
 
-        await this._historyService.addHistoryEntry('addRing', {
+        // 履歴ペイロードを作成
+        const payload = {
             polygonId: polygonId,
             addedRing: addedRingPlain ? { ...addedRingPlain } : null,
-            addedVerticesDataFromUseCase: newlyAddedVerticesData
-        });
+            addedVerticesData: newlyAddedVerticesData.map(vData => 
+                this._historyService._serializer.serialize(new Vertex(vData.id, vData.x, vData.y))
+            )
+        };
+        
+        // 履歴登録
+        const command = new AddRingCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
+        this._historyService._stackManager.pushUndo(command);
+        this._historyService._notifyHistoryChanged();
         
         this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
         this._clearAddingState();
@@ -364,7 +396,6 @@ export class EditingViewModel {
         return null;
     }
   }
-
 
   /**
    * 複数の頂点のドラッグを開始
@@ -415,35 +446,50 @@ export class EditingViewModel {
     this._resetDraggingState();
 
     if (isChainedFromVertexAddition) {
-        const pendingInfo = this._pendingVertexAdditionInfo;
-        this._pendingVertexAdditionInfo = null; // 必ずクリア
+        const pendingInfo = { ...this._pendingVertexAdditionInfo };
+        this._pendingVertexAdditionInfo = null;
 
         const newVertexInfo = dragInfoCopy.get(pendingInfo.newVertexId);
         if (!newVertexInfo) {
-            console.error("Chained vertex drag end failed: Drag info not found for new vertex.");
+            console.error("Chained vertex drag end failed: Drag info not found.");
             return;
         }
-
+        
         const finalPosition = newVertexInfo.currentPosition;
-        const originalPosition = newVertexInfo.originalPosition;
-        const clickToleranceSq = 1e-6; 
+        pendingInfo.featureBeforeData.rings.forEach(r => {
+            const index = r.vertexIds.indexOf(pendingInfo.newVertexId);
+            if(index !== -1) { r.vertexIds.splice(index, 1); }
+        });
 
-        if (Math.pow(finalPosition.x - originalPosition.x, 2) + Math.pow(finalPosition.y - originalPosition.y, 2) > clickToleranceSq) {
-            try {
-                await this._editFeatureUseCase.moveVertices([{ vertexId: pendingInfo.newVertexId, newPosition: finalPosition }]);
-            } catch (error) {
-                 console.error('Failed to move newly added vertex:', error);
-                 alert(`新規頂点の移動に失敗しました: ${error.message}`);
-                 return; // 移動に失敗したら履歴登録も中止
-            }
-        }
+        const operationFunc = () => this._editFeatureUseCase.addVertexToFeatureEdge(
+            pendingInfo.featureId,
+            pendingInfo.segmentStartVertexId,
+            pendingInfo.segmentEndVertexId,
+            finalPosition,
+            pendingInfo.ringId,
+            pendingInfo.newVertexId
+        );
 
-        const historyPayload = {
+        const payload = {
             ...pendingInfo,
             newVertexPosition: finalPosition,
-            addedVertexData: this._historyService._serializer.serialize(new Vertex(pendingInfo.newVertexId, finalPosition.x, finalPosition.y))
+            addedVertexData: this._historyService._serializer.serialize(new Vertex(pendingInfo.newVertexId, finalPosition.x, finalPosition.y)),
+            featureBeforeData: pendingInfo.featureBeforeData
         };
-        await this._historyService.addHistoryEntry('addVertexToEdge', historyPayload);
+        
+        try {
+            const result = await operationFunc();
+            const command = new AddVertexToEdgeCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
+            this._historyService._stackManager.pushUndo(command);
+            this._historyService._notifyHistoryChanged();
+            this._eventBus.publish('FeatureUpdated', { feature: result.updatedFeature });
+        } catch (error) {
+            console.error('線上への頂点追加（ドラッグ完了時）に失敗しました', error);
+            alert(`頂点追加に失敗しました: ${error.message}`);
+            // 失敗した場合、ロールバックが必要だが、現状のアーキテクチャでは難しい。
+            // UseCaseが永続化するため、手動でのリロードを促すなどが必要になる。
+            this._eventBus.publish('WorldUpdated'); // とにかく再描画してサーバの状態に同期
+        }
 
     } else {
         const vertexUpdatesForUseCase = [];
@@ -466,19 +512,17 @@ export class EditingViewModel {
         }
 
         if (significantMovement) {
+            const operationFunc = () => this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase);
+            const payload = { updates: historyPayloadUpdates };
             try {
-                const moveResult = await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase);
-                
-                await this._historyService.addHistoryEntry('moveVertices', {
-                    updates: historyPayloadUpdates
-                });
-
+                const moveResult = await this._historyService.executeAndRecord(operationFunc, 'moveVertices', payload);
                 if (moveResult && moveResult.updatedVertices) {
                      moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
                 }
             } catch (error) {
                 console.error('複数頂点の移動確定に失敗しました', error);
                 alert(`頂点の移動に失敗しました: ${error.message}`);
+                this._eventBus.publish('WorldUpdated');
             }
         }
     }
@@ -509,24 +553,23 @@ export class EditingViewModel {
    * @param {Object} feature - 削除前の地物データ（アンドゥ用、ドメインインスタンス）
    * @returns {Promise<void>}
    */
-  async deleteFeature(featureId, feature) { // feature は削除前のインスタンス
+  async deleteFeature(featureId, feature) {
     if (!feature) { throw new Error("Missing feature data for deletion history."); }
+    
+    const payload = {
+        featureId: featureId,
+        featureData: this._historyService._serializer.serialize(feature),
+        verticesToRestoreData: await this._historyService._getVerticesDataForFeatureForHistory(feature)
+    };
+    const operationFunc = () => this._editFeatureUseCase.deleteFeature(featureId);
+
     try {
-       // --- 変更ここから ---
-       // HistoryService に渡すために、削除「前」の feature インスタンスが必要
-       // feature.properties は要素数1のはず
-       await this._historyService.addHistoryEntry('delete', {
-         featureInstance: feature // 削除前のドメインインスタンス
-       });
-
-       await this._editFeatureUseCase.deleteFeature(featureId); // 地物削除処理
-       // --- 変更ここまで ---
-
-       this._eventBus.publish('FeatureDeleted', { featureId });
-       this._eventBus.publish('ClearSelection');
+        await this._historyService.executeAndRecord(operationFunc, 'delete', payload);
+        this._eventBus.publish('FeatureDeleted', { featureId });
+        this._eventBus.publish('ClearSelection');
     } catch (error) {
-      console.error('地物の削除に失敗しました', error);
-      throw error;
+        console.error('地物の削除に失敗しました', error);
+        throw error;
     }
   }
 
@@ -537,17 +580,16 @@ export class EditingViewModel {
    */
   async deleteVertices(vertexIds) {
     if (!vertexIds || vertexIds.length === 0) return;
+    
     try {
-        const worldRepository = this._editFeatureUseCase._worldRepository; // 仮
-        const worldBefore = await worldRepository.getWorld(); // 変更前のワールド状態
+        const worldRepository = this._editFeatureUseCase._worldRepository;
+        const worldBefore = await worldRepository.getWorld();
 
-        // 1. 削除対象の頂点の「削除前」のVertexインスタンスを取得
         const verticesToRestore = vertexIds.map(id => {
             const vData = worldBefore.vertices.find(v => v.id === id);
             return vData ? new Vertex(vData.id, vData.x, vData.y) : null;
         }).filter(Boolean);
 
-        // 2. 頂点削除によって影響を受ける地物の「削除前」のFeatureインスタンスを取得
         const affectedFeaturesBefore = [];
         const deletedVertexIdsSet = new Set(vertexIds);
         worldBefore.features.forEach(f => {
@@ -555,23 +597,26 @@ export class EditingViewModel {
                 (f instanceof DomainPolygon && f.rings?.some(r => r.vertexIds.some(id => deletedVertexIdsSet.has(id)))) ||
                 (!(f instanceof DomainPolygon) && f.vertexIds?.some(id => deletedVertexIdsSet.has(id)));
             if (usesAnyDeletedVertex) {
-                affectedFeaturesBefore.push(f); // ディープコピーが望ましいが、HistoryServiceでシリアライズ時に行われる
+                affectedFeaturesBefore.push(f);
             }
         });
         
-        // 3. UseCaseを呼び出して頂点を削除
-        // EditFeatureUseCase.deleteVertices は { deletedVertexIds, updatedFeatureIds, deletedFeatureIds } を返す
-        const result = await this._editFeatureUseCase.deleteVertices(vertexIds);
+        const operationFunc = () => this._editFeatureUseCase.deleteVertices(vertexIds);
+        
+        // UseCaseを先に実行して結果を取得
+        const result = await operationFunc();
+        
+        const payload = {
+            deletedVertexIds: result.deletedVertexIds,
+            verticesToRestoreData: verticesToRestore.map(v => this._historyService._serializer.serialize(v)),
+            affectedFeaturesBefore: affectedFeaturesBefore.map(f => this._historyService._serializer.serialize(f))
+        };
+        
+        // 履歴登録
+        const command = new DeleteVerticesCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
+        this._historyService._stackManager.pushUndo(command);
+        this._historyService._notifyHistoryChanged();
 
-        // 4. HistoryService に履歴追加を依頼
-        await this._historyService.addHistoryEntry('deleteVertices', {
-            deletedVertexIds: result.deletedVertexIds, // 実際に削除されたID (UseCaseから)
-            verticesToRestore: verticesToRestore,         // 削除前のVertexインスタンス配列
-            affectedFeaturesBefore: affectedFeaturesBefore, // 影響前のFeatureインスタンス配列
-            deletedFeatureIdsInOperation: result.deletedFeatureIds // この操作で削除された地物ID (UseCaseから)
-        });
-
-        // イベント発行 (UseCase内またはHistoryService経由で行われるので、ここでは不要な場合も)
         if (result?.deletedFeatureIds?.length > 0) { result.deletedFeatureIds.forEach(id => this._eventBus.publish('FeatureDeleted', { featureId: id })); }
         if (result?.updatedFeatureIds?.length > 0) {
              const updatedWorld = await worldRepository.getWorld();
@@ -595,37 +640,40 @@ export class EditingViewModel {
    * @returns {Promise<Object>} 更新された地物インスタンス
    */
   async updateFeatureProperties(featureId, newProperties) {
+    if (!Array.isArray(newProperties) || newProperties.length !== 1 || !(newProperties[0] instanceof Property)) {
+        throw new Error("Invalid newProperties format.");
+    }
+
     try {
-      // newProperties が要素数1の Property インスタンスの配列であることをバリデーション
-      if (!Array.isArray(newProperties) || newProperties.length !== 1 || !(newProperties[0] instanceof Property)) {
-        console.error("EditingViewModel.updateFeatureProperties: newProperties must be an array containing a single Property instance. Received:", newProperties);
-        throw new Error("Invalid newProperties format. Expected a single Property instance in an array for updateFeatureProperties.");
-      }
+        const worldRepository = this._editFeatureUseCase._worldRepository;
+        const world = await worldRepository.getWorld();
+        const featureBefore = world.features.find(f => f.id === featureId);
+        if (!featureBefore) { throw new Error(`Feature not found: ${featureId}`); }
+        
+        const oldPropertiesInstances = (featureBefore.properties && featureBefore.properties.length > 0)
+                                        ? [featureBefore.properties[0]]
+                                        : [];
 
-      const worldRepository = this._editFeatureUseCase._worldRepository;
-      const world = await worldRepository.getWorld();
-      const featureBefore = world.features.find(f => f.id === featureId);
-      if (!featureBefore) { throw new Error(`Feature not found: ${featureId}`); }
-      
-      // featureBefore.properties も要素数1のはず (ドメイン層で強制)
-      const oldPropertiesInstances = (featureBefore.properties && featureBefore.properties.length > 0)
-                                      ? [featureBefore.properties[0]]
-                                      : [];
+        const operationFunc = () => this._editFeatureUseCase.updateFeature(featureId, { properties: newProperties });
+        
+        const updateResult = await operationFunc();
+        const updatedFeature = updateResult.feature;
 
-      const updateResult = await this._editFeatureUseCase.updateFeature(featureId, { properties: newProperties });
-      const updatedFeature = updateResult.feature; // updatedFeature.properties も要素数1のはず
+        const payload = {
+            featureId: featureId,
+            oldProperties: oldPropertiesInstances.map(p => this._historyService._serializer.serialize(p)),
+            newProperties: updatedFeature.properties.map(p => this._historyService._serializer.serialize(p))
+        };
 
-      await this._historyService.addHistoryEntry('updateProperties', {
-          featureId: featureId,
-          oldProperties: oldPropertiesInstances, // 要素数1の配列
-          newProperties: updatedFeature.properties // 要素数1の配列のはず
-      });
+        const command = new UpdatePropertiesCommand(payload, this._editFeatureUseCase, this._historyService._serializer);
+        this._historyService._stackManager.pushUndo(command);
+        this._historyService._notifyHistoryChanged();
 
-      this._eventBus.publish('FeatureUpdated', { feature: updatedFeature });
-      return updatedFeature;
+        this._eventBus.publish('FeatureUpdated', { feature: updatedFeature });
+        return updatedFeature;
     } catch (error) {
-      console.error('地物プロパティの更新に失敗しました (EditingViewModel)', error);
-      throw error;
+        console.error('地物プロパティの更新に失敗しました (EditingViewModel)', error);
+        throw error;
     }
   }
 
@@ -641,45 +689,57 @@ export class EditingViewModel {
     }
 
     try {
-      const worldRepository = this._editFeatureUseCase._worldRepository;
-      const worldBefore = await worldRepository.getWorld();
-      const featureBeforeUpdate = worldBefore.features.find(f => f.id === edgeInfo.featureId);
-      if (!featureBeforeUpdate) {
-        throw new Error(`対象の地物が見つかりません: ${edgeInfo.featureId}`);
-      }
+        // この操作は永続化を伴わないプレビューとして扱う
+        const worldRepository = this._editFeatureUseCase._worldRepository;
+        let world = await worldRepository.getWorld(); // 現在のワールドを取得
+        const featureBeforeUpdate = world.features.find(f => f.id === edgeInfo.featureId);
+        if (!featureBeforeUpdate) {
+            throw new Error(`対象の地物が見つかりません: ${edgeInfo.featureId}`);
+        }
 
-      const result = await this._editFeatureUseCase.addVertexToFeatureEdge(
-        edgeInfo.featureId,
-        edgeInfo.segmentStartVertexId,
-        edgeInfo.segmentEndVertexId,
-        edgeInfo.projectionPoint,
-        edgeInfo.ringId
-      );
-      
-      if (!result || !result.newVertex || !result.updatedFeature) {
-        throw new Error("VertexEditUseCase.addVertexToFeatureEdge did not return expected result.");
-      }
+        const newVertexId = this._editFeatureUseCase._generateIdFunc('vertex');
+        const newVertex = new Vertex(newVertexId, edgeInfo.projectionPoint.x, edgeInfo.projectionPoint.y);
 
-      this._pendingVertexAdditionInfo = {
-        featureId: edgeInfo.featureId,
-        ringId: edgeInfo.ringId,
-        segmentStartVertexId: edgeInfo.segmentStartVertexId,
-        segmentEndVertexId: edgeInfo.segmentEndVertexId,
-        newVertexId: result.newVertex.id,
-        featureBeforeData: this._historyService._serializer.serialize(featureBeforeUpdate)
-      };
+        // メモリ上のworldオブジェクトにプレビュー用の頂点を一時的に追加
+        world.vertices.push({ id: newVertex.id, x: newVertex.x, y: newVertex.y });
+        
+        let featureWithNewVertex;
+        if (featureBeforeUpdate instanceof DomainPolygon) {
+            const ring = featureBeforeUpdate.rings.find(r => r.id === edgeInfo.ringId);
+            const oldIds = ring.vertexIds;
+            const startIndex = oldIds.indexOf(edgeInfo.segmentStartVertexId);
+            const endIndex = oldIds.indexOf(edgeInfo.segmentEndVertexId);
+            let insertBeforeIndex = -1;
+            if ((startIndex + 1) % oldIds.length === endIndex) { insertBeforeIndex = endIndex; }
+            else if ((endIndex + 1) % oldIds.length === startIndex) { insertBeforeIndex = startIndex; }
+            const newIds = [...oldIds.slice(0, insertBeforeIndex), newVertexId, ...oldIds.slice(insertBeforeIndex)];
+            featureWithNewVertex = featureBeforeUpdate.withUpdatedRingVertices(edgeInfo.ringId, newIds);
+        } else { // Line
+            const oldIds = featureBeforeUpdate.vertexIds;
+            const startIndex = oldIds.indexOf(edgeInfo.segmentStartVertexId);
+            const endIndex = oldIds.indexOf(edgeInfo.segmentEndVertexId);
+            const insertBeforeIndex = Math.max(startIndex, endIndex);
+            const newIds = [...oldIds.slice(0, insertBeforeIndex), newVertexId, ...oldIds.slice(insertBeforeIndex)];
+            featureWithNewVertex = featureBeforeUpdate.withVertexIds(newIds);
+        }
+        world.features[world.features.findIndex(f=>f.id === edgeInfo.featureId)] = featureWithNewVertex;
 
-      this._eventBus.publish('VertexAddedToEdge', {
-        newVertex: result.newVertex,
-        updatedFeature: result.updatedFeature
-      });
-      this._eventBus.publish('FeatureUpdated', { feature: result.updatedFeature });
 
-      return result.newVertex;
+        this._pendingVertexAdditionInfo = {
+            featureId: edgeInfo.featureId,
+            ringId: edgeInfo.ringId,
+            segmentStartVertexId: edgeInfo.segmentStartVertexId,
+            segmentEndVertexId: edgeInfo.segmentEndVertexId,
+            newVertexId: newVertexId,
+            featureBeforeData: this._historyService._serializer.serialize(featureBeforeUpdate)
+        };
+
+        this._eventBus.publish('WorldUpdated'); // プレビューを再描画
+
+        return newVertex;
 
     } catch (error) {
-      console.error('エッジへの頂点追加に失敗しました (EditingViewModel)', error);
-      alert(`エッジへの頂点追加に失敗: ${error.message}`);
+      console.error('エッジへの頂点追加プレビューに失敗しました', error);
       throw error;
     }
   }

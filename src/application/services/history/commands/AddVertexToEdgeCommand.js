@@ -42,15 +42,7 @@ export class AddVertexToEdgeCommand {
       throw new Error("Failed to deserialize new vertex data for redo.");
     }
 
-    let world = await this._worldRepository.getWorld();
-    // 頂点をワールドに復元（存在しない場合のみ）
-    if (!world.vertices.some(v => v.id === newVertex.id)) {
-        world.vertices.push({ id: newVertex.id, x: newVertex.x, y: newVertex.y });
-        await this._worldRepository.saveWorld(world);
-    }
-    
-    // UseCaseを呼び出してエッジに頂点を追加
-    // 修正: 第6引数に再利用する頂点IDを渡す
+    // UseCaseは永続化を行わないので、このコマンドが永続化の責任を持つ
     const result = await this._editFeatureUseCase.addVertexToFeatureEdge(
       featureId,
       segmentStartVertexId,
@@ -59,6 +51,9 @@ export class AddVertexToEdgeCommand {
       ringId,
       newVertexId // ★ 再利用する頂点ID
     );
+
+    // UseCaseから返された変更後のworldオブジェクトを永続化
+    await this._worldRepository.saveWorld(result.world);
 
     // イベント発行のための情報を返す
     return { 
@@ -93,9 +88,11 @@ export class AddVertexToEdgeCommand {
     if (featureIndex !== -1) {
       world.features[featureIndex] = featureToRestore;
     } else {
-      console.warn(`Feature ${featureId} not found during undo, cannot restore state.`);
+      // 地物が存在しない場合（Redoで追加された直後など）は追加する
+      world.features.push(featureToRestore);
     }
 
+    // 変更を永続化
     await this._worldRepository.saveWorld(world);
 
     return {

@@ -27,12 +27,12 @@ export class VertexEditUseCase {
   /**
    * 複数の頂点を削除し、関連する地物を更新または削除
    * @param {string[]} vertexIdsToDelete - 削除する頂点のID配列
-   * @returns {Promise<{deletedVertexIds: string[], updatedFeatureIds: string[], deletedFeatureIds: string[]}>} 影響結果
+   * @returns {Promise<{deletedVertexIds: string[], updatedFeatureIds: string[], deletedFeatureIds: string[], world: object}>} 影響結果と変更後のworldオブジェクト
    */
   async deleteVertices(vertexIdsToDelete) {
     console.log(`[VertexEditUseCase] deleteVertices called with:`, vertexIdsToDelete);
     if (!vertexIdsToDelete || vertexIdsToDelete.length === 0) {
-        return { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [] };
+        return { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [], world: await this._worldRepository.getWorld() };
     }
     const world = await this._worldRepository.getWorld();
     const verticesToDeleteSet = new Set(vertexIdsToDelete);
@@ -169,13 +169,14 @@ export class VertexEditUseCase {
     // cleanupUnusedVertices は WorldRepository 保存前に呼び出すべき
     this._cleanupUnusedVertices(world, vertexIdsToDelete);
 
-    console.log(`[VertexEditUseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
-    await this._worldRepository.saveWorld(world);
+    console.log(`[VertexEditUseCase] World state updated. Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
+    // await this._worldRepository.saveWorld(world); // 永続化を削除
 
     const result = {
         deletedVertexIds: Array.from(verticesToDeleteSet),
         updatedFeatureIds: Array.from(updatedFeatureIds),
-        deletedFeatureIds: Array.from(deletedFeatureIds)
+        deletedFeatureIds: Array.from(deletedFeatureIds),
+        world: world // 変更後のworldオブジェクトを返す
     };
     console.log('[VertexEditUseCase] deleteVertices finished. Result:', result);
     return result;
@@ -185,7 +186,7 @@ export class VertexEditUseCase {
    * 頂点を移動 (単一)
    * @param {string} vertexId - 移動する頂点のID
    * @param {Object} newPosition - 新しい位置 { x, y }
-   * @returns {Promise<Object>} 更新情報 { vertex, affectedFeatures }
+   * @returns {Promise<Object>} 更新情報 { vertex, affectedFeatures, world }
    */
   async moveVertex(vertexId, newPosition) {
     const world = await this._worldRepository.getWorld();
@@ -232,7 +233,7 @@ export class VertexEditUseCase {
         throw selfIntersectionError;
     }
 
-    await this._worldRepository.saveWorld(world);
+    // await this._worldRepository.saveWorld(world); // 永続化を削除
     const updatedVertexData = world.vertices[vertexIndex];
     const affectedFeaturesForReturn = world.features.filter(f => {
          if (!f || typeof f !== 'object') return false;
@@ -241,13 +242,13 @@ export class VertexEditUseCase {
                 (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(vertexId)));
      });
 
-    return { vertex: updatedVertexData, affectedFeatures: affectedFeaturesForReturn };
+    return { vertex: updatedVertexData, affectedFeatures: affectedFeaturesForReturn, world: world };
   }
 
   /**
    * 複数の頂点を移動
    * @param {Array<{ vertexId: string, newPosition: {x: number, y: number} }>} vertexUpdates - 移動する頂点の情報配列
-   * @returns {Promise<Object>} 更新情報 { updatedVertices: Object[], affectedFeatures: Object[] }
+   * @returns {Promise<Object>} 更新情報 { updatedVertices: Object[], affectedFeatures: Object[], world: object }
    */
   async moveVertices(vertexUpdates) {
     const world = await this._worldRepository.getWorld();
@@ -311,8 +312,8 @@ export class VertexEditUseCase {
         throw selfIntersectionError;
     }
 
-    // エラーがなければ保存
-    await this._worldRepository.saveWorld(world);
+    // エラーがなければ保存しない
+    // await this._worldRepository.saveWorld(world); // 永続化を削除
 
     // 更新後の頂点データと影響地物を収集
     const updatedVertices = [];
@@ -336,26 +337,21 @@ export class VertexEditUseCase {
     }
     const affectedFeatures = world.features.filter(f => finalAffectedFeatureIds.has(f.id));
 
-    return { updatedVertices, affectedFeatures };
+    return { updatedVertices, affectedFeatures, world: world };
   }
 
   /**
    * 頂点を共有化
    * @param {string} vertexId1 - 頂点1のID
    * @param {string} vertexId2 - 頂点2のID
-   * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures }
+   * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures, world }
    */
   async shareVertices(vertexId1, vertexId2) {
     const world = await this._worldRepository.getWorld();
     const vertex1 = world.vertices.find(v => v.id === vertexId1);
     const vertex2 = world.vertices.find(v => v.id === vertexId2);
     if (!vertex1 || !vertex2) throw new Error('One or both vertices not found');
-    // 座標が完全に一致する場合でも処理を進める（IDを統一するため）
-    // if (vertex1.x === vertex2.x && vertex1.y === vertex2.y) {
-    //   console.warn(`Vertices ${vertexId1} and ${vertexId2} are already at the same position.`);
-    //   // return null; // ID統一のために処理を続ける
-    // }
-
+    
     const keptVertexId = this._getOlderVertexId(vertexId1, vertexId2);
     const removedVertexId = keptVertexId === vertexId1 ? vertexId2 : vertexId1;
     const keptVertex = keptVertexId === vertexId1 ? vertex1 : vertex2;
@@ -371,7 +367,6 @@ export class VertexEditUseCase {
         if (feature instanceof Point || feature instanceof Line) {
             if (feature.vertexIds.includes(removedVertexId)) {
                 const newVertexIds = feature.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
-                // 不変性を保つため、新しいインスタンスを生成
                 feature = feature.withVertexIds(newVertexIds);
                 featureUpdated = true;
             }
@@ -398,15 +393,13 @@ export class VertexEditUseCase {
             }
         }
     }
-    world.features = updatedFeatures; // 更新後の地物リストで置き換え
+    world.features = updatedFeatures;
 
-    // 削除する頂点をWorldから物理的に削除
     const removedVertexIndex = world.vertices.findIndex(v => v.id === removedVertexId);
     if (removedVertexIndex !== -1) {
         world.vertices.splice(removedVertexIndex, 1);
     } else { console.warn(`Vertex to be removed not found: ${removedVertexId}`); }
 
-    // 共有化による形状変更後の自己交差チェック (影響地物のみ)
     let selfIntersectionError = null;
     const getVerticesByIdsForPolygon = (ids, currentWorldVertices) => {
         const vertexMap = new Map(currentWorldVertices.map(v => [v.id, v]));
@@ -430,21 +423,18 @@ export class VertexEditUseCase {
     }
 
     if (selfIntersectionError) {
-        // shareVertices のロールバックは複雑なので、ここではエラーを投げるのみ。
-        //    本来は、変更前の状態を保存しておき、戻す必要がある。
-        //    今回は、このエラーケースは稀であると想定し、簡易的な対応とする。
         throw selfIntersectionError;
     }
 
-    await this._worldRepository.saveWorld(world);
-    return { keptVertex, removedVertex, affectedFeatures };
+    // await this._worldRepository.saveWorld(world); // 永続化を削除
+    return { keptVertex, removedVertex, affectedFeatures, world: world };
   }
 
   /**
    * 共有頂点を解除
    * @param {string} vertexId - 共有を解除する頂点のID
    * @param {string} featureId - この地物に対して新しい頂点を作成
-   * @returns {Promise<Object>} 更新情報 { newVertex, updatedFeature }
+   * @returns {Promise<Object>} 更新情報 { newVertex, updatedFeature, world }
    */
   async unlinkSharedVertex(vertexId, featureId) {
     const world = await this._worldRepository.getWorld();
@@ -455,18 +445,15 @@ export class VertexEditUseCase {
     let feature = world.features[featureIndex];
     if (!feature || typeof feature !== 'object') throw new Error(`Invalid feature object found for ID: ${featureId}`);
 
-    // 対象地物が指定された頂点を使用しているか確認 (リングベース対応)
     const isPolygon = feature instanceof Polygon || feature.constructor?.name === 'Polygon';
-    const usesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) || // Point, Line
-                       (isPolygon && feature.rings?.some(ring => ring.vertexIds.includes(vertexId))); // Polygon
+    const usesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) || 
+                       (isPolygon && feature.rings?.some(ring => ring.vertexIds.includes(vertexId)));
     if (!usesVertex) throw new Error(`Feature ${featureId} does not use vertex with ID: ${vertexId}`);
 
-    // 新しい頂点を作成してWorldに追加
     const newVertexId = this._generateId('vertex');
-    const newVertex = { id: newVertexId, x: vertex.x, y: vertex.y }; // プレーンオブジェクト
+    const newVertex = { id: newVertexId, x: vertex.x, y: vertex.y }; 
     world.vertices.push(newVertex);
 
-    // 対象地物の頂点IDを新しいIDに置き換え
     let featureUpdated = false;
     if (feature instanceof Point || feature instanceof Line) {
         if (feature.vertexIds.includes(vertexId)) {
@@ -483,17 +470,15 @@ export class VertexEditUseCase {
                 featureUpdated = true;
             }
         }
-        feature = tempPolygon; // 更新されたインスタンスに差し替え
+        feature = tempPolygon;
     }
 
-    // 更新された地物をWorldに反映
     if (featureUpdated) {
         world.features[featureIndex] = feature;
     } else {
         console.error(`Failed to update feature ${featureId} during vertex unlink.`);
     }
 
-    // 共有解除による形状変更後の自己交差チェック (対象地物のみ)
     let selfIntersectionError = null;
     if (featureUpdated && feature instanceof Polygon) {
         const getVerticesByIdsForPolygon = (ids, currentWorldVertices) => {
@@ -513,18 +498,13 @@ export class VertexEditUseCase {
     }
 
     if (selfIntersectionError) {
-        // unlinkSharedVertex のロールバックも複雑。
-        //    追加した頂点を削除し、featureを元に戻す必要がある。
-        //    今回はエラーを投げるのみとする。
         const newVertexIndex = world.vertices.findIndex(v => v.id === newVertexId);
-        if (newVertexIndex !== -1) world.vertices.splice(newVertexIndex, 1); // 追加した頂点を削除
-        // feature を元に戻すのは、元の feature インスタンスを保持していないと難しい
+        if (newVertexIndex !== -1) world.vertices.splice(newVertexIndex, 1);
         throw selfIntersectionError;
     }
 
-    await this._worldRepository.saveWorld(world);
-    // 更新後の feature を返す
-    return { newVertex: newVertex, updatedFeature: world.features[featureIndex] };
+    // await this._worldRepository.saveWorld(world); // 永続化を削除
+    return { newVertex: newVertex, updatedFeature: world.features[featureIndex], world: world };
   }
 
   /**
@@ -535,25 +515,21 @@ export class VertexEditUseCase {
    * @param {{x: number, y: number}} newVertexPosition - 新しい頂点のワールド座標
    * @param {string | null} [ringId=null] - ポリゴンの場合、対象リングのID
    * @param {string | null} [vertexIdToUse=null] - Redo時に再利用する頂点ID
-   * @returns {Promise<{newVertex: Vertex, updatedFeature: Feature}>} 追加された頂点と更新された地物のインスタンス
+   * @returns {Promise<{newVertex: Vertex, updatedFeature: Feature, world: object}>} 追加された頂点と更新された地物のインスタンスと変更後のworldオブジェクト
    */
   async addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId = null, vertexIdToUse = null) {
     const world = await this._worldRepository.getWorld();
-    // 修正: vertexIdToUseが指定されていればそれを使用し、なければ新しいIDを生成する
     const newVertexId = vertexIdToUse || this._generateId('vertex');
     const newVertexData = { id: newVertexId, x: newVertexPosition.x, y: newVertexPosition.y };
 
-    // 修正: 頂点を追加する前に、既に同じIDの頂点がワールドに存在しないか確認する
     if (!world.vertices.some(v => v.id === newVertexId)) {
         world.vertices.push(newVertexData);
     } else {
-        // Redo操作で頂点が既に復元されている場合など
         console.log(`Vertex with ID ${newVertexId} already exists. Reusing it.`);
     }
 
     const featureIndex = world.features.findIndex(f => f.id === featureId);
     if (featureIndex === -1) {
-      // 追加した頂点をロールバック
       world.vertices = world.vertices.filter(v => v.id !== newVertexId);
       throw new Error(`Feature not found with ID: ${featureId}`);
     }
@@ -570,10 +546,7 @@ export class VertexEditUseCase {
         if (startIndex === -1 || endIndex === -1) {
           throw new Error(`Segment vertices not found in Line ${featureId}`);
         }
-        // 連続するセグメントかどうかのチェック (配列の隣同士であるか)
         if (Math.abs(startIndex - endIndex) !== 1) {
-             // 順序が逆の可能性も考慮 (例: startがindex 2, endがindex 1など)
-             // ただし、通常は InteractionLogic で正しい順序のセグメントが渡されるはず
             throw new Error(`Segment ${segmentStartVertexId}-${segmentEndVertexId} is not a direct segment in Line ${featureId}.`);
         }
 
@@ -604,10 +577,9 @@ export class VertexEditUseCase {
         }
 
         let insertBeforeIndex = -1;
-        // リングの頂点配列で、startIndexとendIndexが隣接しているか確認
         if ((startIndex + 1) % oldRingVertexIds.length === endIndex) { // 正順
             insertBeforeIndex = endIndex;
-        } else if ((endIndex + 1) % oldRingVertexIds.length === startIndex) { // 逆順 (通常はInteractionLogicで順序は保証されるはずだが念のため)
+        } else if ((endIndex + 1) % oldRingVertexIds.length === startIndex) { // 逆順
             insertBeforeIndex = startIndex;
         } else {
             throw new Error(`Segment ${segmentStartVertexId}-${segmentEndVertexId} is not a direct segment in Ring ${ringId}.`);
@@ -642,22 +614,20 @@ export class VertexEditUseCase {
         }
       }
 
-
       world.features[featureIndex] = featureToUpdate;
-      await this._worldRepository.saveWorld(world);
+      // await this._worldRepository.saveWorld(world); // 永続化を削除
       return {
         newVertex: new Vertex(newVertexData.id, newVertexData.x, newVertexData.y),
-        updatedFeature: featureToUpdate
+        updatedFeature: featureToUpdate,
+        world: world // 変更後のworldオブジェクトを返す
       };
 
     } catch (error) {
-      // エラーが発生したら、追加した頂点をロールバック
-      if (!successfullyUpdated) { // 地物更新前にエラーが発生した場合のみ
+      if (!successfullyUpdated) { 
           world.vertices = world.vertices.filter(v => v.id !== newVertexId);
-          // saveWorld はここでは呼ばない (エラーなので状態を戻すのが主目的)
       }
       console.error("Error in addVertexToFeatureEdge:", error);
-      throw error; // エラーを再スローして呼び出し元で処理
+      throw error;
     }
   }
 
@@ -666,16 +636,11 @@ export class VertexEditUseCase {
    * @private
    */
   _handleCollisionForVertexMove(vertex, newPosition, world) {
-    // 衝突判定対象となるポリゴンを特定 (リングベース対応)
     const polygons = world.features.filter(f =>
       (f instanceof Polygon || f.constructor?.name === 'Polygon') &&
       f.rings?.some(ring => ring.vertexIds.includes(vertex.id))
     );
-    if (polygons.length === 0) return newPosition; // ポリゴンでなければ衝突判定不要 (今回のスコープでは)
-
-    // TODO: 衝突判定とエッジ滑り処理 (GeometryServiceを利用)
-    // この部分は未実装、現状は衝突を無視して新しい位置をそのまま返す
-    // console.warn("_handleCollisionForVertexMove: Collision detection not implemented yet.");
+    if (polygons.length === 0) return newPosition;
     return newPosition;
   }
 }
