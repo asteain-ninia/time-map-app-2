@@ -42,7 +42,7 @@ export class AddVertexToEdgeCommand {
       throw new Error("Failed to deserialize new vertex data for redo.");
     }
 
-    // UseCaseは永続化を行わないので、このコマンドが永続化の責任を持つ
+    // UseCaseを呼び出す。永続化はUseCaseが担当する。
     const result = await this._editFeatureUseCase.addVertexToFeatureEdge(
       featureId,
       segmentStartVertexId,
@@ -52,8 +52,7 @@ export class AddVertexToEdgeCommand {
       newVertexId // ★ 再利用する頂点ID
     );
 
-    // UseCaseから返された変更後のworldオブジェクトを永続化
-    await this._worldRepository.saveWorld(result.world);
+    // UseCaseが永続化を行うため、ここでのsaveWorld呼び出しは不要であり、エラーの原因だったため削除。
 
     // イベント発行のための情報を返す
     return { 
