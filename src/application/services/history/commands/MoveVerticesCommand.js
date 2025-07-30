@@ -15,11 +15,13 @@ export class MoveVerticesCommand {
    *        oldPosition, newPosition はシリアライズされたプレーンオブジェクト
    * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
    * @param {HistorySerializer} serializer - シリアライザ
+   * @param {WorldRepository} worldRepository - ワールドリポジトリ（追加）
    */
-  constructor(payload, editFeatureUseCase, serializer) {
+  constructor(payload, editFeatureUseCase, serializer, worldRepository) {
     this._payload = payload;
     this._editFeatureUseCase = editFeatureUseCase;
     this._serializer = serializer;
+    this._worldRepository = worldRepository; // 保持するが一貫性のため。直接は使わない。
   }
 
   /**

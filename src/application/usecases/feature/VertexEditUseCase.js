@@ -27,12 +27,12 @@ export class VertexEditUseCase {
   /**
    * 複数の頂点を削除し、関連する地物を更新または削除
    * @param {string[]} vertexIdsToDelete - 削除する頂点のID配列
-   * @returns {Promise<{deletedVertexIds: string[], updatedFeatureIds: string[], deletedFeatureIds: string[], world: object}>} 影響結果と変更後のworldオブジェクト
+   * @returns {Promise<{deletedVertexIds: string[], updatedFeatureIds: string[], deletedFeatureIds: string[]}>} 影響結果
    */
   async deleteVertices(vertexIdsToDelete) {
     console.log(`[VertexEditUseCase] deleteVertices called with:`, vertexIdsToDelete);
     if (!vertexIdsToDelete || vertexIdsToDelete.length === 0) {
-        return { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [], world: await this._worldRepository.getWorld() };
+        return { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [] };
     }
     const world = await this._worldRepository.getWorld();
     const verticesToDeleteSet = new Set(vertexIdsToDelete);
@@ -169,14 +169,13 @@ export class VertexEditUseCase {
     // cleanupUnusedVertices は WorldRepository 保存前に呼び出すべき
     this._cleanupUnusedVertices(world, vertexIdsToDelete);
 
-    console.log(`[VertexEditUseCase] World state updated. Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
-    // await this._worldRepository.saveWorld(world); // 永続化を削除
+    console.log(`[VertexEditUseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
+    await this._worldRepository.saveWorld(world);
 
     const result = {
         deletedVertexIds: Array.from(verticesToDeleteSet),
         updatedFeatureIds: Array.from(updatedFeatureIds),
-        deletedFeatureIds: Array.from(deletedFeatureIds),
-        world: world // 変更後のworldオブジェクトを返す
+        deletedFeatureIds: Array.from(deletedFeatureIds)
     };
     console.log('[VertexEditUseCase] deleteVertices finished. Result:', result);
     return result;
@@ -186,7 +185,7 @@ export class VertexEditUseCase {
    * 頂点を移動 (単一)
    * @param {string} vertexId - 移動する頂点のID
    * @param {Object} newPosition - 新しい位置 { x, y }
-   * @returns {Promise<Object>} 更新情報 { vertex, affectedFeatures, world }
+   * @returns {Promise<Object>} 更新情報 { vertex, affectedFeatures }
    */
   async moveVertex(vertexId, newPosition) {
     const world = await this._worldRepository.getWorld();
@@ -233,7 +232,7 @@ export class VertexEditUseCase {
         throw selfIntersectionError;
     }
 
-    // await this._worldRepository.saveWorld(world); // 永続化を削除
+    await this._worldRepository.saveWorld(world);
     const updatedVertexData = world.vertices[vertexIndex];
     const affectedFeaturesForReturn = world.features.filter(f => {
          if (!f || typeof f !== 'object') return false;
@@ -242,13 +241,13 @@ export class VertexEditUseCase {
                 (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(vertexId)));
      });
 
-    return { vertex: updatedVertexData, affectedFeatures: affectedFeaturesForReturn, world: world };
+    return { vertex: updatedVertexData, affectedFeatures: affectedFeaturesForReturn };
   }
 
   /**
    * 複数の頂点を移動
    * @param {Array<{ vertexId: string, newPosition: {x: number, y: number} }>} vertexUpdates - 移動する頂点の情報配列
-   * @returns {Promise<Object>} 更新情報 { updatedVertices: Object[], affectedFeatures: Object[], world: object }
+   * @returns {Promise<Object>} 更新情報 { updatedVertices: Object[], affectedFeatures: Object[] }
    */
   async moveVertices(vertexUpdates) {
     const world = await this._worldRepository.getWorld();
@@ -312,8 +311,8 @@ export class VertexEditUseCase {
         throw selfIntersectionError;
     }
 
-    // エラーがなければ保存しない
-    // await this._worldRepository.saveWorld(world); // 永続化を削除
+    // エラーがなければ保存
+    await this._worldRepository.saveWorld(world);
 
     // 更新後の頂点データと影響地物を収集
     const updatedVertices = [];
@@ -337,21 +336,21 @@ export class VertexEditUseCase {
     }
     const affectedFeatures = world.features.filter(f => finalAffectedFeatureIds.has(f.id));
 
-    return { updatedVertices, affectedFeatures, world: world };
+    return { updatedVertices, affectedFeatures };
   }
 
   /**
    * 頂点を共有化
    * @param {string} vertexId1 - 頂点1のID
    * @param {string} vertexId2 - 頂点2のID
-   * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures, world }
+   * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures }
    */
   async shareVertices(vertexId1, vertexId2) {
     const world = await this._worldRepository.getWorld();
     const vertex1 = world.vertices.find(v => v.id === vertexId1);
     const vertex2 = world.vertices.find(v => v.id === vertexId2);
     if (!vertex1 || !vertex2) throw new Error('One or both vertices not found');
-    
+
     const keptVertexId = this._getOlderVertexId(vertexId1, vertexId2);
     const removedVertexId = keptVertexId === vertexId1 ? vertexId2 : vertexId1;
     const keptVertex = keptVertexId === vertexId1 ? vertex1 : vertex2;
@@ -426,15 +425,15 @@ export class VertexEditUseCase {
         throw selfIntersectionError;
     }
 
-    // await this._worldRepository.saveWorld(world); // 永続化を削除
-    return { keptVertex, removedVertex, affectedFeatures, world: world };
+    await this._worldRepository.saveWorld(world);
+    return { keptVertex, removedVertex, affectedFeatures };
   }
 
   /**
    * 共有頂点を解除
    * @param {string} vertexId - 共有を解除する頂点のID
    * @param {string} featureId - この地物に対して新しい頂点を作成
-   * @returns {Promise<Object>} 更新情報 { newVertex, updatedFeature, world }
+   * @returns {Promise<Object>} 更新情報 { newVertex, updatedFeature }
    */
   async unlinkSharedVertex(vertexId, featureId) {
     const world = await this._worldRepository.getWorld();
@@ -446,12 +445,12 @@ export class VertexEditUseCase {
     if (!feature || typeof feature !== 'object') throw new Error(`Invalid feature object found for ID: ${featureId}`);
 
     const isPolygon = feature instanceof Polygon || feature.constructor?.name === 'Polygon';
-    const usesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) || 
+    const usesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) ||
                        (isPolygon && feature.rings?.some(ring => ring.vertexIds.includes(vertexId)));
     if (!usesVertex) throw new Error(`Feature ${featureId} does not use vertex with ID: ${vertexId}`);
 
     const newVertexId = this._generateId('vertex');
-    const newVertex = { id: newVertexId, x: vertex.x, y: vertex.y }; 
+    const newVertex = { id: newVertexId, x: vertex.x, y: vertex.y };
     world.vertices.push(newVertex);
 
     let featureUpdated = false;
@@ -503,8 +502,8 @@ export class VertexEditUseCase {
         throw selfIntersectionError;
     }
 
-    // await this._worldRepository.saveWorld(world); // 永続化を削除
-    return { newVertex: newVertex, updatedFeature: world.features[featureIndex], world: world };
+    await this._worldRepository.saveWorld(world);
+    return { newVertex: newVertex, updatedFeature: world.features[featureIndex] };
   }
 
   /**
@@ -515,7 +514,7 @@ export class VertexEditUseCase {
    * @param {{x: number, y: number}} newVertexPosition - 新しい頂点のワールド座標
    * @param {string | null} [ringId=null] - ポリゴンの場合、対象リングのID
    * @param {string | null} [vertexIdToUse=null] - Redo時に再利用する頂点ID
-   * @returns {Promise<{newVertex: Vertex, updatedFeature: Feature, world: object}>} 追加された頂点と更新された地物のインスタンスと変更後のworldオブジェクト
+   * @returns {Promise<{newVertex: Vertex, updatedFeature: Feature}>} 追加された頂点と更新された地物のインスタンス
    */
   async addVertexToFeatureEdge(featureId, segmentStartVertexId, segmentEndVertexId, newVertexPosition, ringId = null, vertexIdToUse = null) {
     const world = await this._worldRepository.getWorld();
@@ -597,7 +596,6 @@ export class VertexEditUseCase {
         throw new Error(`Unsupported feature type for adding vertex to edge: ${featureToUpdate.constructor.name}`);
       }
 
-      // 自己交差チェック
       if (featureToUpdate instanceof Polygon) {
         const getVerticesByIdsForPolygon = (ids, currentWorldVertices) => {
             const vertexMap = new Map(currentWorldVertices.map(v => [v.id, v]));
@@ -615,15 +613,14 @@ export class VertexEditUseCase {
       }
 
       world.features[featureIndex] = featureToUpdate;
-      // await this._worldRepository.saveWorld(world); // 永続化を削除
+      await this._worldRepository.saveWorld(world);
       return {
         newVertex: new Vertex(newVertexData.id, newVertexData.x, newVertexData.y),
-        updatedFeature: featureToUpdate,
-        world: world // 変更後のworldオブジェクトを返す
+        updatedFeature: featureToUpdate
       };
 
     } catch (error) {
-      if (!successfullyUpdated) { 
+      if (!successfullyUpdated) {
           world.vertices = world.vertices.filter(v => v.id !== newVertexId);
       }
       console.error("Error in addVertexToFeatureEdge:", error);
