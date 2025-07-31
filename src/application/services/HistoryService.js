@@ -207,8 +207,6 @@ export class HistoryService {
 
     // データソース全体が変更された可能性があることを通知する
     this._eventBus.publish('WorldUpdated');
-    // 選択をクリアする
-    this._eventBus.publish('ClearSelection');
     // 履歴状態の変更を通知する
     this._notifyHistoryChanged();
   }
