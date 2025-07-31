@@ -517,6 +517,14 @@ export class EditingViewModel {
   }
 
   /**
+   * 保留中の線上点追加情報を取得
+   * @returns {Object | null} 
+   */
+  getPendingVertexAdditionInfo() {
+      return this._pendingVertexAdditionInfo;
+  }
+
+  /**
    * ドラッグ状態をリセット
    * @private
    */

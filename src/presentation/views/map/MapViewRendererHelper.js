@@ -201,6 +201,7 @@ export class MapViewRendererHelper {
   renderDragPreview() {
     this.clearDragPreviews();
     const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo();
+    const pendingVertexAdditionInfo = this._editingViewModel.getPendingVertexAdditionInfo();
     if (draggingVerticesInfo.size === 0) return;
 
     const world = this._viewModel.getWorld();
@@ -222,17 +223,30 @@ export class MapViewRendererHelper {
 
     // 影響を受ける地物の仮形状 (各オフセットで描画)
     const draggedVertexIds = new Set(draggingVerticesInfo.keys());
-    // world.features 全体を対象に影響を受ける地物を探す
-    const affectedFeatures = world.features.filter(f => Array.from(draggedVertexIds).some(draggedId => {
-        const isPolygon = f instanceof DomainPolygon; // インスタンスで判定
-        // リングベースで判定
-        return (f.vertexIds && f.vertexIds.includes(draggedId)) || // Point, Line
-               (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(draggedId))); // Polygon
-    }));
+    const affectedFeatures = new Map(); // 重複を避けるためにMapを使用
+    
+    // 1. 通常のドラッグ対象の地物を探す
+    world.features.forEach(f => {
+      const isAffected = Array.from(draggedVertexIds).some(draggedId => {
+        const isPolygon = f instanceof DomainPolygon;
+        return (f.vertexIds && f.vertexIds.includes(draggedId)) ||
+               (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(draggedId)));
+      });
+      if (isAffected) {
+        affectedFeatures.set(f.id, f);
+      }
+    });
 
-    const getVertexPosWithOffset = (vertexId, offsetX) => { // offsetX を引数に追加
+    // 2. 保留中の線上点追加がある場合、その地物も対象に加える
+    if (pendingVertexAdditionInfo) {
+      const feature = world.features.find(f => f.id === pendingVertexAdditionInfo.featureId);
+      if (feature && !affectedFeatures.has(feature.id)) {
+        affectedFeatures.set(feature.id, feature);
+      }
+    }
+
+    const getVertexPosWithOffset = (vertexId, offsetX) => {
         const dragInfo = draggingVerticesInfo.get(vertexId);
-        // ドラッグ中の頂点はドラッグ先の currentPosition を使用、それ以外は元の位置
         if (dragInfo) return { x: dragInfo.currentPosition.x + offsetX, y: dragInfo.currentPosition.y };
         const v = verticesMap.get(vertexId);
         return v ? { x: v.x + offsetX, y: v.y } : null;
@@ -240,18 +254,44 @@ export class MapViewRendererHelper {
 
     affectedFeatures.forEach(feature => {
         const style = editingStyles.dragOutline;
-        for (const offsetX of finalOffsets) { // オフセットループ
+        for (const offsetX of finalOffsets) {
             if (feature instanceof DomainLine) {
-                const lineVertices = feature.vertexIds.map(id => getVertexPosWithOffset(id, offsetX)).filter(Boolean);
+                let originalVertexIds = [...feature.vertexIds];
+                if (pendingVertexAdditionInfo && pendingVertexAdditionInfo.featureId === feature.id) {
+                    const { segmentStartVertexId, segmentEndVertexId, newVertexId } = pendingVertexAdditionInfo;
+                    const startIndex = originalVertexIds.indexOf(segmentStartVertexId);
+                    const endIndex = originalVertexIds.indexOf(segmentEndVertexId);
+                    if (startIndex !== -1 && endIndex !== -1 && Math.abs(startIndex - endIndex) === 1) {
+                        const insertBeforeIndex = Math.max(startIndex, endIndex);
+                        originalVertexIds.splice(insertBeforeIndex, 0, newVertexId);
+                    }
+                }
+                const lineVertices = originalVertexIds.map(id => getVertexPosWithOffset(id, offsetX)).filter(Boolean);
                 if (lineVertices.length >= 2) {
                     const elem = this._renderer.drawLine(lineVertices, style, viewport);
                     if (elem) this._dragPreviewElements.push(elem);
                 }
             } else if (feature instanceof DomainPolygon) {
-                // リングベースで仮形状を描画
                 if (feature.rings && Array.isArray(feature.rings)) {
                     feature.rings.forEach(ring => {
-                        const vertices = ring.vertexIds.map(id => getVertexPosWithOffset(id, offsetX)).filter(Boolean);
+                        let originalVertexIds = [...ring.vertexIds];
+                        if (pendingVertexAdditionInfo && pendingVertexAdditionInfo.featureId === feature.id && pendingVertexAdditionInfo.ringId === ring.id) {
+                            const { segmentStartVertexId, segmentEndVertexId, newVertexId } = pendingVertexAdditionInfo;
+                            const startIndex = originalVertexIds.indexOf(segmentStartVertexId);
+                            const endIndex = originalVertexIds.indexOf(segmentEndVertexId);
+
+                            let insertBeforeIndex = -1;
+                            if ((startIndex + 1) % originalVertexIds.length === endIndex) { // 正順
+                                insertBeforeIndex = endIndex;
+                            } else if ((endIndex + 1) % originalVertexIds.length === startIndex) { // 逆順
+                                insertBeforeIndex = startIndex;
+                            }
+                            
+                            if (insertBeforeIndex !== -1) {
+                                originalVertexIds.splice(insertBeforeIndex, 0, newVertexId);
+                            }
+                        }
+                        const vertices = originalVertexIds.map(id => getVertexPosWithOffset(id, offsetX)).filter(Boolean);
                         if (vertices.length >= 3) {
                             // 閉じた線を描画
                             const elem = this._renderer.drawLine([...vertices, vertices[0]], style, viewport);
