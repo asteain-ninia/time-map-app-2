@@ -30,6 +30,7 @@ export class MapViewEventHandler {
     // マウス状態
     this._isMouseDown = false;
     this._isDragging = false;
+    this._isMiddleButtonDragging = false; // 中ボタンドラッグの状態を追加
     this._dragStartScreenPosition = { x: 0, y: 0 }; // スクリーン座標
     this._lastScreenPosition = { x: 0, y: 0 }; // スクリーン座標
     this._svgPoint = null; // SVG座標変換用
@@ -100,6 +101,17 @@ export class MapViewEventHandler {
     const targetElement = event.target;
     // ダイアログ上のイベントは無視
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
+
+    // 中ボタンクリックで視点移動を開始
+    if (event.button === 1) {
+        event.preventDefault();
+        this._isMouseDown = true;
+        this._isMiddleButtonDragging = true;
+        this._mapOverlay.style.cursor = 'grabbing';
+        this._viewportManager.startDrag(event.clientX, event.clientY);
+        return;
+    }
+
     // 右クリックは無視 (contextmenuで処理)
     if (event.button === 2) return;
 
@@ -121,6 +133,7 @@ export class MapViewEventHandler {
 
     switch (mode) {
       case 'view':
+        this._mapOverlay.style.cursor = 'grabbing';
         this._viewportManager.startDrag(pageX, pageY);
         break;
       case 'add':
@@ -174,6 +187,7 @@ export class MapViewEventHandler {
                 }
                 if (verticesToDrag.size > 0) {
                     this._editingViewModel.startVerticesDrag(verticesToDrag);
+                    this._mapOverlay.style.cursor = 'grabbing';
                 }
             } else {
                 // 頂点以外をクリックした場合、地物選択処理
@@ -196,9 +210,16 @@ export class MapViewEventHandler {
 
     const pageX = event.clientX;
     const pageY = event.clientY;
+
+    // 中ボタンドラッグ中の視点移動
+    if (this._isMouseDown && this._isMiddleButtonDragging) {
+        this._viewportManager.drag(pageX, pageY);
+        this._lastScreenPosition = { x: pageX, y: pageY };
+        return;
+    }
+
     const svgPointRaw = this._getSVGPoint(pageX, pageY);
     const worldPoint = this._svgToWorld(svgPointRaw);
-    if (!worldPoint) return;
 
     if (this._isMouseDown) { // マウスボタンが押されている -> ドラッグ判定
       if (!this._isDragging) { // まだドラッグ状態でない場合
@@ -207,6 +228,9 @@ export class MapViewEventHandler {
         // 一定距離移動したらドラッグ開始とみなす
         if (Math.sqrt(dxScreen * dxScreen + dyScreen * dyScreen) > this._clickTolerancePixels) {
           this._isDragging = true;
+          if (this._editingViewModel.getMode() === 'view') {
+              this._mapOverlay.style.cursor = 'grabbing';
+          }
         }
       }
 
@@ -232,7 +256,7 @@ export class MapViewEventHandler {
         // 他のモード・ツールでのドラッグは何もしない（追加モードなど）
       }
     } else { // マウスボタンが押されていない -> ホバー処理
-       this.handleMouseHover(worldPoint);
+       this._updateCursor(worldPoint);
     }
 
     this._lastScreenPosition = { x: pageX, y: pageY };
@@ -242,6 +266,18 @@ export class MapViewEventHandler {
   handleMouseUp(event) {
     const targetElement = event.target;
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
+
+    // 中ボタンのドラッグ終了
+    if (event.button === 1) {
+        if (this._isMiddleButtonDragging) {
+            this._viewportManager.endDrag();
+            this._isMiddleButtonDragging = false;
+            this._isMouseDown = false;
+            // ホバー処理を再評価するためにカーソルを更新
+            this._updateCursor(this._svgToWorld(this._getSVGPoint(event.clientX, event.clientY)));
+        }
+        return;
+    }
 
     // 右クリックの場合は無視
     if (event.button === 2) return;
@@ -254,8 +290,10 @@ export class MapViewEventHandler {
     if (this._isMouseDown && this._isDragging) {
       if (mode === 'view') {
         this._viewportManager.endDrag();
+        this._mapOverlay.style.cursor = 'grab';
       } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
-        this._editingViewModel.endVerticesDrag(); // ViewModelに頂点移動確定を依頼
+        this._editingViewModel.endVerticesDrag();
+        this._updateCursor(this._svgToWorld(this._getSVGPoint(event.clientX, event.clientY)));
       }
     }
     // クリック（ドラッグなし）処理
@@ -290,6 +328,12 @@ export class MapViewEventHandler {
   handleMouseLeave(event) {
     // マウスが押されたままウィンドウ外に出た場合の処理
     if (this._isMouseDown) {
+      // 中ボタンドラッグ中の場合
+      if (this._isMiddleButtonDragging) {
+          this._viewportManager.endDrag();
+          this._isMiddleButtonDragging = false;
+      }
+
       const mode = this._editingViewModel.getMode();
       const tool = this._editingViewModel.getTool();
       const isDraggingVertices = this._editingViewModel.getDraggingVerticesInfo().size > 0;
@@ -297,6 +341,7 @@ export class MapViewEventHandler {
       // ドラッグ中であればドラッグを終了させる
       if (mode === 'view' && this._isDragging) {
         this._viewportManager.endDrag();
+        this._mapOverlay.style.cursor = 'grab';
       } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && isDraggingVertices) {
         this._editingViewModel.endVerticesDrag();
       }
@@ -309,7 +354,7 @@ export class MapViewEventHandler {
     // ホバー状態をクリア
      this._viewModel.hoverFeature(null);
      this._viewModel.hoverVertex(null);
-     // 再描画はViewModelの通知経由で行われる
+     this._updateCursor(null);
   }
 
   /** ホイール */
@@ -507,40 +552,92 @@ export class MapViewEventHandler {
 
   // --- Helper methods called by handlers ---
 
-  /** マウスホバー処理 */
+  /** マウスホバー処理 (リファクタリング) */
   handleMouseHover(worldPoint) {
-      // 編集モード以外、または穴追加ツール選択中はホバー処理をスキップ
-      if (this._editingViewModel.getMode() !== 'edit' || this._editingViewModel.getTool() === 'add-hole') {
-          if (this._viewModel.getHoveredVertex() || this._viewModel.getHoveredFeature()) {
-              this._viewModel.hoverVertex(null);
-              this._viewModel.hoverFeature(null);
-          }
-          this._mapOverlay.style.cursor = 'default';
-          return;
+      const currentCursor = this._mapOverlay.style.cursor;
+      const newCursor = this._getCursorForCurrentState(worldPoint);
+
+      if (currentCursor !== newCursor) {
+          this._mapOverlay.style.cursor = newCursor;
       }
-      // 最も近い頂点を検索
-      const hoveredVertex = this._interactionLogic.findClosestVertex(worldPoint);
-      if (hoveredVertex) {
-          // 頂点ホバー
-          this._viewModel.hoverVertex(hoveredVertex.id);
-          this._viewModel.hoverFeature(null); // 地物ホバーは解除
-          this._mapOverlay.style.cursor = 'pointer'; // カーソル変更
-      } else {
-          // 頂点が見つからなければ地物を検索
-          const hoveredFeature = this._interactionLogic.findClosestFeature(worldPoint);
-          if (hoveredFeature) {
-              // 地物ホバー
-              this._viewModel.hoverFeature(hoveredFeature.id);
-              this._viewModel.hoverVertex(null); // 頂点ホバーは解除
-              this._mapOverlay.style.cursor = 'pointer'; // カーソル変更
+
+      // ホバーハイライトの処理はカーソルとは独立して行う
+      const mode = this._editingViewModel.getMode();
+      if (mode === 'edit' && this._editingViewModel.getTool() !== 'add-hole') {
+          const hoveredVertex = this._interactionLogic.findClosestVertex(worldPoint);
+          if (hoveredVertex) {
+              this._viewModel.hoverVertex(hoveredVertex.id);
+              this._viewModel.hoverFeature(null);
           } else {
-              // 何も見つからなければホバー解除
+              const hoveredFeature = this._interactionLogic.findClosestFeature(worldPoint);
+              this._viewModel.hoverFeature(hoveredFeature ? hoveredFeature.id : null);
               this._viewModel.hoverVertex(null);
-              this._viewModel.hoverFeature(null);
-              this._mapOverlay.style.cursor = 'default';
           }
+      } else {
+          // 編集モードでない、またはadd-holeツールの場合はホバーをクリア
+          this._viewModel.hoverVertex(null);
+          this._viewModel.hoverFeature(null);
       }
-      // 再描画はViewModelの通知経由で行われる
+  }
+
+  /**
+   * 現在の状態に応じたカーソル種別を決定する
+   * @param {object | null} worldPoint - 現在のマウスのワールド座標
+   * @returns {string} CSSのcursorプロパティ値
+   * @private
+   */
+  _getCursorForCurrentState(worldPoint) {
+      if (this._isMiddleButtonDragging || (this._isDragging && this._editingViewModel.getMode() === 'view') || (this._isDragging && this._editingViewModel.getDraggingVerticesInfo().size > 0)) {
+          return 'grabbing';
+      }
+
+      const mode = this._editingViewModel.getMode();
+      const tool = this._editingViewModel.getTool();
+
+      if (!worldPoint) return 'default';
+
+      switch (mode) {
+          case 'view':
+              return 'grab';
+          case 'add':
+              return 'crosshair';
+          case 'edit':
+              switch (tool) {
+                  case 'select':
+                      const hoveredVertex = this._interactionLogic.findClosestVertex(worldPoint);
+                      const hoveredFeature = hoveredVertex ? null : this._interactionLogic.findClosestFeature(worldPoint);
+                      return (hoveredVertex || hoveredFeature) ? 'pointer' : 'default';
+                  case 'move':
+                      return 'move';
+                  case 'add-vertex-on-edge':
+                      return this._interactionLogic.findClosestEdge(worldPoint) ? 'copy' : 'not-allowed';
+                  case 'add-hole':
+                      if (this._editingViewModel.getTargetPolygon()) {
+                          return 'crosshair';
+                      } else {
+                          const feature = this._interactionLogic.findClosestFeature(worldPoint);
+                          return (feature instanceof DomainPolygon) ? 'pointer' : 'default';
+                      }
+                  case 'split':
+                      return 'crosshair';
+                  default:
+                      return 'default';
+              }
+          default:
+              return 'default';
+      }
+  }
+
+  /**
+   * マウスカーソルを現在の状態に基づいて更新する (リファクタリング)
+   * @param {object | null} worldPoint - 現在のマウスのワールド座標
+   * @private
+   */
+  _updateCursor(worldPoint) {
+      const newCursor = this._getCursorForCurrentState(worldPoint);
+      if (this._mapOverlay.style.cursor !== newCursor) {
+          this._mapOverlay.style.cursor = newCursor;
+      }
   }
 
   /** 点追加処理 */
@@ -641,5 +738,4 @@ export class MapViewEventHandler {
       }
     }
   }
-
 }
