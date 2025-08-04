@@ -554,12 +554,7 @@ export class MapViewEventHandler {
 
   /** マウスホバー処理 (リファクタリング) */
   handleMouseHover(worldPoint) {
-      const currentCursor = this._mapOverlay.style.cursor;
-      const newCursor = this._getCursorForCurrentState(worldPoint);
-
-      if (currentCursor !== newCursor) {
-          this._mapOverlay.style.cursor = newCursor;
-      }
+      this._updateCursor(worldPoint);
 
       // ホバーハイライトの処理はカーソルとは独立して行う
       const mode = this._editingViewModel.getMode();
@@ -608,13 +603,37 @@ export class MapViewEventHandler {
                       const hoveredFeature = hoveredVertex ? null : this._interactionLogic.findClosestFeature(worldPoint);
                       return (hoveredVertex || hoveredFeature) ? 'pointer' : 'default';
                   case 'move':
+                      // TODO: 移動ツール実装時に、ホバー対象がある場合のみ 'move' になるように修正する
                       return 'move';
                   case 'add-vertex-on-edge':
                       return this._interactionLogic.findClosestEdge(worldPoint) ? 'copy' : 'not-allowed';
                   case 'add-hole':
-                      if (this._editingViewModel.getTargetPolygon()) {
-                          return 'crosshair';
-                      } else {
+                      const targetPolygon = this._editingViewModel.getTargetPolygon();
+                      if (targetPolygon) {
+                          const subMode = this._editingViewModel.getAddingSubMode();
+                          if (subMode) { // 頂点追加中
+                              // 有効な位置かどうかの判定ロジック
+                              const world = this._viewModel.getWorld();
+                              if (!world || !world.vertices) return 'not-allowed';
+                              const verticesMap = new Map(world.vertices.map(v => [v.id, { id: v.id, x: v.x, y: v.y }]));
+                              const locationInfo = this._interactionLogic.locatePointInPolygon(worldPoint, targetPolygon, verticesMap);
+                              const isOnBoundary = this._interactionLogic.isPointNearPolygonBoundary(worldPoint, targetPolygon, verticesMap);
+                              const targetRingId = this._editingViewModel.getTargetRingIdForHole();
+                              
+                              let isValidClick = false;
+                              if (subMode === 'hole') {
+                                  isValidClick = locationInfo.type === 'inside_outer' && locationInfo.ringId === targetRingId && !isOnBoundary;
+                              } else if (subMode === 'enclave') {
+                                  const condition1 = (targetRingId === null && locationInfo.type === 'outside');
+                                  const condition2 = (targetRingId !== null && locationInfo.type === 'inside_hole' && locationInfo.ringId === targetRingId);
+                                  isValidClick = (condition1 || condition2) && !isOnBoundary;
+                              }
+                              return isValidClick ? 'crosshair' : 'not-allowed';
+                          } else { // ポリゴンは選択済みだが、サブモード未決定
+                              const feature = this._interactionLogic.findClosestFeature(worldPoint);
+                              return (feature instanceof DomainPolygon) ? 'pointer' : 'default';
+                          }
+                      } else { // ターゲットポリゴン選択前
                           const feature = this._interactionLogic.findClosestFeature(worldPoint);
                           return (feature instanceof DomainPolygon) ? 'pointer' : 'default';
                       }
