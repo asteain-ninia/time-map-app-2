@@ -41,8 +41,9 @@ export class TimeService {
    * @returns {boolean} 範囲内ならtrue
    */
   isWithinRange(timePoint, startTime, endTime) {
-    return (!startTime || !startTime.isBefore(timePoint)) && 
-           (!endTime || !timePoint.isBefore(endTime));
+    const meetsStart = !startTime || !timePoint.isBefore(startTime);
+    const meetsEnd = !endTime || timePoint.isBefore(endTime);
+    return meetsStart && meetsEnd;
   }
 
   /**
@@ -158,3 +159,4 @@ export class TimeService {
     return new TimePoint(newYear, newMonth, newDay);
   }
 }
+
