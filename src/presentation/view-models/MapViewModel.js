@@ -132,10 +132,23 @@ export class MapViewModel {
         });
 
         if (selectionChanged) {
+            const previousSelectedFeatureId = this._selectedFeatureId;
+            const previousHighlightedFeatureId = this._highlightedFeatureId;
+
             this._selectedVertexIds = existingSelectedVertexIds;
-            this._notifyObservers('selectedVertices'); // 頂点選択の変更を通知
-             // ハイライト地物も再評価
-            this._updateHighlightedFeature();
+
+            const anchors = this._computeVertexSelectionAnchors(this._selectedVertexIds);
+            this._selectedFeatureId = anchors.exclusiveSelectedFeatureId;
+            this._highlightedFeatureId = anchors.highlightedFeatureId;
+
+            this._notifyObservers('selectedVertices');
+
+            if (previousSelectedFeatureId !== this._selectedFeatureId) {
+                this._notifyObservers('selectedFeature');
+            }
+            if (previousHighlightedFeatureId !== this._highlightedFeatureId) {
+                this._notifyObservers('highlightedFeature');
+            }
         }
     }
 
@@ -336,9 +349,23 @@ export class MapViewModel {
         });
 
         if (selectionChanged) {
+            const previousSelectedFeatureId = this._selectedFeatureId;
+            const previousHighlightedFeatureId = this._highlightedFeatureId;
+
             this._selectedVertexIds = newSelectedVertexIds;
+
+            const anchors = this._computeVertexSelectionAnchors(this._selectedVertexIds);
+            this._selectedFeatureId = anchors.exclusiveSelectedFeatureId;
+            this._highlightedFeatureId = anchors.highlightedFeatureId;
+
             this._notifyObservers('selectedVertices');
-            this._updateHighlightedFeature(); // ハイライトも更新
+
+            if (previousSelectedFeatureId !== this._selectedFeatureId) {
+                this._notifyObservers('selectedFeature');
+            }
+            if (previousHighlightedFeatureId !== this._highlightedFeatureId) {
+                this._notifyObservers('highlightedFeature');
+            }
         }
     }
   }
@@ -410,8 +437,21 @@ export class MapViewModel {
     }
 
     if (selectionChanged) {
+        const previousSelectedFeatureId = this._selectedFeatureId;
+        const previousHighlightedFeatureId = this._highlightedFeatureId;
+
+        const anchors = this._computeVertexSelectionAnchors(this._selectedVertexIds);
+        this._selectedFeatureId = anchors.exclusiveSelectedFeatureId;
+        this._highlightedFeatureId = anchors.highlightedFeatureId;
+
         this._notifyObservers('selectedVertices');
-        this._updateHighlightedFeature(); // ハイライトも更新
+
+        if (previousSelectedFeatureId !== this._selectedFeatureId) {
+            this._notifyObservers('selectedFeature');
+        }
+        if (previousHighlightedFeatureId !== this._highlightedFeatureId) {
+            this._notifyObservers('highlightedFeature');
+        }
     }
 
     // 地物リストは UseCase -> onFeatureUpdated/onFeatureDeleted で更新されるはず
@@ -524,44 +564,98 @@ export class MapViewModel {
     }
 
     // 状態変更があった場合のみ通知
-    if (vertexSelectionChanged || this._selectedFeatureId !== null) {
-        this._selectedVertexIds = newSelectedVertexIds;
-        const oldSelectedFeatureId = this._selectedFeatureId;
-        this._selectedFeatureId = null; // 頂点選択時は地物の主選択を解除
+    if (vertexSelectionChanged || this._selectedFeatureId !== null || this._highlightedFeatureId !== null) {
+        const previousSelectedFeatureId = this._selectedFeatureId;
+        const previousHighlightedFeatureId = this._highlightedFeatureId;
 
-        this._updateHighlightedFeature(); // ハイライト地物を更新（通知もここで行われる）
+        this._selectedVertexIds = newSelectedVertexIds;
+
+        const { highlightedFeatureId, exclusiveSelectedFeatureId } = this._computeVertexSelectionAnchors(this._selectedVertexIds);
+
+        this._selectedFeatureId = exclusiveSelectedFeatureId;
+        this._highlightedFeatureId = highlightedFeatureId;
 
         this._notifyObservers('selectedVertices');
-        if (oldSelectedFeatureId !== null) { // 地物選択が解除された場合
+
+        if (previousSelectedFeatureId !== this._selectedFeatureId) {
             this._notifyObservers('selectedFeature');
+        }
+        if (previousHighlightedFeatureId !== this._highlightedFeatureId) {
+            this._notifyObservers('highlightedFeature');
         }
     }
   }
 
   /**
-   * ハイライト対象の地物を更新 (内部用)
+   * 選択中の頂点に紐づく地物情報を計算
+   * @param {Set<string>} vertexIds
+   * @returns {{highlightedFeatureId: string | null, exclusiveSelectedFeatureId: string | null}}
    * @private
    */
-  _updateHighlightedFeature() {
-      let newHighlightedFeatureId = null;
-      if (this._selectedVertexIds.size > 0) {
-          const firstSelectedVertexId = this._selectedVertexIds.values().next().value;
-          // 表示中の地物から探す (リングベース対応)
-          const ownerFeature = this._features.find(f => {
-               if (f instanceof DomainPolygon) {
-                   return f.rings?.some(ring => ring.vertexIds.includes(firstSelectedVertexId));
-               } else if (f instanceof DomainLine || f instanceof DomainPoint) {
-                   return f.vertexIds?.includes(firstSelectedVertexId);
-               }
-               return false;
-          });
-          newHighlightedFeatureId = ownerFeature ? ownerFeature.id : null;
-      }
+  _computeVertexSelectionAnchors(vertexIds) {
+    if (!vertexIds || vertexIds.size === 0) {
+      return { highlightedFeatureId: null, exclusiveSelectedFeatureId: null };
+    }
 
-      if (this._highlightedFeatureId !== newHighlightedFeatureId) {
-          this._highlightedFeatureId = newHighlightedFeatureId;
-          this._notifyObservers('highlightedFeature');
+    const ownershipCounts = new Map();
+    let fallbackOwnerId = null;
+
+    vertexIds.forEach(vertexId => {
+      const owners = this._findOwningFeatureIdsForVertex(vertexId);
+      if (!fallbackOwnerId && owners.length > 0) {
+        fallbackOwnerId = owners[0];
       }
+      owners.forEach(ownerId => {
+        ownershipCounts.set(ownerId, (ownershipCounts.get(ownerId) || 0) + 1);
+      });
+    });
+
+    let highlightedFeatureId = null;
+    let maxCount = 0;
+    ownershipCounts.forEach((count, ownerId) => {
+      if (count > maxCount || (count === maxCount && highlightedFeatureId === null)) {
+        highlightedFeatureId = ownerId;
+        maxCount = count;
+      }
+    });
+
+    if (!highlightedFeatureId && fallbackOwnerId) {
+      highlightedFeatureId = fallbackOwnerId;
+    }
+
+    const ownerIds = Array.from(ownershipCounts.keys());
+    const exclusiveSelectedFeatureId = ownerIds.length === 1 ? ownerIds[0] : null;
+
+    return {
+      highlightedFeatureId: highlightedFeatureId || null,
+      exclusiveSelectedFeatureId
+    };
+  }
+
+  /**
+   * 頂点が属する現在表示中の地物ID一覧を取得
+   * @param {string} vertexId
+   * @returns {string[]}
+   * @private
+   */
+  _findOwningFeatureIdsForVertex(vertexId) {
+    const ownerIds = [];
+    if (!vertexId) return ownerIds;
+
+    for (const feature of this._features) {
+      if (!feature) continue;
+      if (feature instanceof DomainPolygon) {
+        if (feature.rings?.some(ring => ring.vertexIds.includes(vertexId))) {
+          ownerIds.push(feature.id);
+        }
+      } else if (feature instanceof DomainLine || feature instanceof DomainPoint) {
+        if (Array.isArray(feature.vertexIds) && feature.vertexIds.includes(vertexId)) {
+          ownerIds.push(feature.id);
+        }
+      }
+    }
+
+    return ownerIds;
   }
 
   /**
