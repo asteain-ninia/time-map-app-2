@@ -834,7 +834,11 @@ toWorldY(svgY, viewport) {
     }
 
     line.setAttribute("d", pathData);
-    line.setAttribute("fill", "none");
+    const fillValue = style.fill !== undefined ? style.fill : 'none';
+    line.setAttribute("fill", fillValue);
+    if (style.fillRule) {
+      line.setAttribute("fill-rule", style.fillRule);
+    }
     line.setAttribute("stroke", style.stroke || "#000000");
     line.setAttribute("stroke-width", (style.strokeWidth || 2) / viewport.zoom);
     line.setAttribute("stroke-dasharray", style.strokeDasharray || "");

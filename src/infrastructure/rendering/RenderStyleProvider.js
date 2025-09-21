@@ -180,6 +180,9 @@ export function getPolygonStyle(property) {
 
 export const editingStyles = {
   normalVertex: { radius: 5, fill: 'rgba(0, 150, 255, 0.5)', stroke: 'rgba(0, 100, 200, 0.7)', strokeWidth: 1 },
+  persistentVertex: { radius: 4, fill: 'rgba(0, 60, 120, 0.35)', stroke: 'rgba(255, 255, 255, 0.9)', strokeWidth: 1 },
+  selectedPolygonFill: { stroke: 'none', strokeWidth: 0, fill: 'rgba(0, 255, 255, 0.18)', fillRule: 'evenodd' },
+  highlightPolygonFill: { stroke: 'none', strokeWidth: 0, fill: 'rgba(0, 136, 170, 0.14)', fillRule: 'evenodd' },
   selectedOutline: { stroke: '#00ffff', strokeWidth: 5, fill: 'none', strokeDasharray: '' },
   selectedPointOutline: { radius: 9, stroke: '#00ffff', strokeWidth: 2, fill: 'none' },
   selectedVertex: { radius: 7, fill: '#0080ff', stroke: '#0000ff', strokeWidth: 3 },

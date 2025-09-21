@@ -28,12 +28,14 @@ export class MapViewRendererHelper {
     this._addingElements = []; // 追加中プレビュー描画物
     this._measureElements = []; // 測定描画物
     this._temporaryElements = []; // 汎用一時要素描画物
+    this._persistentVertexElements = []; // 常時表示する頂点マーカー
   }
 
   /**
    * 全ての一時描画をクリア
    */
   clearAllTemporaryDrawings() {
+      this.clearPersistentVertexMarkers();
       this.clearSelectionHighlights();
       this.clearDragPreviews();
       this.clearAddingFeaturePreview();
@@ -43,6 +45,7 @@ export class MapViewRendererHelper {
 
   /** 選択ハイライトを描画 */
   renderSelection() {
+    this.clearPersistentVertexMarkers();
     this.clearSelectionHighlights();
     const selectedFeatureId = this._viewModel.getSelectedFeatureId();
     const selectedVertexIds = this._viewModel.getSelectedVertexIds(); // Set<string>
@@ -56,6 +59,8 @@ export class MapViewRendererHelper {
 
     const worldWidth = this._renderer.getWorldWidth();
     const finalOffsets = [0, -worldWidth, worldWidth];
+
+    this._renderPersistentVertexMarkers(verticesMap, selectedVertexIds, draggingVerticesInfo, viewport, finalOffsets);
 
     // 通常頂点マーカーのスタイル
     const normalVertexStyle = editingStyles.normalVertex;
@@ -104,6 +109,10 @@ export class MapViewRendererHelper {
                                  return v ? { x: v.x + offsetX, y: v.y } : null;
                              }).filter(Boolean);
                              if (ringPoints.length >= 3) {
+                                 if (editingStyles.selectedPolygonFill && editingStyles.selectedPolygonFill.fill !== 'none' && ring.ringType !== 'hole') {
+                                     const fillElem = this._renderer.drawLine([...ringPoints, ringPoints[0]], editingStyles.selectedPolygonFill, viewport);
+                                     if (fillElem) this._selectionElements.push(fillElem);
+                                 }
                                  const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport);
                                  if (elem) this._selectionElements.push(elem);
                              }
@@ -144,6 +153,10 @@ export class MapViewRendererHelper {
                                  return v ? { x: v.x + offsetX, y: v.y } : null;
                              }).filter(Boolean);
                              if (ringPoints.length >= 3) {
+                                 if (editingStyles.highlightPolygonFill && editingStyles.highlightPolygonFill.fill !== 'none' && ring.ringType !== 'hole') {
+                                     const fillElem = this._renderer.drawLine([...ringPoints, ringPoints[0]], editingStyles.highlightPolygonFill, viewport);
+                                     if (fillElem) this._selectionElements.push(fillElem);
+                                 }
                                  const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport);
                                  if (elem) this._selectionElements.push(elem);
                              }
@@ -439,6 +452,49 @@ export class MapViewRendererHelper {
         if(totalGreatCircleElem) this._measureElements.push(totalGreatCircleElem);
     }
     this._measureElements.forEach(el => el.classList.add('temp-drawing', 'measure-element'));
+  }
+
+  /** 持続的な頂点マーカーをクリア */
+  clearPersistentVertexMarkers() {
+    this._persistentVertexElements.forEach(el => this._renderer.removeElement(el));
+    this._persistentVertexElements = [];
+  }
+
+  /** 持続的な頂点マーカーを描画 */
+  _renderPersistentVertexMarkers(verticesMap, selectedVertexIds, draggingVerticesInfo, viewport, offsets) {
+    const passiveStyle = editingStyles.persistentVertex || editingStyles.normalVertex;
+    const selectedSet = selectedVertexIds instanceof Set ? selectedVertexIds : new Set(selectedVertexIds || []);
+    const draggingSet = draggingVerticesInfo instanceof Map ? new Set(draggingVerticesInfo.keys()) : new Set();
+    const features = this._viewModel.getFeatures();
+    if (!features || features.length === 0) return;
+
+    const drawnVertexIds = new Set();
+    const addMarker = (vertexId) => {
+      if (!vertexId || drawnVertexIds.has(vertexId)) return;
+      if (selectedSet.has(vertexId) || draggingSet.has(vertexId)) return;
+      const vertex = verticesMap.get(vertexId);
+      if (!vertex) return;
+      drawnVertexIds.add(vertexId);
+      for (const offsetX of offsets) {
+        const elem = this._renderer.drawPoint(vertex.x + offsetX, vertex.y, passiveStyle, viewport);
+        if (elem) {
+          this._selectionElements.push(elem);
+          this._persistentVertexElements.push(elem);
+        }
+      }
+    };
+
+    for (const feature of features) {
+      if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
+        feature.rings.forEach(ring => {
+          if (Array.isArray(ring.vertexIds)) ring.vertexIds.forEach(addMarker);
+        });
+      } else if (feature instanceof DomainLine && Array.isArray(feature.vertexIds)) {
+        feature.vertexIds.forEach(addMarker);
+      } else if (feature instanceof DomainPoint) {
+        addMarker(feature.vertexId);
+      }
+    }
   }
 
   /** 測定描画物をクリア */
