@@ -78,6 +78,13 @@ export class SidebarView {
     this._mapViewModel.addObserver(this._onMapViewModelChanged.bind(this));
     this._editingViewModel.addObserver(this._onEditingViewModelChanged.bind(this)); // EditingVMの変更も監視
 
+    if (this._eventBus && typeof this._eventBus.subscribe === 'function') {
+      this._eventBus.subscribe('OpenSidebarTab', payload => {
+        const targetTab = (payload && payload.tabId) ? payload.tabId : 'properties';
+        this._switchTab(targetTab);
+      });
+    }
+
     this._switchTab(this._currentTabId); // 初期タブを表示
   }
 

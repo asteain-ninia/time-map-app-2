@@ -11,6 +11,7 @@ import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 import { MapViewInteractionLogic } from './map/MapViewInteractionLogic.js';
 import { MapViewRendererHelper } from './map/MapViewRendererHelper.js';
 import { MapViewEventHandler } from './map/MapViewEventHandler.js';
+import { MapContextMenu } from './map/MapContextMenu.js';
 
 /**
  * メインマップ表示 (ファサードクラス)
@@ -74,6 +75,7 @@ export class MapView {
         renderer,
         this._interactionLogic
     );
+    this._contextMenu = new MapContextMenu();
 
     // 初期化
     this._initialize();
@@ -276,6 +278,7 @@ export class MapView {
   /** 距離測定モードを設定 */
   setMeasuringDistance(enabled) {
     if (this._isMeasuringDistance !== enabled) {
+        this.hideContextMenu();
         this._isMeasuringDistance = enabled;
         if (enabled) {
             // 測定開始時に編集モードなどを解除
@@ -298,6 +301,90 @@ export class MapView {
     this._measurePoints = []; // 測定点をクリア
     this._rendererHelper.clearMeasureElements(); // 描画ヘルパー経由で関連描画をクリア
     // this._render(); // 描画更新は不要な場合もあるが、念のため呼ぶ
+  }
+
+  showContextMenu(screenX, screenY) {
+    const items = this._buildContextMenuItems();
+    this._contextMenu.show(screenX, screenY, items);
+  }
+
+  hideContextMenu() {
+    this._contextMenu.hide();
+  }
+
+  _buildContextMenuItems() {
+    const items = [];
+    const selectedVertexIds = Array.from(this._viewModel.getSelectedVertexIds());
+    const selectedFeature = this._viewModel.getSelectedFeature();
+    const currentTime = this._viewModel.getCurrentTime();
+
+    if (selectedVertexIds.length > 0) {
+      items.push({
+        label: '頂点を削除',
+        danger: true,
+        action: async () => {
+          if (!window.confirm('選択した頂点を削除しますか？')) {
+            return;
+          }
+          try {
+            await this._editingViewModel.deleteVertices(selectedVertexIds);
+          } catch (error) {
+            console.error('頂点の削除に失敗しました (ContextMenu)', error);
+            alert(`頂点の削除に失敗しました: ${error.message}`);
+          }
+        }
+      });
+    }
+
+    if (selectedFeature) {
+      const property = typeof selectedFeature.getPropertyAt === 'function'
+        ? selectedFeature.getPropertyAt(currentTime)
+        : null;
+      const featureName = property && property.name ? property.name : selectedFeature.id;
+
+      if (items.length > 0 && items[items.length - 1].type !== 'separator') {
+        items.push({ type: 'separator' });
+      }
+
+      items.push({
+        label: 'プロパティを編集',
+        action: () => {
+          this._eventBus.publish('OpenSidebarTab', { tabId: 'properties' });
+        }
+      });
+
+      items.push({
+        label: '地物を削除',
+        danger: true,
+        action: async () => {
+          if (!window.confirm(`地物「${featureName}」を削除しますか？`)) {
+            return;
+          }
+          try {
+            await this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature);
+          } catch (error) {
+            console.error('地物の削除に失敗しました (ContextMenu)', error);
+            alert(`地物の削除に失敗しました: ${error.message}`);
+          }
+        }
+      });
+    }
+
+    if (selectedFeature || selectedVertexIds.length > 0) {
+      if (items.length > 0 && items[items.length - 1].type !== 'separator') {
+        items.push({ type: 'separator' });
+      }
+      items.push({
+        label: '選択を解除',
+        action: () => {
+          this._viewModel.clearSelection();
+        }
+      });
+    }
+
+    return items.filter((item, index, array) =>
+      !(item.type === 'separator' && (index === 0 || array[index - 1].type === 'separator'))
+    );
   }
 
   /** 強制的に再描画 */

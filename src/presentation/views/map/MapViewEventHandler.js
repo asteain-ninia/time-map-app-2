@@ -98,6 +98,7 @@ export class MapViewEventHandler {
 
   /** マウスダウン */
   handleMouseDown(event) {
+    this._mapView.hideContextMenu();
     const targetElement = event.target;
     // ダイアログ上のイベントは無視
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
@@ -404,6 +405,7 @@ export class MapViewEventHandler {
     const targetElement = event.target;
     if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
     event.preventDefault(); // デフォルトのコンテキストメニューを抑制
+    this._mapView.hideContextMenu();
 
     const pageX = event.clientX;
     const pageY = event.clientY;
@@ -413,24 +415,19 @@ export class MapViewEventHandler {
 
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
-    const subMode = this._editingViewModel.getAddingSubMode();
 
-    // 地物追加中、または穴/飛び地追加中に右クリックでキャンセル
     if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
-        this.handleCancelClick(); // MapViewのキャンセル処理を呼び出す
-        console.log("Add/Hole/Enclave operation cancelled by right-click.");
+      this.handleCancelClick();
+      return;
     }
-    // 編集モードで右クリックした場合、オブジェクト選択とコンテキストメニュー表示（未実装）
-    else if (mode === 'edit') {
-         this._interactionLogic.selectObjectAt(worldPoint); // 右クリック位置のオブジェクトを選択
-         // TODO: コンテキストメニューを表示する処理を実装
-         alert(`Context menu (not implemented) triggered at ${worldPoint.x.toFixed(2)}, ${worldPoint.y.toFixed(2)}`);
-     }
-     // 距離測定中に右クリックでキャンセル
-     else if (this._mapView.isMeasuringDistance()) {
-         this._mapView.setMeasuringDistance(false);
-         console.log("Measurement cancelled by right-click.");
-     }
+
+    if (this._mapView.isMeasuringDistance()) {
+      this._mapView.setMeasuringDistance(false);
+      return;
+    }
+
+    this._interactionLogic.selectObjectAt(worldPoint);
+    this._mapView.showContextMenu(pageX, pageY);
   }
 
   /** キーダウン */
