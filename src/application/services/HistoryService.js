@@ -1,6 +1,6 @@
 // src/application/services/history/HistoryService.js
 import { Vertex } from '../../domain/entities/Vertex.js';
-import { Point } from '../../domain/entities/Point.js';
+import { Point as DomainPoint } from '../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 // HistoryStackManager, HistorySerializer, OperationEngine はDIで渡されるのでここではimport不要
