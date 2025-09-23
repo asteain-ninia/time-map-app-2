@@ -94,9 +94,14 @@ export class MapViewModel {
 
     const currentTime = this._navigateTimeUseCase.getCurrentTime();
 
-    // 現在の時間点で存在する地物をフィルタリング
+    const layers = Array.isArray(this._world.layers) ? this._world.layers : [];
+    const visibleLayerIds = new Set(
+      layers.filter(layer => layer && layer.visible !== false).map(layer => layer.id)
+    );
+
+    // 現在の時間点で存在し、かつ可視レイヤーに属する地物をフィルタリング
     this._features = this._world.features.filter(feature =>
-      feature.existsAt(currentTime)
+      feature.existsAt(currentTime) && (layers.length === 0 || visibleLayerIds.has(feature.layerId))
     );
 
     // 選択中の地物が現在の時間で存在しない場合は選択を解除
