@@ -132,8 +132,8 @@ export class FeaturesTabView {
         `;
         featureItem.dataset.featureId = feature.id; // 地物IDをdata属性に
 
-        const selectedFeatureId = this._mapViewModel.getSelectedFeatureId();
-        if (selectedFeatureId === feature.id) {
+        const activeFeatureId = this._mapViewModel.getActiveFeatureId();
+        if (activeFeatureId === feature.id) {
           featureItem.style.backgroundColor = '#d0e0ff'; // 選択中の地物のスタイル
         }
 

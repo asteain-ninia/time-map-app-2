@@ -37,9 +37,10 @@ export class MapViewModel {
     // マップの状態
     this._world = null;
     this._features = []; // 現在の時間点で表示される地物の配列
-    this._selectedFeatureId = null; // (string | null) 主選択されている地物のID
-    this._selectedVertexIds = new Set(); // (Set<string>) 主選択されている頂点のIDセット
-    this._highlightedFeatureId = null; // (string | null) 暗黙的にハイライトする地物のID (頂点選択時に属する地物)
+    this._activeFeatureId = null; // (string | null) 明示的に選択されている地物のID
+    this._selectedVertexIds = new Set(); // (Set<string>) 選択されている頂点のIDセット
+    this._vertexContextFeatureId = null; // (string | null) 頂点選択から一意に導かれる地物のID
+    this._selectedVertexOwnerIds = new Set(); // (Set<string>) 頂点選択に関与する地物ID集合
     this._hoveredFeature = null; // ホバー中の地物インスタンス
     this._hoveredVertex = null; // ホバー中の頂点データ {id, x, y}
     this._projectSettings = null; // プロジェクト固有設定を保持
@@ -105,7 +106,7 @@ export class MapViewModel {
     );
 
     // 選択中の地物が現在の時間で存在しない場合は選択を解除
-    if (this._selectedFeatureId && !this._features.some(f => f.id === this._selectedFeatureId)) {
+    if (this._activeFeatureId && !this._features.some(f => f.id === this._activeFeatureId)) {
         this.clearSelection(); // 選択解除
     }
     // 選択中の頂点が現在の時間で存在しない地物に属する場合も解除
@@ -137,22 +138,14 @@ export class MapViewModel {
         });
 
         if (selectionChanged) {
-            const previousSelectedFeatureId = this._selectedFeatureId;
-            const previousHighlightedFeatureId = this._highlightedFeatureId;
-
             this._selectedVertexIds = existingSelectedVertexIds;
 
-            const anchors = this._computeVertexSelectionAnchors(this._selectedVertexIds);
-            this._selectedFeatureId = anchors.exclusiveSelectedFeatureId;
-            this._highlightedFeatureId = anchors.highlightedFeatureId;
+            const contextChanged = this._applyVertexSelectionContext();
 
             this._notifyObservers('selectedVertices');
 
-            if (previousSelectedFeatureId !== this._selectedFeatureId) {
-                this._notifyObservers('selectedFeature');
-            }
-            if (previousHighlightedFeatureId !== this._highlightedFeatureId) {
-                this._notifyObservers('highlightedFeature');
+            if (contextChanged) {
+                this._notifyObservers('vertexContextFeature');
             }
         }
     }
@@ -237,11 +230,11 @@ export class MapViewModel {
     this._loadFeaturesForCurrentTime();
 
     // 更新された地物が選択中の場合、選択ハイライトを再描画するために通知
-    if (this._selectedFeatureId === event.feature.id) {
-        this._notifyObservers('selectedFeature', event.feature);
+    if (this._activeFeatureId === event.feature.id) {
+        this._notifyObservers('activeFeature', event.feature);
     }
-    if (this._highlightedFeatureId === event.feature.id) {
-        this._notifyObservers('highlightedFeature', event.feature);
+    if (this._vertexContextFeatureId === event.feature.id) {
+        this._notifyObservers('vertexContextFeature', event.feature);
     }
   }
 
@@ -257,15 +250,15 @@ export class MapViewModel {
     let selectionAffected = false;
 
     // 削除された地物が主選択されていた場合
-    if (this._selectedFeatureId === featureIdToDelete) {
+    if (this._activeFeatureId === featureIdToDelete) {
       this.clearSelection(); // 地物・頂点・ハイライトすべて解除
       selectionAffected = true;
     }
     // 削除された地物がハイライトされていた場合 (頂点選択中)
-    else if (this._highlightedFeatureId === featureIdToDelete) {
-        this._highlightedFeatureId = null;
+    else if (this._vertexContextFeatureId === featureIdToDelete) {
+        this._vertexContextFeatureId = null;
         // 頂点選択は維持されるが、ハイライトのみクリア
-        this._notifyObservers('highlightedFeature');
+        this._notifyObservers('vertexContextFeature');
         selectionAffected = true;
     }
     // 削除された地物に属する頂点が選択されていた場合
@@ -326,8 +319,8 @@ export class MapViewModel {
     let selectionChanged = false;
 
     // 選択中の地物がこのレイヤーに属していれば解除
-    if (this._selectedFeatureId) {
-        const selectedFeature = this.getSelectedFeature(); // getWorldから取得するのでレイヤーIDは最新のはず
+    if (this._activeFeatureId) {
+        const selectedFeature = this.getActiveFeature(); // getWorldから取得するのでレイヤーIDは最新のはず
         if (selectedFeature && selectedFeature.layerId === layerId) {
             this.clearSelection();
             return; // 地物選択が解除されれば頂点選択もクリアされる
@@ -354,22 +347,14 @@ export class MapViewModel {
         });
 
         if (selectionChanged) {
-            const previousSelectedFeatureId = this._selectedFeatureId;
-            const previousHighlightedFeatureId = this._highlightedFeatureId;
-
             this._selectedVertexIds = newSelectedVertexIds;
 
-            const anchors = this._computeVertexSelectionAnchors(this._selectedVertexIds);
-            this._selectedFeatureId = anchors.exclusiveSelectedFeatureId;
-            this._highlightedFeatureId = anchors.highlightedFeatureId;
+            const contextChanged = this._applyVertexSelectionContext();
 
             this._notifyObservers('selectedVertices');
 
-            if (previousSelectedFeatureId !== this._selectedFeatureId) {
-                this._notifyObservers('selectedFeature');
-            }
-            if (previousHighlightedFeatureId !== this._highlightedFeatureId) {
-                this._notifyObservers('highlightedFeature');
+            if (contextChanged) {
+                this._notifyObservers('vertexContextFeature');
             }
         }
     }
@@ -442,20 +427,12 @@ export class MapViewModel {
     }
 
     if (selectionChanged) {
-        const previousSelectedFeatureId = this._selectedFeatureId;
-        const previousHighlightedFeatureId = this._highlightedFeatureId;
-
-        const anchors = this._computeVertexSelectionAnchors(this._selectedVertexIds);
-        this._selectedFeatureId = anchors.exclusiveSelectedFeatureId;
-        this._highlightedFeatureId = anchors.highlightedFeatureId;
+        const contextChanged = this._applyVertexSelectionContext();
 
         this._notifyObservers('selectedVertices');
 
-        if (previousSelectedFeatureId !== this._selectedFeatureId) {
-            this._notifyObservers('selectedFeature');
-        }
-        if (previousHighlightedFeatureId !== this._highlightedFeatureId) {
-            this._notifyObservers('highlightedFeature');
+        if (contextChanged) {
+            this._notifyObservers('vertexContextFeature');
         }
     }
 
@@ -502,14 +479,15 @@ export class MapViewModel {
     const newSelectedFeatureId = feature ? feature.id : null;
 
     // 状態変更があった場合のみ通知
-    if (this._selectedFeatureId !== newSelectedFeatureId || this._selectedVertexIds.size > 0 || this._highlightedFeatureId !== null) {
-        this._selectedFeatureId = newSelectedFeatureId;
+    if (this._activeFeatureId !== newSelectedFeatureId || this._selectedVertexIds.size > 0 || this._vertexContextFeatureId !== null) {
+        this._activeFeatureId = newSelectedFeatureId;
         this._selectedVertexIds.clear(); // 地物選択時は頂点選択をクリア
-        this._highlightedFeatureId = null; // 地物選択時はハイライトもクリア
+        this._vertexContextFeatureId = null; // 地物選択時は頂点コンテキストもクリア
+        this._selectedVertexOwnerIds.clear();
 
-        this._notifyObservers('selectedFeature');
+        this._notifyObservers('activeFeature');
         this._notifyObservers('selectedVertices');
-        this._notifyObservers('highlightedFeature');
+        this._notifyObservers('vertexContextFeature');
     }
   }
 
@@ -524,7 +502,7 @@ export class MapViewModel {
     const vertex = this._world.vertices.find(v => v.id === vertexId);
     if (!vertex) {
          if (!addToSelection) { // 単一選択モードで存在しない頂点をクリックしたらクリア
-             if (this._selectedVertexIds.size > 0 || this._selectedFeatureId !== null || this._highlightedFeatureId !== null) {
+             if (this._selectedVertexIds.size > 0 || this._activeFeatureId !== null || this._vertexContextFeatureId !== null) {
                  this.clearSelection();
              }
          }
@@ -569,72 +547,67 @@ export class MapViewModel {
     }
 
     // 状態変更があった場合のみ通知
-    if (vertexSelectionChanged || this._selectedFeatureId !== null || this._highlightedFeatureId !== null) {
-        const previousSelectedFeatureId = this._selectedFeatureId;
-        const previousHighlightedFeatureId = this._highlightedFeatureId;
+    if (vertexSelectionChanged || this._activeFeatureId !== null || this._vertexContextFeatureId !== null) {
+        const previousActiveFeatureId = this._activeFeatureId;
 
         this._selectedVertexIds = newSelectedVertexIds;
 
-        const { highlightedFeatureId, exclusiveSelectedFeatureId } = this._computeVertexSelectionAnchors(this._selectedVertexIds);
+        if (this._selectedVertexIds.size > 0) {
+            this._activeFeatureId = null;
+        }
 
-        this._selectedFeatureId = exclusiveSelectedFeatureId;
-        this._highlightedFeatureId = highlightedFeatureId;
+        const contextChanged = this._applyVertexSelectionContext();
 
         this._notifyObservers('selectedVertices');
 
-        if (previousSelectedFeatureId !== this._selectedFeatureId) {
-            this._notifyObservers('selectedFeature');
+        if (previousActiveFeatureId !== this._activeFeatureId) {
+            this._notifyObservers('activeFeature');
         }
-        if (previousHighlightedFeatureId !== this._highlightedFeatureId) {
-            this._notifyObservers('highlightedFeature');
+        if (contextChanged) {
+            this._notifyObservers('vertexContextFeature');
         }
     }
   }
 
   /**
-   * 選択中の頂点に紐づく地物情報を計算
-   * @param {Set<string>} vertexIds
-   * @returns {{highlightedFeatureId: string | null, exclusiveSelectedFeatureId: string | null}}
+   * 頂点選択コンテキストを更新
+   * @returns {boolean} コンテキストIDが変更されたかどうか
    * @private
    */
-  _computeVertexSelectionAnchors(vertexIds) {
+  _applyVertexSelectionContext() {
+    const analysis = this._analyzeVertexSelection(this._selectedVertexIds);
+    const previousContextId = this._vertexContextFeatureId;
+
+    this._vertexContextFeatureId = analysis.uniqueOwnerId;
+    this._selectedVertexOwnerIds = new Set(analysis.ownerIds);
+
+    return previousContextId !== this._vertexContextFeatureId;
+  }
+
+  /**
+   * 頂点選択の所有者解析
+   * @param {Set<string>} vertexIds
+   * @returns {{uniqueOwnerId: string | null, ownerIds: Set<string>}}
+   * @private
+   */
+  _analyzeVertexSelection(vertexIds) {
     if (!vertexIds || vertexIds.size === 0) {
-      return { highlightedFeatureId: null, exclusiveSelectedFeatureId: null };
+      return { uniqueOwnerId: null, ownerIds: new Set() };
     }
 
-    const ownershipCounts = new Map();
-    let fallbackOwnerId = null;
+    const ownerIds = new Set();
 
     vertexIds.forEach(vertexId => {
       const owners = this._findOwningFeatureIdsForVertex(vertexId);
-      if (!fallbackOwnerId && owners.length > 0) {
-        fallbackOwnerId = owners[0];
-      }
-      owners.forEach(ownerId => {
-        ownershipCounts.set(ownerId, (ownershipCounts.get(ownerId) || 0) + 1);
-      });
+      owners.forEach(ownerId => ownerIds.add(ownerId));
     });
 
-    let highlightedFeatureId = null;
-    let maxCount = 0;
-    ownershipCounts.forEach((count, ownerId) => {
-      if (count > maxCount || (count === maxCount && highlightedFeatureId === null)) {
-        highlightedFeatureId = ownerId;
-        maxCount = count;
-      }
-    });
-
-    if (!highlightedFeatureId && fallbackOwnerId) {
-      highlightedFeatureId = fallbackOwnerId;
+    let uniqueOwnerId = null;
+    if (ownerIds.size === 1) {
+      uniqueOwnerId = ownerIds.values().next().value;
     }
 
-    const ownerIds = Array.from(ownershipCounts.keys());
-    const exclusiveSelectedFeatureId = ownerIds.length === 1 ? ownerIds[0] : null;
-
-    return {
-      highlightedFeatureId: highlightedFeatureId || null,
-      exclusiveSelectedFeatureId
-    };
+    return { uniqueOwnerId, ownerIds };
   }
 
   /**
@@ -667,22 +640,23 @@ export class MapViewModel {
    * 選択を解除
    */
   clearSelection() {
-    const changedFeature = this._selectedFeatureId !== null;
+    const changedFeature = this._activeFeatureId !== null;
     const changedVertices = this._selectedVertexIds.size > 0;
-    const changedHighlight = this._highlightedFeatureId !== null;
+    const changedHighlight = this._vertexContextFeatureId !== null;
 
-    this._selectedFeatureId = null;
+    this._activeFeatureId = null;
     this._selectedVertexIds.clear();
-    this._highlightedFeatureId = null;
+    this._vertexContextFeatureId = null;
+    this._selectedVertexOwnerIds.clear();
 
     if (changedFeature) {
-        this._notifyObservers('selectedFeature');
+        this._notifyObservers('activeFeature');
     }
     if (changedVertices) {
         this._notifyObservers('selectedVertices');
     }
     if (changedHighlight) {
-        this._notifyObservers('highlightedFeature');
+        this._notifyObservers('vertexContextFeature');
     }
   }
 
@@ -871,12 +845,12 @@ export class MapViewModel {
       case 'features':
         // 表示中の地物リスト（ドメインインスタンスの配列）
         return this._features;
-      case 'selectedFeature': // 主選択地物の変更
-        return this.getSelectedFeature(); // ゲッター経由でドメインインスタンスを返す
+      case 'activeFeature': // 主選択地物の変更
+        return this.getActiveFeature(); // ゲッター経由でドメインインスタンスを返す
       case 'selectedVertices': // 主選択頂点の変更
         return this.getSelectedVertices(); // ゲッター経由でVertexインスタンスの配列を返す
-      case 'highlightedFeature': // ハイライト地物の変更
-        return this.getHighlightedFeature(); // ゲッター経由でドメインインスタンスを返す
+      case 'vertexContextFeature': // ハイライト地物の変更
+        return this.getVertexSelectionContextFeature(); // ゲッター経由でドメインインスタンスを返す
       case 'hoveredFeature':
         return this._hoveredFeature; // ドメインインスタンス or null
       case 'hoveredVertex':
@@ -941,8 +915,8 @@ export class MapViewModel {
    * 選択中の地物IDを取得
    * @returns {string | null} 選択中の地物ID
    */
-  getSelectedFeatureId() {
-      return this._selectedFeatureId;
+  getActiveFeatureId() {
+      return this._activeFeatureId;
   }
 
   /**
@@ -957,8 +931,8 @@ export class MapViewModel {
    * ハイライト中の地物IDを取得
    * @returns {string | null} ハイライト中の地物ID
    */
-  getHighlightedFeatureId() {
-      return this._highlightedFeatureId;
+  getVertexSelectionContextId() {
+      return this._vertexContextFeatureId;
   }
 
   /**
@@ -981,10 +955,10 @@ export class MapViewModel {
    * 選択中の地物オブジェクトを取得
    * @returns {Feature | null} 選択中の地物オブジェクト、またはnull
    */
-  getSelectedFeature() {
-    if (!this._world || !this._selectedFeatureId) return null;
+  getActiveFeature() {
+    if (!this._world || !this._activeFeatureId) return null;
     // _world.features から探す
-    return this._world.features.find(f => f.id === this._selectedFeatureId) || null;
+    return this._world.features.find(f => f.id === this._activeFeatureId) || null;
   }
 
   /**
@@ -1007,10 +981,26 @@ export class MapViewModel {
    * ハイライト中の地物オブジェクトを取得
    * @returns {Feature | null} ハイライト中の地物オブジェクト、またはnull
    */
-  getHighlightedFeature() {
-      if (!this._world || !this._highlightedFeatureId) return null;
+  getVertexSelectionContextFeature() {
+      if (!this._world || !this._vertexContextFeatureId) return null;
        // _world.features から探す
-      return this._world.features.find(f => f.id === this._highlightedFeatureId) || null;
+      return this._world.features.find(f => f.id === this._vertexContextFeatureId) || null;
+  }
+
+  /**
+   * プロパティ表示や補助UI向けの地物を取得
+   * @returns {Feature | null}
+   */
+  getSelectionContextFeature() {
+      return this.getActiveFeature() || this.getVertexSelectionContextFeature();
+  }
+
+  /**
+   * 頂点選択に関与している地物ID集合を取得
+   * @returns {Set<string>} 選択頂点が属する地物IDの集合
+   */
+  getVertexSelectionOwnerIds() {
+      return new Set(this._selectedVertexOwnerIds);
   }
 
 

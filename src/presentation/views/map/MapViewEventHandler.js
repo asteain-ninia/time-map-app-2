@@ -487,7 +487,7 @@ export class MapViewEventHandler {
            // 地物/穴/飛び地追加中にEsc -> キャンセル
          this.handleCancelClick(); // MapViewのキャンセル処理を呼び出す
          console.log("Add/Hole/Enclave operation cancelled by ESC.");
-       } else if (mode === 'edit' && (this._viewModel.getSelectedFeatureId() || this._viewModel.getSelectedVertexIds().size > 0)) {
+       } else if (mode === 'edit' && (this._viewModel.getActiveFeatureId() || this._viewModel.getSelectedVertexIds().size > 0)) {
            // 編集モードで何か選択中にEsc -> 選択解除
          this._viewModel.clearSelection();
          console.log("Selection cleared by ESC.");
@@ -516,19 +516,15 @@ export class MapViewEventHandler {
         // 編集モードで何か選択中にDelete/Backspace -> 削除
        event.preventDefault();
       const selectedVertexIds = this._viewModel.getSelectedVertexIds();
-      const selectedFeatureId = this._viewModel.getSelectedFeatureId();
+      const contextFeature = this._viewModel.getSelectionContextFeature();
       if (mode === 'edit') {
           if (selectedVertexIds.size > 0) {
               // 頂点選択中 -> 選択頂点を削除
               const vertexIdsToDelete = Array.from(selectedVertexIds);
               this._editingViewModel.deleteVertices(vertexIdsToDelete);
-          } else if (selectedFeatureId) {
+          } else if (contextFeature) {
               // 地物選択中 -> 選択地物を削除
-              // 削除前に地物データを取得する必要がある
-              const featureToDelete = this._viewModel.getWorld()?.features.find(f => f.id === selectedFeatureId);
-              if (featureToDelete) {
-                  this._editingViewModel.deleteFeature(selectedFeatureId, featureToDelete);
-              } else { console.error(`Feature with ID ${selectedFeatureId} not found for deletion.`); }
+              this._editingViewModel.deleteFeature(contextFeature.id, contextFeature);
           } else { console.log("Delete key pressed, but nothing selected."); }
       }
     } else if (event.ctrlKey || event.metaKey) {

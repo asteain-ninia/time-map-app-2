@@ -50,11 +50,7 @@ export class PropertiesTabView {
    */
   update() {
     // --- 変更ここから ---
-    let featureForProperties = this._mapViewModel.getSelectedFeature(); // 主選択された地物を取得
-    if (!featureForProperties) {
-      // 主選択がなければ、ハイライトされた地物を取得 (頂点選択時の暗黙的選択)
-      featureForProperties = this._mapViewModel.getHighlightedFeature();
-    }
+    const featureForProperties = this._mapViewModel.getSelectionContextFeature();
     // --- 変更ここまで ---
 
     this._propertiesContainer.innerHTML = ''; // 既存の内容をクリア

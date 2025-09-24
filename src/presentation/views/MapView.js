@@ -149,9 +149,9 @@ export class MapView {
     switch (type) {
       case 'world': // worldデータ全体が変更された場合
       case 'features': // 表示地物リストが変更された場合
-      case 'selectedFeature': // 選択地物が変更された場合
+      case 'activeFeature': // アクティブ地物が変更された場合
       case 'selectedVertices': // 選択頂点が変更された場合
-      case 'highlightedFeature': // ハイライト地物が変更された場合
+      case 'vertexContextFeature': // 頂点選択コンテキストが変更された場合
       case 'hoveredFeature': // ホバー地物が変更された場合
       case 'hoveredVertex': // ホバー頂点が変更された場合
       case 'layers': // レイヤー情報が変更された場合
@@ -315,7 +315,7 @@ export class MapView {
   _buildContextMenuItems() {
     const items = [];
     const selectedVertexIds = Array.from(this._viewModel.getSelectedVertexIds());
-    const selectedFeature = this._viewModel.getSelectedFeature();
+    const contextFeature = this._viewModel.getSelectionContextFeature();
     const currentTime = this._viewModel.getCurrentTime();
 
     if (selectedVertexIds.length > 0) {
@@ -336,11 +336,11 @@ export class MapView {
       });
     }
 
-    if (selectedFeature) {
-      const property = typeof selectedFeature.getPropertyAt === 'function'
-        ? selectedFeature.getPropertyAt(currentTime)
+    if (contextFeature) {
+      const property = typeof contextFeature.getPropertyAt === 'function'
+        ? contextFeature.getPropertyAt(currentTime)
         : null;
-      const featureName = property && property.name ? property.name : selectedFeature.id;
+      const featureName = property && property.name ? property.name : contextFeature.id;
 
       if (items.length > 0 && items[items.length - 1].type !== 'separator') {
         items.push({ type: 'separator' });
@@ -361,7 +361,7 @@ export class MapView {
             return;
           }
           try {
-            await this._editingViewModel.deleteFeature(selectedFeature.id, selectedFeature);
+            await this._editingViewModel.deleteFeature(contextFeature.id, contextFeature);
           } catch (error) {
             console.error('地物の削除に失敗しました (ContextMenu)', error);
             alert(`地物の削除に失敗しました: ${error.message}`);
@@ -370,7 +370,7 @@ export class MapView {
       });
     }
 
-    if (selectedFeature || selectedVertexIds.length > 0) {
+    if (contextFeature || selectedVertexIds.length > 0) {
       if (items.length > 0 && items[items.length - 1].type !== 'separator') {
         items.push({ type: 'separator' });
       }
