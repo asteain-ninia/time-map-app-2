@@ -96,22 +96,29 @@ export class VertexEditUseCase {
             }
 
             if (polygonUpdated) {
-                 let tempPolygon = currentFeature;
-                 // まず頂点ID配列が更新されたリングでポリゴンを更新
-                 newRingsData.forEach(ringData => {
-                     const originalRing = originalRings.find(or => or.id === ringData.id);
-                     if (originalRing && JSON.stringify(originalRing.vertexIds) !== JSON.stringify(ringData.vertexIds)) {
-                         tempPolygon = tempPolygon.withUpdatedRingVertices(ringData.id, ringData.vertexIds);
-                     }
-                 });
+                const willHaveRingsAfterDeletion = newRingsData.length > 0;
+                const shouldDeletePolygon = !willHaveRingsAfterDeletion && !currentFeature.hasChildren();
 
-                 // 次に無効になったリングを削除 (カスケード削除と親子関係再構築)
-                for (const ringId of ringsToDeleteIds) {
-                    // withRemovedRingは新しいカスケードロジックを持つ
-                    tempPolygon = tempPolygon.withRemovedRing(ringId);
+                if (shouldDeletePolygon) {
+                    featureShouldBeDeleted = true;
+                } else {
+                    let tempPolygon = currentFeature;
+                    // まず頂点ID配列が更新されたリングでポリゴンを更新
+                    newRingsData.forEach(ringData => {
+                        const originalRing = originalRings.find(or => or.id === ringData.id);
+                        if (originalRing && JSON.stringify(originalRing.vertexIds) !== JSON.stringify(ringData.vertexIds)) {
+                            tempPolygon = tempPolygon.withUpdatedRingVertices(ringData.id, ringData.vertexIds);
+                        }
+                    });
+
+                    // 次に無効になったリングを削除 (カスケード削除と親子関係再構築)
+                    for (const ringId of ringsToDeleteIds) {
+                        // withRemovedRingは新しいカスケードロジックを持つ
+                        tempPolygon = tempPolygon.withRemovedRing(ringId);
+                    }
+                    currentFeature = tempPolygon;
+                    needsUpdate = true;
                 }
-                currentFeature = tempPolygon;
-                needsUpdate = true;
             }
 
             // リング削除後、ポリゴンが空になったかチェック
