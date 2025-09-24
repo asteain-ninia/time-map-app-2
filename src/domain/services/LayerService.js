@@ -1,3 +1,5 @@
+import { Coordinate } from '../value-objects/Coordinate';
+
 /**
  * レイヤー間の関係管理を担当するドメインサービス
  */
@@ -186,3 +188,4 @@ export class LayerService {
     return true;
   }
 }
+
