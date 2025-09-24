@@ -79,6 +79,15 @@ export class Layer {
   }
 
   /**
+   * 新しい順序で新インスタンスを作成
+   * @param {number} order - 新しいレイヤー順序
+   * @returns {Layer} 新しいレイヤーオブジェクト
+   */
+  withOrder(order) {
+    return new Layer(this._id, this._name, order, this._visible, this._opacity, this._description);
+  }
+
+  /**
    * 新しい表示状態で新インスタンスを作成
    * @param {boolean} visible - 新しい表示状態
    * @returns {Layer} 新しいレイヤーオブジェクト
