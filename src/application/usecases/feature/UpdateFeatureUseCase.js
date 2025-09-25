@@ -98,16 +98,21 @@ export class UpdateFeatureUseCase {
         const geometryUpdates = updates.geometry;
         const editService = this._polygonEditService;
         let polygonBeingUpdated = updatedFeature;
+        const originalPolygonForWorld = world.features[featureIndex];
 
         try {
+            world.features[featureIndex] = polygonBeingUpdated;
+
             if (Array.isArray(geometryUpdates.removedRingIds)) {
                 for (const ringId of geometryUpdates.removedRingIds) {
                     polygonBeingUpdated = await editService.removeRingFromPolygon(polygonBeingUpdated.id, ringId);
+                    world.features[featureIndex] = polygonBeingUpdated;
                 }
             }
             if (Array.isArray(geometryUpdates.updatedRingVertices)) {
                 for (const update of geometryUpdates.updatedRingVertices) {
                     polygonBeingUpdated = await editService.updateRingVertices(polygonBeingUpdated.id, update.ringId, update.newVertexIds);
+                    world.features[featureIndex] = polygonBeingUpdated;
                 }
             }
             if (Array.isArray(geometryUpdates.newRingCoordinates)) {
@@ -129,15 +134,18 @@ export class UpdateFeatureUseCase {
                         parentId: ringCoordData.parentId
                     };
                     polygonBeingUpdated = await editService.addRingToPolygon(polygonBeingUpdated.id, ringData);
+                    world.features[featureIndex] = polygonBeingUpdated;
                 }
             }
             if (Array.isArray(geometryUpdates.existingRingData)) {
                 for (const existingRing of geometryUpdates.existingRingData) {
                     polygonBeingUpdated = await editService.addRingWithId(polygonBeingUpdated.id, existingRing);
+                    world.features[featureIndex] = polygonBeingUpdated;
                 }
             }
             updatedFeature = polygonBeingUpdated;
         } catch (error) {
+            world.features[featureIndex] = originalPolygonForWorld;
             console.error(`Failed to update polygon geometry for ${featureId}:`, error);
             throw new Error(`Polygon geometry update failed: ${error.message}`);
         }
