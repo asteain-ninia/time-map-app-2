@@ -448,45 +448,50 @@ export class VertexEditUseCase {
     if (!vertex) throw new Error(`Vertex not found with ID: ${vertexId}`);
     const featureIndex = world.features.findIndex(f => f.id === featureId);
     if (featureIndex === -1) throw new Error(`Feature not found with ID: ${featureId}`);
-    let feature = world.features[featureIndex];
-    if (!feature || typeof feature !== 'object') throw new Error(`Invalid feature object found for ID: ${featureId}`);
+    const originalFeature = world.features[featureIndex];
+    if (!originalFeature || typeof originalFeature !== "object") throw new Error(`Invalid feature object found for ID: ${featureId}`);
 
-    const isPolygon = feature instanceof Polygon || feature.constructor?.name === 'Polygon';
-    const usesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) ||
-                       (isPolygon && feature.rings?.some(ring => ring.vertexIds.includes(vertexId)));
+    const isPolygon = originalFeature instanceof Polygon || originalFeature.constructor?.name === "Polygon";
+    const usesVertex = (originalFeature.vertexIds && originalFeature.vertexIds.includes(vertexId)) ||
+                       (isPolygon && originalFeature.rings?.some(ring => ring.vertexIds.includes(vertexId)));
     if (!usesVertex) throw new Error(`Feature ${featureId} does not use vertex with ID: ${vertexId}`);
 
-    const newVertexId = this._generateId('vertex');
+    const newVertexId = this._generateId("vertex");
     const newVertex = { id: newVertexId, x: vertex.x, y: vertex.y };
     world.vertices.push(newVertex);
 
     let featureUpdated = false;
-    if (feature instanceof Point || feature instanceof Line) {
-        if (feature.vertexIds.includes(vertexId)) {
-            const newVertexIds = feature.vertexIds.map(id => id === vertexId ? newVertexId : id);
-            feature = feature.withVertexIds(newVertexIds);
+    let updatedFeature = originalFeature;
+
+    if (originalFeature instanceof Point || originalFeature instanceof Line) {
+        if (originalFeature.vertexIds.includes(vertexId)) {
+            const newVertexIds = originalFeature.vertexIds.map(id => id === vertexId ? newVertexId : id);
+            updatedFeature = originalFeature.withVertexIds(newVertexIds);
             featureUpdated = true;
         }
-    } else if (feature instanceof Polygon) {
-        let tempPolygon = feature;
-        for (const ring of feature.rings) {
+    } else if (isPolygon) {
+        let tempPolygon = originalFeature;
+        for (const ring of originalFeature.rings) {
             if (ring.vertexIds.includes(vertexId)) {
                 const newRingVertexIds = ring.vertexIds.map(id => id === vertexId ? newVertexId : id);
                 tempPolygon = tempPolygon.withUpdatedRingVertices(ring.id, newRingVertexIds);
                 featureUpdated = true;
             }
         }
-        feature = tempPolygon;
+        updatedFeature = tempPolygon;
     }
 
-    if (featureUpdated) {
-        world.features[featureIndex] = feature;
-    } else {
+    if (!featureUpdated) {
+        const newVertexIndex = world.vertices.findIndex(v => v.id === newVertexId);
+        if (newVertexIndex !== -1) {
+            world.vertices.splice(newVertexIndex, 1);
+        }
         console.error(`Failed to update feature ${featureId} during vertex unlink.`);
+        throw new Error(`Failed to update feature ${featureId} during vertex unlink.`);
     }
 
     let selfIntersectionError = null;
-    if (featureUpdated && feature instanceof Polygon) {
+    if (isPolygon && updatedFeature instanceof Polygon) {
         const getVerticesByIdsForPolygon = (ids, currentWorldVertices) => {
             const vertexMap = new Map(currentWorldVertices.map(v => [v.id, v]));
             return ids?.map(id => {
@@ -494,10 +499,10 @@ export class VertexEditUseCase {
                 return vData ? new Vertex(vData.id, vData.x, vData.y) : null;
             }).filter(Boolean) || [];
         };
-        for (const ring of feature.rings) {
+        for (const ring of updatedFeature.rings) {
             const ringVertices = getVerticesByIdsForPolygon(ring.vertexIds, world.vertices);
             if (this._geometryService.isPolygonSelfIntersecting(ringVertices)) {
-                selfIntersectionError = new Error(`共有頂点解除によりポリゴン ${feature.id} のリング ${ring.id} が自己交差しました。`);
+                selfIntersectionError = new Error(`共有頂点解除によりポリゴン ${updatedFeature.id} のリング ${ring.id} が自己交差しました。`);
                 break;
             }
         }
@@ -505,9 +510,14 @@ export class VertexEditUseCase {
 
     if (selfIntersectionError) {
         const newVertexIndex = world.vertices.findIndex(v => v.id === newVertexId);
-        if (newVertexIndex !== -1) world.vertices.splice(newVertexIndex, 1);
+        if (newVertexIndex !== -1) {
+            world.vertices.splice(newVertexIndex, 1);
+        }
+        world.features[featureIndex] = originalFeature;
         throw selfIntersectionError;
     }
+
+    world.features[featureIndex] = updatedFeature;
 
     await this._worldRepository.saveWorld(world);
     return { newVertex: newVertex, updatedFeature: world.features[featureIndex] };
