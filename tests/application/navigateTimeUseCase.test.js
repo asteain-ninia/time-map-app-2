@@ -1,0 +1,60 @@
+// Tests authored by Codex.
+import { describe, expect, it } from "vitest";
+import { NavigateTimeUseCase } from "../../src/application/usecases/NavigateTimeUseCase.js";
+import { TimeService } from "../../src/domain/services/TimeService.js";
+import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
+import { Property } from "../../src/domain/value-objects/Property.js";
+
+describe("NavigateTimeUseCase", () => {
+  const timeService = new TimeService();
+  const useCase = new NavigateTimeUseCase(timeService);
+
+  const makeFeature = (...years) => ({
+    properties: years.map(year => new Property(new TimePoint(year), `N${year}`, "", {}))
+  });
+
+  it("initializes with default time and allows direct moves", () => {
+    expect(useCase.getCurrentTime().year).toBe(0);
+
+    const moved = useCase.moveToTime(1500, 6, 1);
+    expect(moved.year).toBe(1500);
+    expect(moved.month).toBe(6);
+    expect(moved.day).toBe(1);
+  });
+
+  it("advances and retreats time via TimeService", () => {
+    useCase.moveToTime(2000, 1, 1);
+    const advanced = useCase.advanceTime(60);
+    expect(advanced.year >= 2000).toBe(true);
+
+    const retreated = useCase.retreatTime(30);
+    expect(retreated.year <= advanced.year).toBe(true);
+  });
+
+  it("moves to next significant property time", () => {
+    useCase.moveToTime(1000);
+    const features = [makeFeature(900, 1050), makeFeature(1200)];
+
+    const next = useCase.moveToNextSignificantTime(features);
+    expect(next.year).toBe(1050);
+  });
+
+  it("moves to previous significant property time", () => {
+    useCase.moveToTime(1500);
+    const features = [makeFeature(1200, 1400), makeFeature(1300)];
+
+    const prev = useCase.moveToPreviousSignificantTime(features);
+    expect(prev.year).toBe(1400);
+  });
+
+  it("keeps current time when no future or past points exist", () => {
+    useCase.moveToTime(1800);
+    const features = [makeFeature(1000, 1700)];
+
+    const next = useCase.moveToNextSignificantTime(features);
+    expect(next.year).toBe(1800);
+
+    const prev = useCase.moveToPreviousSignificantTime(features);
+    expect(prev.year).toBe(1700);
+  });
+});
