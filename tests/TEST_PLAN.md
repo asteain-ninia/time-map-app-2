@@ -1,34 +1,42 @@
 # テスト実装計画メモ
 
 ## 1. 現在のカバレッジ状況
-- ドメイン層: TimePoint / Property / GeometryService / TimeService / LayerService を網羅。距離計算や階層チェックなど主要ロジックはユニットテスト済み。
-- インフラ層: JSONWorldRepository, JSONSerializer, ConfigManager, FileSystem の入出力と分岐を検証済み。
-- アプリケーション層: HistoryService, HistoryStackManager, ManageLayersUseCase, NavigateTimeUseCase, EditFeatureUseCase, VertexEditUseCase の振る舞いをテスト済み。HistorySerializer, LayerService, TimeService など facade 的な箇所もカバー。
-- プレゼンテーション層: MapViewModel / TimelineViewModel / EditingViewModel のイベント駆動と状態遷移をテスト済み。
-- 残タスク: HistoryService + EditFeatureUseCase + HistoryCommand 群を跨ぐ統合シナリオ。
+- ドメイン層: TimePoint / Property / GeometryService / TimeService / LayerService の主要パスは網羅済み。GeometryService の距離計算ユーティリティの一部が未検証。
+- インフラ層: JSONWorldRepository, JSONSerializer, ConfigManager, FileSystem の入出力・バックアップを確認済み。
+- アプリケーション層: HistoryService, HistoryStackManager, ManageLayersUseCase, NavigateTimeUseCase, EditFeatureUseCase, VertexEditUseCase の基本挙動をカバー。HistoryService の `executeAndRecord` が生成する `'deleteVertices'`, `'updateProperties'`, `'addRing'`, `'addVertexToEdge'` 分岐は未テスト。
+- プレゼンテーション層: MapViewModel / TimelineViewModel / EditingViewModel のイベント駆動挙動を検証。ただし MapViewModel は `EditFeatureUseCase._worldRepository` に直接依存するスタブ構成。
+- 統合タスク: HistoryService + EditFeatureUseCase + HistoryCommand のシナリオを追加済みだが、点追加・頂点移動・削除に限定。
 
 ## 2. 次に着手するテスト候補
-1. **History統合シナリオ**
-   - `HistoryService.executeCommand` → Undo → Redo の往復で world / vertices / layers / イベントが期待通りに変化するか確認。
-   - `AddFeatureCommand` / `DeleteFeatureCommand` / `MoveVerticesCommand` / `DeleteVerticesCommand` など性質の異なるコマンドを混在させ、スタック整合性とシリアライズ往復を検証。
-   - Undo 直後の新コマンド実行で Redo がクリアされる仕様、連続操作後の `canUndo`/`canRedo` と `HistoryChanged` ペイロードを確認。
-   - in-memory `WorldRepository` と固定 ID を返す `IdGenerationService`、必要最低限の `GeometryService` / `LayerService` スタブ、モック `EventBus` を用意。
+1. **History undo/redo 拡張**
+   - `'deleteVertices'`, `'updateProperties'`, `'addRing'`, `'addVertexToEdge'` を使った `executeAndRecord` の統合シナリオ追加。
+   - 各コマンド (AddRingCommand など) のユニットテストで serialize/deserialize と副作用を検証。
+2. **設定・検証系の強化**
+   - `UpdateProjectSettingsUseCase.execute` のバリデーションエラー、正常保存、`WorldRepository.saveWorld` 呼び出しを確認。
+   - `ManageLayersUseCase` で `validateLayerHierarchy` が false を返すケースと再ソート後の order 再計算を確認。
+3. **ドメインサービスの境界値**
+   - GeometryService の `calculateDistanceSq`, `calculateGreatCirclePath`, `isPointInPolygon`, `doPolygonsOverlap` など未使用 API。
+   - TimeService の null 月/日扱い、負の advance/retreat、大きな日数を跨ぐケース。
 
 ## 3. 注意点・ハマりどころ
-- **Property は `Property` インスタンスで保持**: 履歴に保存する地物も `new Property(...)` で生成。
-- **IdGenerationService の固定化**: Undo/Redo で ID が揺れないよう、テスト内で決定的な ID を返す。
-- **EventBus の発火シーケンス**: `WorldUpdated` や `FeatureAdded/Deleted` が不足・過剰にならないか、publish モックでシーケンスと引数を検証。
-- **WorldRepository のキャッシュ前提**: `getWorld`→`saveWorld`→`getWorld` の流れで同じ参照が返るか、必要に応じてテスト内で再読込処理を実装。
+- Property / TimePoint は不正引数を補正するので、HistorySerializer が返すデータをそのまま利用すること。
+- IdGenerationService は決定論的なスタブを用意しないと Undo/Redo が安定再現しない。
+- EventBus の publish 回数 (WorldUpdated, HistoryChanged) を検証し、履歴 UI 連携が壊れていないか担保。
+- WorldRepository は `getWorld`→`saveWorld`→`getWorld` が同一参照を返す点に注意。必要に応じて deep copy を挟む。
 
 ## 4. 進め方の提案
-1. テスト専用の in-memory world と serializer / repository を構築し、EditFeatureUseCase・HistoryService を実際に結線した統合フィクスチャを作成。
-2. Add → Undo → Redo、Add → Move → Undo → Redo、Add → Delete → Undo → Redo など複数シナリオを用意し、world状態・イベントログ・スタック状態を比較。
-3. Undo 後に別コマンドを実行するケースを追加し、Redo スタックが破棄されることを確認。
-4. 必要に応じて Vertex 共有/削除など他コマンドもシナリオに組み込み、成果物の整合性と例外処理を監視。
+1. `createTestContext` を拡張し、頂点削除・プロパティ更新・リング追加・辺への頂点追加用の payload helper を用意。
+2. コマンド単体テストを `tests/application/history/commands/` に追加し、UseCase 例外で undo stack を復元する失敗パターンも検証。
+3. 設定系・レイヤー系テストでは `vi.spyOn` で repository 呼び出しと warning を捕捉し、期待するバリデーションメッセージを確認。
+4. GeometryService / TimeService の境界ケースをドメインテストに追記し、将来的なカスタムカレンダーでも落ちないようデータ駆動化。
+5. MapViewModel のスタブを WorldRepository 互換のラッパーに差し替え、実装詳細の変更に備える。
 
 ## 5. 既存自動テストの課題
-- `tests/application/editFeatureUseCase.test.js` は内部フィールドスタブに依存するため、統合シナリオの充実後にフェーズ移行を検討。
-- `tests/application/manageLayersUseCase.test.js` は world 参照共有を前提としているため、防御的コピーや永続化パターンに対応する追加テストを検討。
-- `tests/domain/timeService.test.js` は閏年や境界ケースの追加を要検討。
+- `tests/application/manageLayersUseCase.test.js` は layerService の検証失敗を想定しておらず、保護ロジックが未確認。
+- `tests/domain/timeService.test.js` は月/日の null や負の advance を扱わず、進み戻りの境界挙動が保証されていない。
+- `tests/domain/geometryService.test.js` では多角形重なりや大円経路など公開 API の多くが未検証。
+- `tests/application/history/historyIntegration.test.js` は `'add'`, `'delete'`, `'moveVertices'` のみで、他コマンド分岐や Redo の破棄条件を確認していない。
+- `tests/presentation/viewModels.test.js` は内部フィールドアクセスに依存しており、実装詳細変更で壊れる恐れがある。
+
 ---
-テストが完了したらこのメモを削除すること。
+テストが整ったタイミングでこのメモを削除すること。
