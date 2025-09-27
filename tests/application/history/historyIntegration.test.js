@@ -177,6 +177,14 @@ describe("HistoryService integration", () => {
     return addResult;
   };
 
+  const createLineFeature = async (name = "LineAlpha", vertices = [
+    { x: 0, y: 0 },
+    { x: 5, y: 0 },
+    { x: 10, y: 0 }
+  ]) => {
+    return ctx.editFeatureUseCase.addFeature("line", [createProperty(name)], { vertices }, "layer-0");
+  };
+
   it("adds a feature and restores it via undo/redo", async () => {
     await prepareAddCommand();
 
@@ -394,5 +402,223 @@ describe("HistoryService integration", () => {
 
     const worldAfterDelete = await ctx.worldRepository.getWorld();
     expect(worldAfterDelete.features).toHaveLength(0);
+  });
+
+  it("updates properties and restores them via undo/redo", async () => {
+    const baseProperty = createProperty("PropBase");
+    const feature = await ctx.editFeatureUseCase.addFeature(
+      "point",
+      [baseProperty],
+      { vertices: [{ x: 0, y: 0 }] },
+      "layer-0"
+    );
+
+    const worldAfterAdd = await ctx.worldRepository.getWorld();
+    const storedFeature = worldAfterAdd.features.find((f) => f.id === feature.id);
+    const originalProperty = storedFeature.properties[0];
+    const updatedProperty = createProperty("PropUpdated");
+    const payload = {
+      featureId: storedFeature.id,
+      oldProperties: [ctx.serializer.serialize(originalProperty)],
+      newProperties: [ctx.serializer.serialize(updatedProperty)]
+    };
+
+    ctx.eventBus.events.length = 0;
+
+    await ctx.historyService.executeAndRecord(async () => {
+      const result = await ctx.editFeatureUseCase.updateFeature(storedFeature.id, {
+        properties: [updatedProperty]
+      });
+      return { updatedFeature: result.feature };
+    }, "updateProperties", payload);
+
+    const worldAfterUpdate = await ctx.worldRepository.getWorld();
+    const featureAfterUpdate = worldAfterUpdate.features.find((f) => f.id === storedFeature.id);
+    expect(featureAfterUpdate.properties[0].name).toBe("PropUpdated");
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "HistoryChanged"
+    ]);
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.undo();
+    const worldAfterUndo = await ctx.worldRepository.getWorld();
+    const featureAfterUndo = worldAfterUndo.features.find((f) => f.id === storedFeature.id);
+    expect(featureAfterUndo.properties[0].name).toBe(originalProperty.name);
+    expect(ctx.historyService.canUndo()).toBe(false);
+    expect(ctx.historyService.canRedo()).toBe(true);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "FeatureUpdated",
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.redo();
+    const worldAfterRedo = await ctx.worldRepository.getWorld();
+    const featureAfterRedo = worldAfterRedo.features.find((f) => f.id === storedFeature.id);
+    expect(featureAfterRedo.properties[0].name).toBe("PropUpdated");
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "FeatureUpdated",
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
+  });
+
+  it("deletes vertices and restores them via undo/redo", async () => {
+    const lineFeature = await createLineFeature("LineBeta", [
+      { x: 0, y: 0 },
+      { x: 5, y: 5 },
+      { x: 10, y: 10 }
+    ]);
+
+    const worldAfterAdd = await ctx.worldRepository.getWorld();
+    const storedLine = worldAfterAdd.features.find((f) => f.id === lineFeature.id);
+    const originalVertexIds = [...storedLine.vertexIds];
+    const vertexIdToDelete = storedLine.vertexIds[1];
+    const vertexData = worldAfterAdd.vertices.find((v) => v.id === vertexIdToDelete);
+
+    const payload = {
+      deletedVertexIds: [vertexIdToDelete],
+      verticesToRestoreData: [serializeVertex(ctx.serializer, vertexData)],
+      affectedFeaturesBefore: [ctx.serializer.serialize(storedLine)]
+    };
+
+    ctx.eventBus.events.length = 0;
+
+    await ctx.historyService.executeAndRecord(async () => {
+      const result = await ctx.editFeatureUseCase.deleteVertices([vertexIdToDelete]);
+      return {
+        deletedVertexResult: result,
+        eventType: "VerticesDeletedCustom",
+        eventPayload: result
+      };
+    }, "deleteVertices", payload);
+
+    const worldAfterDelete = await ctx.worldRepository.getWorld();
+    const lineAfterDelete = worldAfterDelete.features.find((f) => f.id === storedLine.id);
+    expect(lineAfterDelete.vertexIds).not.toContain(vertexIdToDelete);
+    expect(lineAfterDelete.vertexIds).toHaveLength(2);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "HistoryChanged"
+    ]);
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.undo();
+    const worldAfterUndo = await ctx.worldRepository.getWorld();
+    const lineAfterUndo = worldAfterUndo.features.find((f) => f.id === storedLine.id);
+    expect(lineAfterUndo.vertexIds).toEqual(originalVertexIds);
+    expect(ctx.historyService.canUndo()).toBe(false);
+    expect(ctx.historyService.canRedo()).toBe(true);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "FeatureUpdated",
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.redo();
+    const worldAfterRedo = await ctx.worldRepository.getWorld();
+    const lineAfterRedo = worldAfterRedo.features.find((f) => f.id === storedLine.id);
+    expect(lineAfterRedo.vertexIds).not.toContain(vertexIdToDelete);
+    expect(lineAfterRedo.vertexIds).toHaveLength(2);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "VerticesDeletedCustom",
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
+  });
+
+  it("adds a vertex to an edge and restores the shape via undo/redo", async () => {
+    const lineFeature = await createLineFeature("LineGamma", [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 20, y: 0 }
+    ]);
+
+    const worldAfterAdd = await ctx.worldRepository.getWorld();
+    const storedLine = worldAfterAdd.features.find((f) => f.id === lineFeature.id);
+    const originalVertexIds = [...storedLine.vertexIds];
+    const segmentStartVertexId = storedLine.vertexIds[0];
+    const segmentEndVertexId = storedLine.vertexIds[1];
+    const featureBeforeData = ctx.serializer.serialize(storedLine);
+    const newVertexId = ctx.idService.generateId("vertex");
+    const newVertexPosition = { x: 5, y: 0.5 };
+    const payload = {
+      featureId: storedLine.id,
+      ringId: null,
+      segmentStartVertexId,
+      segmentEndVertexId,
+      newVertexId,
+      addedVertexData: ctx.serializer.serialize(new Vertex(newVertexId, newVertexPosition.x, newVertexPosition.y)),
+      featureBeforeData
+    };
+
+    ctx.eventBus.events.length = 0;
+
+    await ctx.historyService.executeAndRecord(async () => {
+      const result = await ctx.editFeatureUseCase.addVertexToFeatureEdge(
+        storedLine.id,
+        segmentStartVertexId,
+        segmentEndVertexId,
+        newVertexPosition,
+        null,
+        newVertexId
+      );
+      return {
+        updatedFeature: result.updatedFeature,
+        eventType: "VertexAddedToEdge",
+        eventPayload: {
+          featureId: result.updatedFeature.id,
+          addedVertex: result.newVertex,
+          updatedFeature: result.updatedFeature
+        }
+      };
+    }, "addVertexToEdge", payload);
+
+    const worldAfterInsert = await ctx.worldRepository.getWorld();
+    const lineAfterInsert = worldAfterInsert.features.find((f) => f.id === storedLine.id);
+    expect(lineAfterInsert.vertexIds).toContain(newVertexId);
+    expect(lineAfterInsert.vertexIds[1]).toBe(newVertexId);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "HistoryChanged"
+    ]);
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.undo();
+    const worldAfterUndo = await ctx.worldRepository.getWorld();
+    const lineAfterUndo = worldAfterUndo.features.find((f) => f.id === storedLine.id);
+    expect(lineAfterUndo.vertexIds).toEqual(originalVertexIds);
+    expect(ctx.historyService.canUndo()).toBe(false);
+    expect(ctx.historyService.canRedo()).toBe(true);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "VertexRemovedFromEdge",
+      "FeatureUpdated",
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.redo();
+    const worldAfterRedo = await ctx.worldRepository.getWorld();
+    const lineAfterRedo = worldAfterRedo.features.find((f) => f.id === storedLine.id);
+    expect(lineAfterRedo.vertexIds[1]).toBe(newVertexId);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "VertexAddedToEdge",
+      "FeatureUpdated",
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
   });
 });
