@@ -81,4 +81,20 @@ describe("ManageLayersUseCase", () => {
     expect(layerService.validateLayerHierarchy).toHaveBeenCalled();
     expect(worldRepository.saveWorld).toHaveBeenCalled();
   });
+
+  it("throws when layer hierarchy validation fails on add", async () => {
+    layerService.validateLayerHierarchy.mockReturnValueOnce(false);
+
+    await expect(useCase.addLayer("Invalid")).rejects.toThrow("Layer hierarchy validation failed");
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
+  it("does not save when reordered layers break hierarchy", async () => {
+    world.layers.push(new Layer("layer-1", "Overlay", 1, true, 1.0));
+    world.layers.push(new Layer("layer-2", "Top", 2, true, 1.0));
+    layerService.validateLayerHierarchy.mockReturnValueOnce(false);
+
+    await expect(useCase.reorderLayer("layer-2", 0)).rejects.toThrow("Layer hierarchy validation failed");
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
 });

@@ -44,4 +44,23 @@ describe("TimeService", () => {
     expect(advanced.month).toBe(1);
     expect(advanced.day).toBe(4);
   });
+
+  it("calculates span when month/day are unspecified", () => {
+    const service = new TimeService();
+    const start = new TimePoint(1000);
+    const end = new TimePoint(1005);
+
+    const result = service.calculateDaysBetween(start, end);
+    expect(result).toBeCloseTo(5 * service.calendarConfig.daysPerYear, 5);
+  });
+
+  it("advances negative days for coarse time points", () => {
+    const service = new TimeService();
+    const start = new TimePoint(1200);
+
+    const moved = service.advanceDays(start, -400);
+    expect(moved.year).toBe(1198);
+    expect(moved.month).toBeNull();
+    expect(moved.day).toBeNull();
+  });
 });

@@ -1,5 +1,5 @@
 // Tests authored by Codex.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { GeometryService } from "../../src/domain/services/GeometryService.js";
 
 const service = new GeometryService();
@@ -57,5 +57,52 @@ describe("GeometryService", () => {
 
     expect(service.doRingsIntersect(ringA, ringB)).toBe(true);
     expect(service.doRingsIntersect(ringA, ringC)).toBe(false);
+  });
+
+  it("provides squared distances without square root", () => {
+    expect(service.calculateDistanceSq(0, 0, 2, 3)).toBe(13);
+  });
+
+  it("interpolates great circle paths including endpoints", () => {
+    const pathPoints = service.calculateGreatCirclePath(0, 0, 0, 90, 8);
+
+    expect(pathPoints.length).toBe(9);
+    expect(pathPoints[0]).toEqual({ x: 0, y: 0 });
+    expect(pathPoints[pathPoints.length - 1]).toEqual({ x: 0, y: 90 });
+  });
+
+  it("determines point inclusion with optional boundary handling", () => {
+    const square = [
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+      { x: 4, y: 4 },
+      { x: 0, y: 4 }
+    ];
+
+    expect(service.isPointInPolygon({ x: 2, y: 2 }, square)).toBe(true);
+    expect(service.isPointInPolygon({ x: 5, y: 5 }, square)).toBe(false);
+    expect(service.isPointInPolygon({ x: 4, y: 2 }, square)).toBe(false);
+    expect(service.isPointInPolygon({ x: 4, y: 2 }, square, true)).toBe(true);
+  });
+
+  it("warns when deprecated polygon overlap helper is invoked", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = service.doPolygonsOverlap(
+      [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 0, y: 1 }
+      ],
+      [
+        { x: 2, y: 2 },
+        { x: 3, y: 2 },
+        { x: 2, y: 3 }
+      ]
+    );
+
+    expect(result).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith("doPolygonsOverlap is deprecated. Use doRingsIntersect for ring validation.");
+    warnSpy.mockRestore();
   });
 });
