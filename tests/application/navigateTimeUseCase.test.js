@@ -24,11 +24,16 @@ describe("NavigateTimeUseCase", () => {
 
   it("advances and retreats time via TimeService", () => {
     useCase.moveToTime(2000, 1, 1);
+
     const advanced = useCase.advanceTime(60);
-    expect(advanced.year >= 2000).toBe(true);
+    expect(advanced.year).toBe(2000);
+    expect(advanced.month).toBe(3);
+    expect(advanced.day).toBe(1);
 
     const retreated = useCase.retreatTime(30);
-    expect(retreated.year <= advanced.year).toBe(true);
+    expect(retreated.year).toBe(2000);
+    expect(retreated.month).toBe(1);
+    expect(retreated.day).toBe(31);
   });
 
   it("moves to next significant property time", () => {

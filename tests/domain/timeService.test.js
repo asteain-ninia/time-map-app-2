@@ -45,6 +45,26 @@ describe("TimeService", () => {
     expect(advanced.day).toBe(4);
   });
 
+  it("retreats days across month boundaries", () => {
+    const service = new TimeService();
+    const start = new TimePoint(2000, 3, 1);
+
+    const retreated = service.advanceDays(start, -1);
+    expect(retreated.year).toBe(2000);
+    expect(retreated.month).toBe(2);
+    expect(retreated.day).toBe(29);
+  });
+
+  it("retreats days across year boundaries", () => {
+    const service = new TimeService();
+    const start = new TimePoint(2000, 1, 5);
+
+    const retreated = service.advanceDays(start, -10);
+    expect(retreated.year).toBe(1999);
+    expect(retreated.month).toBe(12);
+    expect(retreated.day).toBe(26);
+  });
+
   it("calculates span when month/day are unspecified", () => {
     const service = new TimeService();
     const start = new TimePoint(1000);

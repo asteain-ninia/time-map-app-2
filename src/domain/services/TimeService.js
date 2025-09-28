@@ -139,23 +139,37 @@ export class TimeService {
     // 日単位で計算
     if (newDay !== null && newMonth !== null) {
       newDay += totalDays;
-      
-      // 月をまたぐ場合の処理
-      while (newDay > this._getMonthDays(newMonth - 1, newYear)) {
-        newDay -= this._getMonthDays(newMonth - 1, newYear);
-        newMonth++;
-        
+
+      // 月をまたぐ場合の処理（負方向の借り入れを含む）
+      while (newDay <= 0) {
+        newMonth -= 1;
+        if (newMonth < 1) {
+          newMonth = this._calendarConfig.monthsPerYear;
+          newYear -= 1;
+        }
+        newDay += this._getMonthDays(newMonth - 1, newYear);
+      }
+
+      while (true) {
+        const daysInCurrentMonth = this._getMonthDays(newMonth - 1, newYear);
+        if (newDay <= daysInCurrentMonth) {
+          break;
+        }
+
+        newDay -= daysInCurrentMonth;
+        newMonth += 1;
+
         // 年をまたぐ場合の処理
         if (newMonth > this._calendarConfig.monthsPerYear) {
           newMonth = 1;
-          newYear++;
+          newYear += 1;
         }
       }
     } else {
       // 日付が指定されていない場合は、年だけを進める
       newYear += Math.floor(totalDays / this._calendarConfig.daysPerYear);
     }
-    
+
     return new TimePoint(newYear, newMonth, newDay);
   }
 }
