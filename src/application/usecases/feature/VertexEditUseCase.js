@@ -201,13 +201,15 @@ export class VertexEditUseCase {
     const vertexIndex = world.vertices.findIndex(v => v.id === vertexId);
     if (vertexIndex === -1) throw new Error(`Vertex not found with ID: ${vertexId}`);
     
-    const originalVertexData = { ...world.vertices[vertexIndex] }; // ロールバック用に元の座標を保持
+    const vertexEntry = world.vertices[vertexIndex];
+    const originalVertexData = { x: vertexEntry.x, y: vertexEntry.y }; // ロールバック用
 
     // _handleCollisionForVertexMove はまだ未実装なので、ここでは直接 newPosition を使う
-    const adjustedPosition = this._handleCollisionForVertexMove(originalVertexData, newPosition, world); // 第1引数を変更
+    const adjustedPosition = this._handleCollisionForVertexMove({ id: vertexId, ...originalVertexData }, newPosition, world);
 
-    // world.vertices のデータを一時的に更新して検証
-    world.vertices[vertexIndex] = { id: vertexId, x: adjustedPosition.x, y: adjustedPosition.y };
+    // world.vertices 内の同じ参照をそのまま更新
+    vertexEntry.x = adjustedPosition.x;
+    vertexEntry.y = adjustedPosition.y;
 
     let selfIntersectionError = null;
 
@@ -239,12 +241,13 @@ export class VertexEditUseCase {
     const constraintError = this._validatePolygonConstraints(affectedPolygons, world, [vertexId]);
 
     if (selfIntersectionError || constraintError) {
-        world.vertices[vertexIndex] = originalVertexData; // ロールバック
+        vertexEntry.x = originalVertexData.x;
+        vertexEntry.y = originalVertexData.y;
         throw selfIntersectionError || constraintError;
     }
 
     await this._worldRepository.saveWorld(world);
-    const updatedVertexData = world.vertices[vertexIndex];
+    const updatedVertexData = { id: vertexId, x: vertexEntry.x, y: vertexEntry.y };
     const affectedFeaturesForReturn = world.features.filter(f => {
          if (!f || typeof f !== 'object') return false;
          const isPolygon = f instanceof Polygon || f.constructor?.name === 'Polygon';
@@ -262,20 +265,16 @@ export class VertexEditUseCase {
    */
   async moveVertices(vertexUpdates) {
     const world = await this._worldRepository.getWorld();
-    const originalVerticesData = new Map(); // ロールバック用
+    const originalVerticesData = new Map(); // { vertexRef, x, y }
     const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
 
     // 1. 元の座標を保存し、仮の更新を行う
     for (const update of vertexUpdates) {
         const vertex = verticesMap.get(update.vertexId);
         if (vertex) {
-            originalVerticesData.set(update.vertexId, { ...vertex }); // 元のデータをコピー
-            const vertexIndexInWorld = world.vertices.findIndex(v => v.id === update.vertexId);
-            if (vertexIndexInWorld !== -1) {
-                 // _handleCollisionForVertexMove はここでは呼び出さない (複数の頂点が絡むため複雑)
-                 // まずは newPosition をそのまま適用し、後でまとめて検証
-                world.vertices[vertexIndexInWorld] = { id: update.vertexId, x: update.newPosition.x, y: update.newPosition.y };
-            }
+            originalVerticesData.set(update.vertexId, { vertexRef: vertex, x: vertex.x, y: vertex.y });
+            vertex.x = update.newPosition.x;
+            vertex.y = update.newPosition.y;
         }
     }
 
@@ -319,11 +318,9 @@ export class VertexEditUseCase {
 
     if (selfIntersectionError || constraintError) {
         // ロールバック: world.vertices を元の状態に戻す
-        originalVerticesData.forEach((originalData, vertexId) => {
-            const index = world.vertices.findIndex(v => v.id === vertexId);
-            if (index !== -1) {
-                world.vertices[index] = originalData;
-            }
+        originalVerticesData.forEach(({ vertexRef, x, y }) => {
+            vertexRef.x = x;
+            vertexRef.y = y;
         });
         throw selfIntersectionError || constraintError;
     }
