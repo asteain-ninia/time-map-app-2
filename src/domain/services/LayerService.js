@@ -220,6 +220,25 @@ export class LayerService {
       return true;
     }
 
+    // 同一ポリゴン内の領土リング同士が干渉していないかチェック
+    for (let i = 0; i < targetTerritories.length; i++) {
+      const first = targetTerritories[i];
+      for (let j = i + 1; j < targetTerritories.length; j++) {
+        const second = targetTerritories[j];
+
+        if (geometryService.doRingsIntersect(first.coordinates, second.coordinates)) {
+          return false;
+        }
+
+        if (
+          geometryService.isRingCompletelyInsideRing(first.coordinates, second.coordinates) ||
+          geometryService.isRingCompletelyInsideRing(second.coordinates, first.coordinates)
+        ) {
+          return false;
+        }
+      }
+    }
+
     // 各レイヤーポリゴンについて重なりをチェック
     for (const layerPolygon of layerPolygons) {
       if (layerPolygon.id === polygon.id) continue; // 自分自身はスキップ

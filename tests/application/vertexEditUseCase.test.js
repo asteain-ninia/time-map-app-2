@@ -194,7 +194,7 @@ describe("VertexEditUseCase", () => {
         { vertexId: "b3", newPosition: { x: 3, y: 3 } },
         { vertexId: "b4", newPosition: { x: 1, y: 3 } }
       ])
-    ).rejects.toThrow(/overlaps/);
+    ).rejects.toThrow(/重なっています/);
 
     expect(world.vertices.find((v) => v.id === "b1")).toEqual({ id: "b1", x: 6, y: 0 });
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();

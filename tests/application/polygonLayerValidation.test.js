@@ -91,7 +91,7 @@ describe("Polygon layer validation integration", () => {
         ] },
         "layer-base"
       )
-    ).rejects.toThrow(/overlaps/);
+    ).rejects.toThrow(/重なっています/);
 
     expect(world.features).toHaveLength(1);
     expect(world.vertices).toHaveLength(4);
@@ -145,7 +145,7 @@ describe("Polygon layer validation integration", () => {
 
     await expect(
       useCase.execute("poly-upper", { layerId: "layer-base" })
-    ).rejects.toThrow(/overlaps/);
+    ).rejects.toThrow(/重なっています/);
 
     const upperPolygon = world.features.find(feature => feature.id === "poly-upper");
     expect(upperPolygon.layerId).toBe("layer-upper");

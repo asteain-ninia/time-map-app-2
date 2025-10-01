@@ -20,15 +20,15 @@ export function ensurePolygonLayerConstraints(polygon, world, layerService, geom
     : [...worldPolygons, polygon];
 
   if (!layerService.validatePolygonHierarchy(polygon, candidatePolygons, world.layers)) {
-    throw new Error(`Polygon ${polygon.id} violates layer hierarchy constraints.`);
+    throw new Error(`ポリゴン ${polygon.id} はレイヤー階層の制約に違反しています。`);
   }
 
   if (!layerService.isContainedInHigherLayerPolygon(polygon, candidatePolygons, world.vertices, world.layers, geometryService)) {
-    throw new Error(`Polygon ${polygon.id} must be contained within its higher layer parent polygon.`);
+    throw new Error(`ポリゴン ${polygon.id} は上位レイヤーの親ポリゴンの内側に収まる必要があります。`);
   }
 
   const layerPolygons = candidatePolygons.filter(candidate => candidate.layerId === polygon.layerId);
   if (!layerService.checkExclusivity(polygon, layerPolygons, world.vertices, geometryService)) {
-    throw new Error(`Polygon ${polygon.id} overlaps with another polygon on layer ${polygon.layerId}.`);
+    throw new Error(`ポリゴン ${polygon.id} がレイヤー ${polygon.layerId} 上の他の領域と重なっています。`);
   }
 }

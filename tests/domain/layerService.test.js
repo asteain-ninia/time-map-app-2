@@ -147,4 +147,34 @@ describe("LayerService", () => {
     const exclusive = service.checkExclusivity(polygon, [polygon, other], vertices, geometryService);
     expect(exclusive).toBe(false);
   });
+
+  it("detects overlaps between territory rings of the same polygon", () => {
+    const polygon = makePolygon({
+      id: "poly",
+      layerId: "layer",
+      rings: [
+        makeRing("outer", ["o1", "o2", "o3", "o4"]),
+        makeRing("enclave-1", ["e1", "e2", "e3", "e4"]),
+        makeRing("enclave-2", ["f1", "f2", "f3", "f4"])
+      ]
+    });
+    const vertices = [
+      makeVertex("o1", 0, 0),
+      makeVertex("o2", 10, 0),
+      makeVertex("o3", 10, 10),
+      makeVertex("o4", 0, 10),
+      makeVertex("e1", 2, 2),
+      makeVertex("e2", 5, 2),
+      makeVertex("e3", 5, 5),
+      makeVertex("e4", 2, 5),
+      makeVertex("f1", 4, 3),
+      makeVertex("f2", 7, 3),
+      makeVertex("f3", 7, 6),
+      makeVertex("f4", 4, 6)
+    ];
+    const geometryService = new GeometryService();
+
+    const exclusive = service.checkExclusivity(polygon, [polygon], vertices, geometryService);
+    expect(exclusive).toBe(false);
+  });
 });
