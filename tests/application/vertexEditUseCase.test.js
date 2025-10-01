@@ -7,6 +7,8 @@ import { Polygon } from "../../src/domain/entities/Polygon.js";
 import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../src/domain/entities/Vertex.js";
+import { GeometryService } from "../../src/domain/services/GeometryService.js";
+import { LayerService } from "../../src/domain/services/LayerService.js";
 
 const createProperty = (name = "feature") => new Property(new TimePoint(0), name, "", {});
 const makePoint = (id, vertexId, layerId = "layer-1") =>
@@ -26,6 +28,7 @@ describe("VertexEditUseCase", () => {
   let world;
   let worldRepository;
   let geometryService;
+  let layerService;
   let cleanupUnusedVertices;
   let generateId;
   let getOlderVertexId;
@@ -43,9 +46,9 @@ describe("VertexEditUseCase", () => {
         world = updated;
       })
     };
-    geometryService = {
-      isPolygonSelfIntersecting: vi.fn(() => false)
-    };
+    geometryService = new GeometryService();
+    vi.spyOn(geometryService, "isPolygonSelfIntersecting").mockImplementation(() => false);
+    layerService = new LayerService();
     cleanupUnusedVertices = vi.fn();
     generateId = vi.fn(() => "generated-vertex");
     getOlderVertexId = vi.fn((a, b) => a);
@@ -55,7 +58,8 @@ describe("VertexEditUseCase", () => {
       geometryService,
       cleanupUnusedVertices,
       generateId,
-      getOlderVertexId
+      getOlderVertexId,
+      layerService
     );
   });
 
@@ -158,6 +162,41 @@ describe("VertexEditUseCase", () => {
 
     await expect(useCase.moveVertex("v2", { x: 2, y: 2 })).rejects.toThrow(/自己交差/);
     expect(world.vertices.find((v) => v.id === "v2")).toEqual({ id: "v2", x: 1, y: 0 });
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
+  it("rejects vertex movement that introduces polygon overlap", async () => {
+    world.vertices = [
+      { id: "a1", x: 0, y: 0 },
+      { id: "a2", x: 4, y: 0 },
+      { id: "a3", x: 4, y: 4 },
+      { id: "a4", x: 0, y: 4 },
+      { id: "b1", x: 6, y: 0 },
+      { id: "b2", x: 8, y: 0 },
+      { id: "b3", x: 8, y: 2 },
+      { id: "b4", x: 6, y: 2 }
+    ];
+    world.features = [
+      makePolygon({
+        id: "poly-a",
+        rings: [makeRing("ring-a", ["a1", "a2", "a3", "a4"])]
+      }),
+      makePolygon({
+        id: "poly-b",
+        rings: [makeRing("ring-b", ["b1", "b2", "b3", "b4"])]
+      })
+    ];
+
+    await expect(
+      useCase.moveVertices([
+        { vertexId: "b1", newPosition: { x: 1, y: 1 } },
+        { vertexId: "b2", newPosition: { x: 3, y: 1 } },
+        { vertexId: "b3", newPosition: { x: 3, y: 3 } },
+        { vertexId: "b4", newPosition: { x: 1, y: 3 } }
+      ])
+    ).rejects.toThrow(/overlaps/);
+
+    expect(world.vertices.find((v) => v.id === "b1")).toEqual({ id: "b1", x: 6, y: 0 });
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
   });
 

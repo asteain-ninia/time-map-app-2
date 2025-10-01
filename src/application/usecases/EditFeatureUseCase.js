@@ -55,7 +55,8 @@ export class EditFeatureUseCase {
     this._vertexEditUseCase = new VertexEditUseCase(
         worldRepository, geometryService,
         this._cleanupUnusedVerticesFunc,
-        this._generateIdFunc, this._getOlderVertexIdFunc
+        this._generateIdFunc, this._getOlderVertexIdFunc,
+        layerService
     );
   }
 

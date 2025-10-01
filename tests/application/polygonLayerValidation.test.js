@@ -151,4 +151,59 @@ describe("Polygon layer validation integration", () => {
     expect(upperPolygon.layerId).toBe("layer-upper");
     expect(world.vertices).toHaveLength(8);
   });
+
+  it("allows polygon addition inside another polygon's hole", async () => {
+    const layers = [new Layer("layer-base", "Base", 0, true, 1, "")];
+    const world = {
+      layers,
+      vertices: [
+        new Vertex("t1", 0, 0),
+        new Vertex("t2", 10, 0),
+        new Vertex("t3", 10, 10),
+        new Vertex("t4", 0, 10),
+        new Vertex("h1", 2, 2),
+        new Vertex("h2", 4, 2),
+        new Vertex("h3", 4, 4),
+        new Vertex("h4", 2, 4)
+      ],
+      features: [
+        new Polygon("poly-with-hole", [createProperty("Outer")], "layer-base", "0", [], [
+          { id: "outer", vertexIds: ["t1", "t2", "t3", "t4"], ringType: "territory", parentId: null },
+          { id: "hole", vertexIds: ["h1", "h2", "h3", "h4"], ringType: "hole", parentId: "outer" }
+        ])
+      ],
+      metadata: {}
+    };
+
+    const worldRepository = makeWorldRepository(world);
+    const processGeometry = makeProcessGeometry();
+    const generateId = (() => {
+      let counter = 0;
+      return (prefix = "feature") => `${prefix}-${++counter}`;
+    })();
+
+    const useCase = new AddFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      generateId,
+      processGeometry,
+      getVerticesFromIds
+    );
+
+    const result = await useCase.execute(
+      "polygon",
+      [createProperty("Enclave")],
+      { vertices: [
+        { x: 2.5, y: 2.5 },
+        { x: 3.5, y: 2.5 },
+        { x: 3.5, y: 3.5 },
+        { x: 2.5, y: 3.5 }
+      ] },
+      "layer-base"
+    );
+
+    expect(result.layerId).toBe("layer-base");
+    expect(world.features).toHaveLength(2);
+  });
 });

@@ -4,6 +4,7 @@ import { Point } from '../../../domain/entities/Point';
 import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon'; // Polygon をインポート
 import { Vertex } from '../../../domain/entities/Vertex'; // Vertex をインポート
+import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
 
 /**
  * 頂点の編集（移動、共有、削除）を専門に処理するユースケース
@@ -16,12 +17,13 @@ export class VertexEditUseCase {
    * @param {Function} generateId - ID生成関数 (EditFeatureUseCaseから提供)
    * @param {Function} getOlderVertexId - 古い頂点ID判定関数 (EditFeatureUseCaseから提供)
    */
-  constructor(worldRepository, geometryService, cleanupUnusedVertices, generateId, getOlderVertexId) {
+  constructor(worldRepository, geometryService, cleanupUnusedVertices, generateId, getOlderVertexId, layerService) {
     this._worldRepository = worldRepository;
     this._geometryService = geometryService; // 衝突判定用に保持
     this._cleanupUnusedVertices = cleanupUnusedVertices;
     this._generateId = generateId;
     this._getOlderVertexId = getOlderVertexId;
+    this._layerService = layerService;
   }
 
   /**
@@ -234,9 +236,11 @@ export class VertexEditUseCase {
         if (selfIntersectionError) break;
     }
 
-    if (selfIntersectionError) {
+    const constraintError = this._validatePolygonConstraints(affectedPolygons, world, [vertexId]);
+
+    if (selfIntersectionError || constraintError) {
         world.vertices[vertexIndex] = originalVertexData; // ロールバック
-        throw selfIntersectionError;
+        throw selfIntersectionError || constraintError;
     }
 
     await this._worldRepository.saveWorld(world);
@@ -307,7 +311,13 @@ export class VertexEditUseCase {
         if (selfIntersectionError) break;
     }
 
-    if (selfIntersectionError) {
+    const constraintError = this._validatePolygonConstraints(
+        world.features.filter(feature => feature instanceof Polygon && allAffectedPolygonIds.has(feature.id)),
+        world,
+        vertexUpdates.map(update => update.vertexId)
+    );
+
+    if (selfIntersectionError || constraintError) {
         // ロールバック: world.vertices を元の状態に戻す
         originalVerticesData.forEach((originalData, vertexId) => {
             const index = world.vertices.findIndex(v => v.id === vertexId);
@@ -315,7 +325,7 @@ export class VertexEditUseCase {
                 world.vertices[index] = originalData;
             }
         });
-        throw selfIntersectionError;
+        throw selfIntersectionError || constraintError;
     }
 
     // エラーがなければ保存
@@ -656,5 +666,24 @@ export class VertexEditUseCase {
     );
     if (polygons.length === 0) return newPosition;
     return newPosition;
+  }
+
+  _validatePolygonConstraints(polygons, world, vertexIdsInvolved) {
+    if (!this._layerService || polygons.length === 0) {
+      return null;
+    }
+
+    try {
+      polygons.forEach(polygon => {
+        ensurePolygonLayerConstraints(polygon, world, this._layerService, this._geometryService);
+      });
+      return null;
+    } catch (error) {
+      const message = error?.message || '';
+      if (vertexIdsInvolved && vertexIdsInvolved.length > 0) {
+        error.message = `${message} (頂点: ${vertexIdsInvolved.join(', ')})`;
+      }
+      return error;
+    }
   }
 }

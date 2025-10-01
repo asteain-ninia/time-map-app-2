@@ -225,6 +225,7 @@ export class LayerService {
       if (layerPolygon.id === polygon.id) continue; // 自分自身はスキップ
 
       const otherTerritories = pickRingCoordinatePairs(layerPolygon, vertexMap, 'territory');
+      const otherHoles = pickRingCoordinatePairs(layerPolygon, vertexMap, 'hole');
       if (otherTerritories.length === 0) {
         continue;
       }
@@ -235,8 +236,22 @@ export class LayerService {
             return false;
           }
 
-          if (geometryService.isRingCompletelyInsideRing(targetCoords, otherCoords) ||
-              geometryService.isRingCompletelyInsideRing(otherCoords, targetCoords)) {
+          if (geometryService.isRingCompletelyInsideRing(otherCoords, targetCoords)) {
+            return false;
+          }
+
+          if (geometryService.isRingCompletelyInsideRing(targetCoords, otherCoords)) {
+            const isInsidePermittedHole = otherHoles.some(({ coordinates: holeCoords }) =>
+              geometryService.isRingCompletelyInsideRing(targetCoords, holeCoords)
+            );
+            if (!isInsidePermittedHole) {
+              return false;
+            }
+          }
+        }
+
+        for (const { coordinates: holeCoords } of otherHoles) {
+          if (geometryService.doRingsIntersect(targetCoords, holeCoords)) {
             return false;
           }
         }
