@@ -615,41 +615,54 @@ _renderGrid(viewport, gridSettings) {
 
     const invertY = true; // Y座標を反転させるフラグ
 
-    const verticesMap = new Map(vertices.map(v => [v.id, v])); // 高速参照用
+    const verticesMap = new Map(vertices.map(v => [v.id, v])); // �����Q�Ɨp
     const worldWidth = this.getWorldWidth();
+    const childrenByRingId = new Map();
+    for (const ring of polygon.rings) {
+        childrenByRingId.set(ring.id, []);
+    }
+    for (const ring of polygon.rings) {
+        if (ring.parentId !== null && ring.parentId !== undefined) {
+            const bucket = childrenByRingId.get(ring.parentId);
+            if (bucket) bucket.push(ring);
+        }
+    }
     const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
 
     for (const offsetX of finalOffsets) {
-        // パスデータを生成 (このオフセット用)
-        let pathDataForOffset = "";
-        // polygon.rings をループしてパスデータを構築
-        for (const ring of polygon.rings) {
-            const ringVerticesOriginal = ring.vertexIds.map(id => verticesMap.get(id)).filter(v => v); // 元の頂点オブジェクトを取得
-
+        const buildSubPath = (ring) => {
+            const ringVerticesOriginal = ring.vertexIds.map(id => verticesMap.get(id)).filter(v => v); // ���̒��_�I�u�W�F�N�g���擾
             if (ringVerticesOriginal.length < 3) {
                 console.warn(`Ring ${ring.id} in polygon ${polygon.id} has less than 3 valid vertices. Skipping ring.`);
-                continue; // 3点未満のリングは描画しない
+                return null; // 3�_�����̃����O�͕`�悵�Ȃ�
             }
-
-            // オフセット適用後の頂点リスト
-            const ringVerticesWithOffset = ringVerticesOriginal.map(v => ({ x: v.x + offsetX, y: v.y }));
-
-            // パスデータの開始点 (Move To)
-            pathDataForOffset += ` M ${this._toScreenX(ringVerticesWithOffset[0].x, viewport)} ${invertY ? -this._toScreenY(ringVerticesWithOffset[0].y, viewport) : this._toScreenY(ringVerticesWithOffset[0].y, viewport)}`;
-
-            // 残りの点を結ぶ (Line To)
+            const ringVerticesWithOffset = ringVerticesOriginal.map(v => ({ x: v.x + offsetX, y: v.y })); // �I�t�Z�b�g�K�p��̒��_
+            let subPath = ` M ${this._toScreenX(ringVerticesWithOffset[0].x, viewport)} ${invertY ? -this._toScreenY(ringVerticesWithOffset[0].y, viewport) : this._toScreenY(ringVerticesWithOffset[0].y, viewport)}`;
             for (let i = 1; i < ringVerticesWithOffset.length; i++) {
-                pathDataForOffset += ` L ${this._toScreenX(ringVerticesWithOffset[i].x, viewport)} ${invertY ? -this._toScreenY(ringVerticesWithOffset[i].y, viewport) : this._toScreenY(ringVerticesWithOffset[i].y, viewport)}`;
+                subPath += ` L ${this._toScreenX(ringVerticesWithOffset[i].x, viewport)} ${invertY ? -this._toScreenY(ringVerticesWithOffset[i].y, viewport) : this._toScreenY(ringVerticesWithOffset[i].y, viewport)}`;
             }
-
-            // パスを閉じる (Close Path)
-            pathDataForOffset += " Z";
+            subPath += " Z";
+            return subPath;
+        };
+        const pathSegments = [];
+        for (const ring of polygon.rings) {
+            if (ring.ringType !== "territory") continue;
+            const territoryPath = buildSubPath(ring);
+            if (!territoryPath) continue;
+            let combinedPath = territoryPath;
+            const childRings = childrenByRingId.get(ring.id) || [];
+            for (const child of childRings) {
+                if (child.ringType !== "hole") continue;
+                const holePath = buildSubPath(child);
+                if (holePath) {
+                    combinedPath += holePath;
+                }
+            }
+            pathSegments.push(combinedPath);
         }
-
-        if (pathDataForOffset) {
-            // パス要素を作成して属性を設定
+        for (const pathData of pathSegments) {
             const pathElement = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            pathElement.setAttribute("d", pathDataForOffset);
+            pathElement.setAttribute("d", pathData);
             pathElement.setAttribute("fill", fill);
             pathElement.setAttribute("stroke", stroke);
             pathElement.setAttribute("stroke-width", strokeWidth);
@@ -657,33 +670,28 @@ _renderGrid(viewport, gridSettings) {
             pathElement.setAttribute("fill-rule", "evenodd"); // 穴を正しく描画するためのルール
             group.appendChild(pathElement);
         }
-
-        // ラベルを描画（オプション）(このオフセットの中心に対して)
+        // ラベル描画（オプション）(このオフセットの中心に対して)
         if (property.name && style.showLabel) {
-          // ポリゴンの中心を計算（簡易的に、最初の最上位領土リングの重心）
-          const firstTerritoryRing = polygon.rings.find(r => r.ringType === 'territory' && r.parentId === null);
+          // ポリゴンの中心を計算（外周リングの重心）
+          const firstTerritoryRing = polygon.rings.find(r => r.ringType === "territory" && r.parentId === null);
           if (firstTerritoryRing) {
               const ringVerticesOriginal = firstTerritoryRing.vertexIds
                   .map(id => verticesMap.get(id))
                   .filter(v => v); // 元の頂点
-
               if (ringVerticesOriginal.length > 0) {
-                  let centroidXOriginal = 0; // オフセットなしの重心X
-                  let centroidYOriginal = 0; // オフセットなしの重心Y
+                  let centroidXOriginal = 0; // オフセットなしの中心X
+                  let centroidYOriginal = 0; // オフセットなしの中心Y
                   for (const vertex of ringVerticesOriginal) {
                       centroidXOriginal += vertex.x;
                       centroidYOriginal += vertex.y;
                   }
                   centroidXOriginal /= ringVerticesOriginal.length;
                   centroidYOriginal /= ringVerticesOriginal.length;
-
                   const svgX = this._toScreenX(centroidXOriginal + offsetX, viewport); // オフセット適用
                   const svgY = invertY ? -this._toScreenY(centroidYOriginal, viewport) : this._toScreenY(centroidYOriginal, viewport);
-
                   const baseFontSize = style.fontSize || 12;
                   // フォントサイズを 1/zoom でスケール
                   const fontSize = Math.max(6 / viewport.zoom, Math.min(20 / viewport.zoom, baseFontSize / viewport.zoom));
-
                   const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
                   text.setAttribute("x", svgX);
                   text.setAttribute("y", svgY);
@@ -695,7 +703,6 @@ _renderGrid(viewport, gridSettings) {
                   text.textContent = property.name;
                   // クリックイベントを透過させる
                   text.setAttribute("pointer-events", "none");
-
                   group.appendChild(text);
               }
           }

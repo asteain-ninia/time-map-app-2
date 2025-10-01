@@ -246,32 +246,67 @@ export class Polygon extends Feature {
     * @returns {Polygon} 更新されたPolygonインスタンス
     */
    withRemovedRing(ringIdToRemove) {
-       const ringToRemove = this._rings.find(r => r.id === ringIdToRemove);
-       if (!ringToRemove) {
-           console.warn(`Ring with id ${ringIdToRemove} not found in polygon ${this.id}. Returning original polygon.`);
-           return this;
-       }
+        const ringToRemove = this._rings.find(r => r.id === ringIdToRemove);
+        if (!ringToRemove) {
+            console.warn(`Ring with id ${ringIdToRemove} not found in polygon ${this.id}. Returning original polygon.`);
+            return this;
+        }
 
-       const parentIdForReparent = ringToRemove.parentId;
-       const ringsToRemove = new Set([ringIdToRemove]);
-       const directChildren = this._rings.filter(ring => ring.parentId === ringIdToRemove);
+        const childrenByParent = new Map();
+        for (const ring of this._rings) {
+            const parentKey = ring.parentId !== undefined ? ring.parentId : null;
+            if (!childrenByParent.has(parentKey)) {
+                childrenByParent.set(parentKey, []);
+            }
+            childrenByParent.get(parentKey).push(ring);
+        }
 
-       for (const child of directChildren) {
-           if (child.ringType === 'hole') {
-               ringsToRemove.add(child.id);
-           }
-       }
+        const ringsToRemove = new Set([ringIdToRemove]);
+        const parentUpdates = new Map();
 
-       const newRings = this._rings
-           .filter(ring => !ringsToRemove.has(ring.id))
-           .map(ring => {
-               if (ringsToRemove.has(ring.parentId)) {
-                   return { ...ring, parentId: parentIdForReparent };
-               }
-               return ring;
-           });
+        if (ringToRemove.ringType === 'hole') {
+            const reattachParentId = ringToRemove.parentId !== undefined ? ringToRemove.parentId : null;
+            const territoryChildren = (childrenByParent.get(ringIdToRemove) || []).filter(child => child.ringType === 'territory');
+            for (const territoryChild of territoryChildren) {
+                ringsToRemove.add(territoryChild.id);
+                const holeGrandChildren = childrenByParent.get(territoryChild.id) || [];
+                for (const holeGrandChild of holeGrandChildren) {
+                    if (holeGrandChild.ringType === 'hole') {
+                        parentUpdates.set(holeGrandChild.id, reattachParentId);
+                    } else {
+                        console.warn(`Unexpected ringType ${holeGrandChild.ringType} under territory ring ${territoryChild.id} while removing hole ${ringIdToRemove}.`);
+                    }
+                }
+            }
+        } else if (ringToRemove.ringType === 'territory') {
+            const promotionParentId = ringToRemove.parentId !== undefined ? ringToRemove.parentId : null;
+            const holeChildren = (childrenByParent.get(ringIdToRemove) || []).filter(child => child.ringType === 'hole');
+            for (const holeChild of holeChildren) {
+                ringsToRemove.add(holeChild.id);
+                const territoryGrandChildren = childrenByParent.get(holeChild.id) || [];
+                for (const territoryGrandChild of territoryGrandChildren) {
+                    if (territoryGrandChild.ringType === 'territory') {
+                        parentUpdates.set(territoryGrandChild.id, promotionParentId);
+                    } else {
+                        console.warn(`Unexpected ringType ${territoryGrandChild.ringType} under hole ring ${holeChild.id} while removing territory ${ringIdToRemove}.`);
+                    }
+                }
+            }
+        } else {
+            console.warn(`Ring ${ringIdToRemove} has unsupported ringType ${ringToRemove.ringType}.`);
+            return this;
+        }
 
-       return this._withRings(newRings);
+        const newRings = this._rings
+            .filter(ring => !ringsToRemove.has(ring.id))
+            .map(ring => {
+                if (parentUpdates.has(ring.id)) {
+                    return { ...ring, parentId: parentUpdates.get(ring.id) };
+                }
+                return ring;
+            });
+
+        return this._withRings(newRings);
    }
 
   // --- ドメイン階層操作メソッド ---
