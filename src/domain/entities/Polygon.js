@@ -253,11 +253,19 @@ export class Polygon extends Feature {
        }
 
        const parentIdForReparent = ringToRemove.parentId;
+       const ringsToRemove = new Set([ringIdToRemove]);
+       const directChildren = this._rings.filter(ring => ring.parentId === ringIdToRemove);
+
+       for (const child of directChildren) {
+           if (child.ringType === 'hole') {
+               ringsToRemove.add(child.id);
+           }
+       }
 
        const newRings = this._rings
-           .filter(ring => ring.id !== ringIdToRemove)
+           .filter(ring => !ringsToRemove.has(ring.id))
            .map(ring => {
-               if (ring.parentId === ringIdToRemove) {
+               if (ringsToRemove.has(ring.parentId)) {
                    return { ...ring, parentId: parentIdForReparent };
                }
                return ring;
