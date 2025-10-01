@@ -1,5 +1,47 @@
 import { Coordinate } from '../value-objects/Coordinate';
 
+function buildVertexMap(allVertices) {
+  const map = new Map();
+  if (!Array.isArray(allVertices)) {
+    return map;
+  }
+
+  for (const vertex of allVertices) {
+    if (!vertex || typeof vertex.id !== 'string') {
+      continue;
+    }
+    map.set(vertex.id, vertex);
+  }
+  return map;
+}
+
+function toRingCoordinates(ring, vertexMap) {
+  if (!ring || !Array.isArray(ring.vertexIds) || ring.vertexIds.length < 3) {
+    throw new Error('Ring data must contain at least three vertexIds.');
+  }
+
+  return ring.vertexIds.map(vertexId => {
+    const vertex = vertexMap.get(vertexId);
+    if (!vertex) {
+      throw new Error(`Vertex with id ${vertexId} not found while converting ring ${ring.id}.`);
+    }
+    if (typeof vertex.x !== 'number' || typeof vertex.y !== 'number') {
+      throw new Error(`Vertex with id ${vertexId} is missing numeric coordinates.`);
+    }
+    return new Coordinate(vertex.x, vertex.y);
+  });
+}
+
+function pickRingCoordinatePairs(polygon, vertexMap, ringType) {
+  if (!polygon || !Array.isArray(polygon.rings)) {
+    return [];
+  }
+
+  return polygon.rings
+    .filter(ring => ring.ringType === ringType)
+    .map(ring => ({ ring, coordinates: toRingCoordinates(ring, vertexMap) }));
+}
+
 /**
  * レイヤー間の関係管理を担当するドメインサービス
  */
@@ -70,35 +112,22 @@ export class LayerService {
     if (childPolygons.length === 0) {
       return null;
     }
-    
-    // 子ポリゴンが1つの場合は単純にその形状を使用
-    if (childPolygons.length === 1) {
-      const child = childPolygons[0];
-      return {
-        vertexIds: child.vertexIds,
-        subPolygons: child.subPolygons,
-        isMultiPolygon: child.isMultiPolygon
-      };
-    }
-    
-    // 複数の子ポリゴンがある場合はMultiPolygonとして扱う
-    const subPolygons = childPolygons.map(child => {
-      if (child.isMultiPolygon) {
-        // 子自体がMultiPolygonの場合はサブポリゴンを展開
-        return child.subPolygons;
-      } else {
-        // 単一ポリゴンの場合は変換
-        return {
-          vertexIds: child.vertexIds,
-          holesVertexIds: child.holesVertexIds
-        };
-      }
-    }).flat();
-    
+
+    const aggregatedRings = childPolygons.flatMap(child =>
+      child.rings.map(ring => ({
+        id: ring.id,
+        vertexIds: [...ring.vertexIds],
+        ringType: ring.ringType,
+        parentId: ring.parentId
+      }))
+    );
+
+    const topLevelTerritories = aggregatedRings.filter(ring => ring.ringType === 'territory' && ring.parentId === null);
+
     return {
-      vertexIds: null, // 直接の頂点定義はなし
-      subPolygons: subPolygons,
-      isMultiPolygon: true
+      rings: aggregatedRings,
+      isMultiPolygon: topLevelTerritories.length > 1,
+      childPolygonIds: childPolygons.map(p => p.id)
     };
   }
 
@@ -117,33 +146,50 @@ export class LayerService {
     
     // 上位レイヤーをすべて特定
     const higherLayers = layers.filter(layer => layer.order < polygonLayer.order);
-    
+
+    if (higherLayers.length === 0) {
+      return true;
+    }
+
     // 上位レイヤーのポリゴンを検索
     const higherPolygons = allPolygons.filter(p => 
       higherLayers.some(layer => layer.id === p.layerId)
     );
-    
-    // ポリゴンの頂点座標を取得
-    const polygonVertices = polygon.vertexIds.map(id => 
-      allVertices.find(v => v.id === id)
-    ).map(v => new Coordinate(v.x, v.y));
-    
+
+    const vertexMap = buildVertexMap(allVertices);
+    const targetTerritoryRings = pickRingCoordinatePairs(polygon, vertexMap, 'territory');
+
+    if (targetTerritoryRings.length === 0) {
+      // 自身の形状がなく、子ポリゴン由来で構成される場合はここでの判定対象外
+      return true;
+    }
+
     // 各上位ポリゴンについて含有関係をチェック
     for (const higherPolygon of higherPolygons) {
-      const higherVertices = higherPolygon.vertexIds.map(id => 
-        allVertices.find(v => v.id === id)
-      ).map(v => new Coordinate(v.x, v.y));
-      
-      // すべての頂点が上位ポリゴン内に含まれるかチェック
-      const isContained = polygonVertices.every(vertex => 
-        geometryService.isPointInPolygon(vertex, higherVertices)
-      );
-      
-      if (isContained) {
+      const higherTerritories = pickRingCoordinatePairs(higherPolygon, vertexMap, 'territory');
+      if (higherTerritories.length === 0) {
+        continue;
+      }
+      const higherHoles = pickRingCoordinatePairs(higherPolygon, vertexMap, 'hole');
+
+      const allRingsContained = targetTerritoryRings.every(({ coordinates: targetCoords }) => {
+        return higherTerritories.some(({ coordinates: territoryCoords }) => {
+          if (!geometryService.isRingCompletelyInsideRing(targetCoords, territoryCoords)) {
+            return false;
+          }
+
+          // テリトリー内に存在する穴に完全に含まれていないかチェック
+          return higherHoles.every(({ coordinates: holeCoords }) =>
+            !geometryService.isRingCompletelyInsideRing(targetCoords, holeCoords)
+          );
+        });
+      });
+
+      if (allRingsContained) {
         return true;
       }
     }
-    
+
     return false;
   }
 
@@ -166,25 +212,37 @@ export class LayerService {
    * @returns {boolean} 排他的であればtrue（重なりがなければtrue）
    */
   checkExclusivity(polygon, layerPolygons, allVertices, geometryService) {
-    // ポリゴンの頂点座標を取得
-    const polygonVertices = polygon.vertexIds.map(id => 
-      allVertices.find(v => v.id === id)
-    ).map(v => new Coordinate(v.x, v.y));
-    
+    const vertexMap = buildVertexMap(allVertices);
+    const targetTerritories = pickRingCoordinatePairs(polygon, vertexMap, 'territory');
+
+    if (targetTerritories.length === 0) {
+      // 自身が直接持つリングが無い場合は排他対象外
+      return true;
+    }
+
     // 各レイヤーポリゴンについて重なりをチェック
     for (const layerPolygon of layerPolygons) {
       if (layerPolygon.id === polygon.id) continue; // 自分自身はスキップ
-      
-      const layerVertices = layerPolygon.vertexIds.map(id => 
-        allVertices.find(v => v.id === id)
-      ).map(v => new Coordinate(v.x, v.y));
-      
-      // ポリゴン同士の重なりをチェック
-      if (geometryService.doPolygonsOverlap(polygonVertices, layerVertices)) {
-        return false;
+
+      const otherTerritories = pickRingCoordinatePairs(layerPolygon, vertexMap, 'territory');
+      if (otherTerritories.length === 0) {
+        continue;
+      }
+
+      for (const { coordinates: targetCoords } of targetTerritories) {
+        for (const { coordinates: otherCoords } of otherTerritories) {
+          if (geometryService.doRingsIntersect(targetCoords, otherCoords)) {
+            return false;
+          }
+
+          if (geometryService.isRingCompletelyInsideRing(targetCoords, otherCoords) ||
+              geometryService.isRingCompletelyInsideRing(otherCoords, targetCoords)) {
+            return false;
+          }
+        }
       }
     }
-    
+
     return true;
   }
 }

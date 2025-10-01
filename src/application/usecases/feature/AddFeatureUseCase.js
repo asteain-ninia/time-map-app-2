@@ -6,6 +6,7 @@ import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon';
 import { Property } from '../../../domain/value-objects/Property';
 import { Vertex } from '../../../domain/entities/Vertex'; // 比較用
+import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
 
 /**
  * 地理オブジェクトの追加を専門に処理するユースケース
@@ -43,6 +44,7 @@ export class AddFeatureUseCase {
       throw new Error("Invalid properties format for AddFeatureUseCase. Expected a single Property instance in an array.");
     }
     const world = await this._worldRepository.getWorld();
+    const existingVertexIds = new Set(world.vertices.map(vertex => vertex.id));
 
     const featureId = this._generateId(featureType);
 
@@ -51,55 +53,75 @@ export class AddFeatureUseCase {
     let feature;
     // properties は検証済みの要素数1の Property[] 配列
 
-    switch (featureType) {
-      case 'point':
-        if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length !== 1) {
-          throw new Error("Point geometry must have exactly one vertexId.");
-        }
-        // Point.create のシグネチャ (id, properties, geometry, layerId) に合わせる
-        const pointGeometry = { vertexId: processedGeometry.vertexIds[0] };
-        feature = Point.create(featureId, properties, pointGeometry, layerId); // 修正: properties を直接使用
-        break;
-      case 'line':
-        if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 2) {
-          throw new Error("Line geometry must have at least two vertexIds.");
-        }
-        // Line.create のシグネチャ (id, properties, geometry, layerId) に合わせる
-        const lineGeometry = { vertexIds: processedGeometry.vertexIds };
-        feature = Line.create(featureId, properties, lineGeometry, layerId); // 修正: properties を直接使用
-        break;
-      case 'polygon':
-        if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 3) {
-          throw new Error("Polygon geometry must have at least three vertexIds for the outer ring.");
-        }
-        const outerRingVertices = this._getVerticesFromIds(processedGeometry.vertexIds, world);
-        if (this._geometryService.isPolygonSelfIntersecting(outerRingVertices)) {
-            throw new Error("新規ポリゴンの外周リングが自己交差しています。");
-        }
-        // Polygon コンストラクタ (id, properties, layerId, parentId, childIds, rings)
-        const outerRing = {
-            id: this._generateId('ring'),
-            vertexIds: [...processedGeometry.vertexIds],
-            ringType: 'territory',
-            parentId: null
-        };
-        const rings = [outerRing];
-        feature = new Polygon(
-            featureId,
-            properties, // 修正: properties を直接使用
-            layerId,
-            processedGeometry.parentId || "0",
-            [], // 新規作成なので childIds は空
-            rings
-        );
-        break;
-      default:
-        throw new Error(`Unknown feature type: ${featureType}`);
+    try {
+      switch (featureType) {
+        case 'point':
+          if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length !== 1) {
+            throw new Error("Point geometry must have exactly one vertexId.");
+          }
+          // Point.create のシグネチャ (id, properties, geometry, layerId) に合わせる
+          const pointGeometry = { vertexId: processedGeometry.vertexIds[0] };
+          feature = Point.create(featureId, properties, pointGeometry, layerId); // 修正: properties を直接使用
+          break;
+        case 'line':
+          if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 2) {
+            throw new Error("Line geometry must have at least two vertexIds.");
+          }
+          // Line.create のシグネチャ (id, properties, geometry, layerId) に合わせる
+          const lineGeometry = { vertexIds: processedGeometry.vertexIds };
+          feature = Line.create(featureId, properties, lineGeometry, layerId); // 修正: properties を直接使用
+          break;
+        case 'polygon':
+          if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 3) {
+            throw new Error("Polygon geometry must have at least three vertexIds for the outer ring.");
+          }
+          const outerRingVertices = this._getVerticesFromIds(processedGeometry.vertexIds, world);
+          if (this._geometryService.isPolygonSelfIntersecting(outerRingVertices)) {
+              throw new Error("新規ポリゴンの外周リングが自己交差しています。");
+          }
+          // Polygon コンストラクタ (id, properties, layerId, parentId, childIds, rings)
+          const outerRing = {
+              id: this._generateId('ring'),
+              vertexIds: [...processedGeometry.vertexIds],
+              ringType: 'territory',
+              parentId: null
+          };
+          const rings = [outerRing];
+          feature = new Polygon(
+              featureId,
+              properties, // 修正: properties を直接使用
+              layerId,
+              processedGeometry.parentId || "0",
+              [], // 新規作成なので childIds は空
+              rings
+          );
+
+          ensurePolygonLayerConstraints(feature, world, this._layerService, this._geometryService);
+          break;
+        default:
+          throw new Error(`Unknown feature type: ${featureType}`);
+      }
+    } catch (error) {
+      this._revertNewVertices(world, existingVertexIds);
+      throw error;
     }
 
     world.features.push(feature);
     await this._worldRepository.saveWorld(world);
     return feature;
+  }
+
+  _revertNewVertices(world, existingVertexIds) {
+    const newVertexIds = world.vertices
+      .filter(vertex => !existingVertexIds.has(vertex.id))
+      .map(vertex => vertex.id);
+
+    if (newVertexIds.length === 0) {
+      return;
+    }
+
+    const newVertexSet = new Set(newVertexIds);
+    world.vertices = world.vertices.filter(vertex => !newVertexSet.has(vertex.id));
   }
 
   /**

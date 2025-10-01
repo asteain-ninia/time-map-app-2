@@ -8,6 +8,7 @@ import { Property } from '../../../domain/value-objects/Property';
 import { Vertex } from '../../../domain/entities/Vertex'; // 比較用
 import { IPolygonEditService } from '../../services/IPolygonEditService.js';
 import { WorldRepository } from '../../WorldRepository.js'; // 型チェック用 (循環参照注意)
+import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
 
 /**
  * 地理オブジェクトの更新（プロパティ、レイヤーID、形状）を専門に処理するユースケース
@@ -63,6 +64,7 @@ export class UpdateFeatureUseCase {
    */
   async execute(featureId, updates) {
     let world = await this._worldRepository.getWorld(); 
+    const originalVerticesSnapshot = world.vertices.map(vertex => ({ id: vertex.id, x: vertex.x, y: vertex.y }));
 
     const featureIndex = world.features.findIndex(f => f.id === featureId);
     if (featureIndex === -1) {
@@ -146,6 +148,7 @@ export class UpdateFeatureUseCase {
             updatedFeature = polygonBeingUpdated;
         } catch (error) {
             world.features[featureIndex] = originalPolygonForWorld;
+            this._restoreWorldVertices(world, originalVerticesSnapshot);
             console.error(`Failed to update polygon geometry for ${featureId}:`, error);
             throw new Error(`Polygon geometry update failed: ${error.message}`);
         }
@@ -183,6 +186,16 @@ export class UpdateFeatureUseCase {
       }
     }
 
+    if (updatedFeature instanceof Polygon) {
+      this._ensurePolygonPlacementOrRollback(
+        updatedFeature,
+        world,
+        currentFeature,
+        originalVerticesSnapshot,
+        featureIndex
+      );
+    }
+
     if (updatedFeature !== currentFeature || worldVerticesUpdated) { 
         world.features[featureIndex] = updatedFeature;
         await this._worldRepository.saveWorld(world); 
@@ -192,5 +205,23 @@ export class UpdateFeatureUseCase {
         feature: updatedFeature, 
         newlyAddedVerticesData: newlyAddedVerticesDataForHistory.length > 0 ? newlyAddedVerticesDataForHistory : undefined 
     };
+}
+
+  _ensurePolygonPlacementOrRollback(updatedPolygon, world, originalPolygon, originalVerticesSnapshot, featureIndex) {
+    if (!(updatedPolygon instanceof Polygon)) {
+      return;
+    }
+
+    try {
+      ensurePolygonLayerConstraints(updatedPolygon, world, this._layerService, this._geometryService);
+    } catch (error) {
+      world.features[featureIndex] = originalPolygon;
+      this._restoreWorldVertices(world, originalVerticesSnapshot);
+      throw error;
+    }
+  }
+
+  _restoreWorldVertices(world, snapshot) {
+    world.vertices = snapshot.map(data => new Vertex(data.id, data.x, data.y));
   }
 }
