@@ -252,19 +252,13 @@ export class Polygon extends Feature {
            return this;
        }
 
-       const parentIdForGrandchildren = ringToRemove.parentId;
-       const ringsToDelete = new Set([ringIdToRemove]);
-       
-       // カスケード削除対象（直接の子）を特定
-       const directChildren = this._rings.filter(r => r.parentId === ringIdToRemove);
-       directChildren.forEach(child => ringsToDelete.add(child.id));
+       const parentIdForReparent = ringToRemove.parentId;
 
        const newRings = this._rings
-           .filter(ring => !ringsToDelete.has(ring.id)) // 削除対象（ringIdToRemoveとその直接の子）を除外
+           .filter(ring => ring.id !== ringIdToRemove)
            .map(ring => {
-               // 孫リングの親を付け替える
-               if (ringsToDelete.has(ring.parentId)) {
-                   return { ...ring, parentId: parentIdForGrandchildren };
+               if (ring.parentId === ringIdToRemove) {
+                   return { ...ring, parentId: parentIdForReparent };
                }
                return ring;
            });
