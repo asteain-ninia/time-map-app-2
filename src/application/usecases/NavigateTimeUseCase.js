@@ -28,16 +28,29 @@ export class NavigateTimeUseCase {
    * @param {number} [day] - 日（オプション）
    * @returns {TimePoint} 設定された時間点
    */
-  moveToTime(year, month = null, day = null) {
-    let normalizedMonth = month === undefined ? null : month;
-    let normalizedDay = day === undefined ? null : day;
+  moveToTime(year, month, day) {
+    let normalizedMonth = month;
+    let normalizedDay = day;
+
+    const currentMonth = this._currentTime.month;
+    const currentDay = this._currentTime.day;
+
+    if (normalizedMonth === undefined) {
+      normalizedMonth = currentMonth;
+    }
 
     if (normalizedMonth === null) {
       normalizedDay = null;
-    } else if (normalizedDay !== null) {
-      const coercedDay = Math.trunc(normalizedDay);
-      const maxDay = this._timeService.getDaysInMonth(year, normalizedMonth);
-      normalizedDay = Math.max(1, Math.min(maxDay, coercedDay));
+    } else {
+      if (normalizedDay === undefined) {
+        normalizedDay = currentDay;
+      }
+
+      if (normalizedDay !== null && normalizedMonth !== null) {
+        const coercedDay = Math.trunc(normalizedDay);
+        const maxDay = this._timeService.getDaysInMonth(year, normalizedMonth);
+        normalizedDay = Math.max(1, Math.min(maxDay, coercedDay));
+      }
     }
 
     this._currentTime = this.createTimePoint(year, normalizedMonth, normalizedDay);

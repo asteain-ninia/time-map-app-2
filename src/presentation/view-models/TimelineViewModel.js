@@ -98,11 +98,28 @@ export class TimelineViewModel {
    * @param {number} [day] - 日
    */
   moveToTime(year, month, day) {
-    const targetMonth = month === undefined ? this._currentTime.month : month;
-    const targetDay = day === undefined ? this._currentTime.day : day;
-    const components = this._normalizeComponentsForMove(year, targetMonth, targetDay);
-    const updated = this._navigateTimeUseCase.moveToTime(year, components.month, components.day);
-    this._applyTimeChange(updated);
+    const monthSpecified = arguments.length >= 2 && (month !== this._currentTime.month || (month === null && this._currentTime.month !== null));
+    const daySpecified = arguments.length >= 3 && (day !== this._currentTime.day || (day === null && this._currentTime.day !== null));
+
+    const targetMonth = monthSpecified ? month : this._currentTime.month;
+    const targetDay = daySpecified ? day : this._currentTime.day;
+
+    const normalized = this._normalizeComponentsForMove(year, targetMonth, targetDay);
+    const clampedYear = Math.max(this._minYear, Math.min(this._maxYear, year));
+    const clampedComponents = this._normalizeComponentsForMove(clampedYear, normalized.month, normalized.day);
+
+    const args = [clampedYear, undefined, undefined];
+    if (monthSpecified) {
+      args[1] = clampedComponents.month;
+      if (daySpecified || clampedComponents.month === null) {
+        args[2] = clampedComponents.day;
+      }
+    } else if (daySpecified) {
+      args[2] = clampedComponents.day;
+    }
+
+    const updated = this._navigateTimeUseCase.moveToTime(...args);
+    this._applyTimeChange(updated, { skipRangeClamp: true });
   }
 
   setMonth(month) {
@@ -183,7 +200,7 @@ export class TimelineViewModel {
     switch (this._stepUnit) {
       case 'year': {
         const newYear = this._currentTime.year + direction;
-        this.moveToTime(newYear, this._currentTime.month, this._currentTime.day);
+        this.moveToTime(newYear);
         break;
       }
       case 'month': {
@@ -269,9 +286,9 @@ export class TimelineViewModel {
     this._maxYear = maxYear;
 
     if (this._currentTime.year < minYear) {
-      this.moveToTime(minYear, this._currentTime.month, this._currentTime.day);
+      this.moveToTime(minYear);
     } else if (this._currentTime.year > maxYear) {
-      this.moveToTime(maxYear, this._currentTime.month, this._currentTime.day);
+      this.moveToTime(maxYear);
     }
 
     this._notifyObservers('range');
@@ -365,14 +382,18 @@ export class TimelineViewModel {
     }
   }
 
-  _applyTimeChange(candidateTime) {
+  _applyTimeChange(candidateTime, options = {}) {
+    const { skipRangeClamp = false } = options;
     let finalTime = candidateTime;
-    if (candidateTime.year < this._minYear) {
-      const components = this._normalizeComponentsForMove(this._minYear, candidateTime.month, candidateTime.day);
-      finalTime = this._navigateTimeUseCase.moveToTime(this._minYear, components.month, components.day);
-    } else if (candidateTime.year > this._maxYear) {
-      const components = this._normalizeComponentsForMove(this._maxYear, candidateTime.month, candidateTime.day);
-      finalTime = this._navigateTimeUseCase.moveToTime(this._maxYear, components.month, components.day);
+
+    if (!skipRangeClamp) {
+      if (candidateTime.year < this._minYear) {
+        const components = this._normalizeComponentsForMove(this._minYear, candidateTime.month, candidateTime.day);
+        finalTime = this._navigateTimeUseCase.moveToTime(this._minYear, components.month, components.day);
+      } else if (candidateTime.year > this._maxYear) {
+        const components = this._normalizeComponentsForMove(this._maxYear, candidateTime.month, candidateTime.day);
+        finalTime = this._navigateTimeUseCase.moveToTime(this._maxYear, components.month, components.day);
+      }
     }
 
     this._currentTime = finalTime;
