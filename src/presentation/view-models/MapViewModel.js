@@ -1020,6 +1020,18 @@ export class MapViewModel {
     return this._hoveredVertex;
   }
 
+  getCalendarConfig() {
+    return this._navigateTimeUseCase.getCalendarConfig();
+  }
+
+  getDaysInMonth(year, month) {
+    return this._navigateTimeUseCase.getDaysInMonth(year, month);
+  }
+
+  createTimePoint(year, month = null, day = null) {
+    return this._navigateTimeUseCase.createTimePoint(year, month, day);
+  }
+
   /**
    * 現在の時間点を取得
    * @returns {TimePoint} 現在の時間点
