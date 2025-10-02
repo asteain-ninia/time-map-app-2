@@ -5,7 +5,6 @@ import { Point } from '../../../domain/entities/Point';
 import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon';
 import { Property } from '../../../domain/value-objects/Property';
-import { Vertex } from '../../../domain/entities/Vertex'; // 比較用
 import { IPolygonEditService } from '../../services/IPolygonEditService.js';
 import { WorldRepository } from '../../WorldRepository.js'; // 型チェック用 (循環参照注意)
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
@@ -222,6 +221,7 @@ export class UpdateFeatureUseCase {
   }
 
   _restoreWorldVertices(world, snapshot) {
-    world.vertices = snapshot.map(data => new Vertex(data.id, data.x, data.y));
+    world.vertices = snapshot.map(data => ({ id: data.id, x: data.x, y: data.y }));
   }
 }
+

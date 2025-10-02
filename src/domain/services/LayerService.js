@@ -214,6 +214,7 @@ export class LayerService {
   checkExclusivity(polygon, layerPolygons, allVertices, geometryService) {
     const vertexMap = buildVertexMap(allVertices);
     const targetTerritories = pickRingCoordinatePairs(polygon, vertexMap, 'territory');
+    const targetHoles = pickRingCoordinatePairs(polygon, vertexMap, 'hole');
 
     if (targetTerritories.length === 0) {
       // 自身が直接持つリングが無い場合は排他対象外
@@ -256,7 +257,12 @@ export class LayerService {
           }
 
           if (geometryService.isRingCompletelyInsideRing(otherCoords, targetCoords)) {
-            return false;
+            const isInsidePermittedHole = targetHoles.some(({ coordinates: holeCoords }) =>
+              geometryService.isRingCompletelyInsideRing(otherCoords, holeCoords)
+            );
+            if (!isInsidePermittedHole) {
+              return false;
+            }
           }
 
           if (geometryService.isRingCompletelyInsideRing(targetCoords, otherCoords)) {
