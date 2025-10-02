@@ -35,6 +35,14 @@ describe("NavigateTimeUseCase", () => {
     expect(retreated.month).toBe(1);
     expect(retreated.day).toBe(31);
   });
+  it("advances months with calendar-aware adjustments", () => {
+    useCase.moveToTime(2000, 1, 31);
+
+    const advanced = useCase.advanceMonths(1);
+    expect(advanced.year).toBe(2000);
+    expect(advanced.month).toBe(2);
+    expect(advanced.day).toBe(29);
+  });
 
   it("moves to next significant property time", () => {
     useCase.moveToTime(1000);

@@ -10,26 +10,22 @@ export class TimelineViewModel {
   constructor(navigateTimeUseCase, eventBus) {
     this._navigateTimeUseCase = navigateTimeUseCase;
     this._eventBus = eventBus;
-    
-    // タイムラインの状態
+
     this._currentTime = navigateTimeUseCase.getCurrentTime();
-    this._minYear = 0; // 初期値、後にプロジェクト設定で更新
-    this._maxYear = 10000; // 初期値、後にプロジェクト設定で更新
+    this._minYear = 0;
+    this._maxYear = 10000;
     this._yearMarks = [];
     this._isPlaying = false;
     this._playbackSpeed = 1;
     this._playbackInterval = null;
-    
-    // 観測者の登録
+    this._playbackAccumulator = 0;
+    this._stepUnit = 'year';
+
     this._observers = [];
 
-    // イベントリスナーの設定 (ProjectSettingsLoaded を購読)
     this._eventBus.subscribe('ProjectSettingsLoaded', this._onProjectSettingsLoaded.bind(this));
-    // プロジェクト設定が変更された場合も対応
     this._eventBus.subscribe('projectSettingsChanged', this._onProjectSettingsLoaded.bind(this));
     this._eventBus.subscribe('ProjectSettingsUpdated', this._onProjectSettingsLoaded.bind(this));
-
-
   }
 
   /**
@@ -38,8 +34,6 @@ export class TimelineViewModel {
    */
   initialize(config = {}) {
     this._yearMarks = config.yearMarks || [];
-    // minYear, maxYear は ProjectSettingsLoaded イベントで設定される
-    // this._notifyObservers('range'); // ProjectSettingsLoadedで通知
   }
 
   /**
@@ -51,12 +45,18 @@ export class TimelineViewModel {
     if (eventData && eventData.settings) {
       const { sliderMin, sliderMax } = eventData.settings;
       if (sliderMin !== undefined && sliderMax !== undefined) {
-        // setTimeRange は自身の状態を更新し、'range' イベントでUIに通知する
-        this.setTimeRange(sliderMin, sliderMax); 
+        this.setTimeRange(sliderMin, sliderMax);
       }
     }
   }
 
+  getCalendarConfig() {
+    return this._navigateTimeUseCase.getCalendarConfig();
+  }
+
+  getDaysInMonth(year, month) {
+    return this._navigateTimeUseCase.getDaysInMonth(year, month);
+  }
 
   /**
    * 現在の時間を取得
@@ -77,6 +77,20 @@ export class TimelineViewModel {
     };
   }
 
+  getStepUnit() {
+    return this._stepUnit;
+  }
+
+  setStepUnit(unit) {
+    if (!['year', 'month', 'day'].includes(unit)) {
+      return;
+    }
+    if (this._stepUnit !== unit) {
+      this._stepUnit = unit;
+      this._notifyObservers('stepUnit');
+    }
+  }
+
   /**
    * 特定の時間に移動
    * @param {number} year - 年
@@ -84,33 +98,109 @@ export class TimelineViewModel {
    * @param {number} [day] - 日
    */
   moveToTime(year, month, day) {
-    // 範囲の制約を適用
-    const constrainedYear = Math.max(this._minYear, Math.min(this._maxYear, year));
-    
-    this._currentTime = this._navigateTimeUseCase.moveToTime(constrainedYear, month, day);
-    
-    // イベントを発行
-    this._eventBus.publish('TimeChanged', { time: this._currentTime });
-    
-    this._notifyObservers('currentTime');
+    const targetMonth = month === undefined ? this._currentTime.month : month;
+    const targetDay = day === undefined ? this._currentTime.day : day;
+    const components = this._normalizeComponentsForMove(year, targetMonth, targetDay);
+    const updated = this._navigateTimeUseCase.moveToTime(year, components.month, components.day);
+    this._applyTimeChange(updated);
+  }
+
+  setMonth(month) {
+    if (!Number.isInteger(month)) {
+      return;
+    }
+    const year = this._currentTime.year;
+    let nextDay = this._currentTime.day;
+    if (nextDay !== null) {
+      const maxDay = this.getDaysInMonth(year, month);
+      if (nextDay > maxDay) {
+        nextDay = maxDay;
+      }
+    }
+    const updated = this._navigateTimeUseCase.moveToTime(year, month, nextDay);
+    this._applyTimeChange(updated);
+  }
+
+  clearMonth() {
+    const year = this._currentTime.year;
+    const updated = this._navigateTimeUseCase.moveToTime(year, null, null);
+    this._applyTimeChange(updated);
+  }
+
+  setDay(day) {
+    if (!Number.isInteger(day)) {
+      return;
+    }
+    if (this._currentTime.month === null) {
+      return;
+    }
+    const year = this._currentTime.year;
+    const month = this._currentTime.month;
+    const maxDay = this.getDaysInMonth(year, month);
+    const constrainedDay = Math.max(1, Math.min(maxDay, day));
+    const updated = this._navigateTimeUseCase.moveToTime(year, month, constrainedDay);
+    this._applyTimeChange(updated);
+  }
+
+  clearDay() {
+    if (this._currentTime.month === null) {
+      return;
+    }
+    const year = this._currentTime.year;
+    const month = this._currentTime.month;
+    const updated = this._navigateTimeUseCase.moveToTime(year, month, null);
+    this._applyTimeChange(updated);
   }
 
   /**
    * 前進
-   * @param {number} [years=1] - 進める年数
    */
-  stepForward(years = 1) {
-    const currentYear = this._currentTime.year;
-    this.moveToTime(currentYear + years, this._currentTime.month, this._currentTime.day);
+  stepForward(steps = 1) {
+    this._repeatSteps(steps, 1);
   }
 
   /**
    * 後退
-   * @param {number} [years=1] - 戻す年数
    */
-  stepBackward(years = 1) {
-    const currentYear = this._currentTime.year;
-    this.moveToTime(currentYear - years, this._currentTime.month, this._currentTime.day);
+  stepBackward(steps = 1) {
+    this._repeatSteps(steps, -1);
+  }
+
+  _repeatSteps(steps, direction) {
+    const iterations = Math.max(1, Math.abs(Math.trunc(steps)));
+    for (let i = 0; i < iterations; i++) {
+      this._stepByUnit(direction);
+      if (direction > 0 && this._currentTime.year >= this._maxYear) {
+        break;
+      }
+      if (direction < 0 && this._currentTime.year <= this._minYear) {
+        break;
+      }
+    }
+  }
+
+  _stepByUnit(direction) {
+    switch (this._stepUnit) {
+      case 'year': {
+        const newYear = this._currentTime.year + direction;
+        this.moveToTime(newYear, this._currentTime.month, this._currentTime.day);
+        break;
+      }
+      case 'month': {
+        this._ensureDateComponents();
+        const updated = this._navigateTimeUseCase.advanceMonths(direction);
+        this._applyTimeChange(updated);
+        break;
+      }
+      case 'day': {
+        this._ensureDateComponents();
+        const updated = this._navigateTimeUseCase.advanceTime(direction);
+        this._applyTimeChange(updated);
+        break;
+      }
+      default:
+        break;
+    }
   }
 
   /**
@@ -121,21 +211,21 @@ export class TimelineViewModel {
     if (this._isPlaying) {
       this.stopPlayback();
     }
-    
+
+    this._ensureDateComponents();
+
     this._isPlaying = true;
     this._playbackSpeed = speed;
-    
-    // 100ミリ秒ごとに再生
-    const stepSize = this._playbackSpeed / 10;
+    this._playbackAccumulator = 0;
+
+    const intervalMs = 100;
     this._playbackInterval = setInterval(() => {
-      this.stepForward(stepSize);
-      
-      // 最大年に達したら停止
-      if (this._currentTime.year >= this._maxYear) {
+      const shouldContinue = this._performPlaybackTick(intervalMs);
+      if (!shouldContinue) {
         this.stopPlayback();
       }
-    }, 100);
-    
+    }, intervalMs);
+
     this._notifyObservers('playback');
   }
 
@@ -147,8 +237,9 @@ export class TimelineViewModel {
       clearInterval(this._playbackInterval);
       this._playbackInterval = null;
     }
-    
+
     this._isPlaying = false;
+    this._playbackAccumulator = 0;
     this._notifyObservers('playback');
   }
 
@@ -176,14 +267,13 @@ export class TimelineViewModel {
   setTimeRange(minYear, maxYear) {
     this._minYear = minYear;
     this._maxYear = maxYear;
-    
-    // 現在の時間が範囲外になった場合は調整
+
     if (this._currentTime.year < minYear) {
-      this.moveToTime(minYear);
+      this.moveToTime(minYear, this._currentTime.month, this._currentTime.day);
     } else if (this._currentTime.year > maxYear) {
-      this.moveToTime(maxYear);
+      this.moveToTime(maxYear, this._currentTime.month, this._currentTime.day);
     }
-    
+
     this._notifyObservers('range');
   }
 
@@ -225,6 +315,71 @@ export class TimelineViewModel {
     }
   }
 
+  _performPlaybackTick(intervalMs) {
+    const calendar = this.getCalendarConfig();
+    const ticksPerSecond = 1000 / intervalMs;
+    const daysPerTick = (this._playbackSpeed * calendar.daysPerYear) / ticksPerSecond;
+    this._playbackAccumulator += daysPerTick;
+
+    const wholeDays = Math.trunc(this._playbackAccumulator);
+    if (wholeDays === 0) {
+      return true;
+    }
+
+    this._playbackAccumulator -= wholeDays;
+    const updated = this._navigateTimeUseCase.advanceTime(wholeDays);
+    this._applyTimeChange(updated);
+
+    if (this._playbackSpeed > 0 && this._currentTime.year >= this._maxYear) {
+      return false;
+    }
+    if (this._playbackSpeed < 0 && this._currentTime.year <= this._minYear) {
+      return false;
+    }
+    return true;
+  }
+
+
+  _normalizeComponentsForMove(year, month, day) {
+    if (month === undefined) {
+      return { month: undefined, day };
+    }
+    if (month === null) {
+      return { month: null, day: null };
+    }
+
+    if (day === undefined || day === null) {
+      return { month, day };
+    }
+
+    const normalizedDay = Math.max(1, Math.min(this.getDaysInMonth(year, month), day));
+    return { month, day: normalizedDay };
+  }
+
+  _ensureDateComponents() {
+    if (this._currentTime.month === null || this._currentTime.day === null) {
+      const resolvedMonth = this._currentTime.month === null ? 1 : this._currentTime.month;
+      const resolvedDay = this._currentTime.day === null ? 1 : this._currentTime.day;
+      const updated = this._navigateTimeUseCase.moveToTime(this._currentTime.year, resolvedMonth, resolvedDay);
+      this._applyTimeChange(updated);
+    }
+  }
+
+  _applyTimeChange(candidateTime) {
+    let finalTime = candidateTime;
+    if (candidateTime.year < this._minYear) {
+      const components = this._normalizeComponentsForMove(this._minYear, candidateTime.month, candidateTime.day);
+      finalTime = this._navigateTimeUseCase.moveToTime(this._minYear, components.month, components.day);
+    } else if (candidateTime.year > this._maxYear) {
+      const components = this._normalizeComponentsForMove(this._maxYear, candidateTime.month, candidateTime.day);
+      finalTime = this._navigateTimeUseCase.moveToTime(this._maxYear, components.month, components.day);
+    }
+
+    this._currentTime = finalTime;
+    this._eventBus.publish('TimeChanged', { time: this._currentTime });
+    this._notifyObservers('currentTime');
+  }
+
   /**
    * 観測者に通知
    * @param {string} type - 変更タイプ
@@ -253,6 +408,8 @@ export class TimelineViewModel {
         return this._yearMarks;
       case 'playback':
         return { isPlaying: this._isPlaying, speed: this._playbackSpeed };
+      case 'stepUnit':
+        return this._stepUnit;
       default:
         return null;
     }

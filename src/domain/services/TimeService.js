@@ -33,6 +33,44 @@ export class TimeService {
     this._calendarConfig = { ...newConfig };
   }
 
+  createTimePoint(year, month = null, day = null) {
+    if (!Number.isInteger(year)) {
+      throw new Error('Year must be an integer');
+    }
+
+    let normalizedMonth = month;
+    let normalizedDay = day;
+
+    if (normalizedMonth !== null) {
+      if (!Number.isInteger(normalizedMonth) || normalizedMonth < 1 || normalizedMonth > this._calendarConfig.monthsPerYear) {
+        throw new Error('Month is out of range');
+      }
+
+      if (normalizedDay !== null) {
+        if (!Number.isInteger(normalizedDay) || normalizedDay < 1) {
+          throw new Error('Day must be a positive integer');
+        }
+
+        const maxDay = this._getMonthDays(normalizedMonth - 1, year);
+        if (normalizedDay > maxDay) {
+          throw new Error('Day exceeds the number of days in the month');
+        }
+      }
+    } else if (normalizedDay !== null) {
+      throw new Error('Day cannot be specified when month is unspecified');
+    }
+
+    return new TimePoint(year, normalizedMonth, normalizedDay);
+  }
+
+  getDaysInMonth(year, month) {
+    if (!Number.isInteger(month) || month < 1 || month > this._calendarConfig.monthsPerYear) {
+      throw new Error('Month is out of range');
+    }
+    return this._getMonthDays(month - 1, year);
+  }
+
+
   /**
    * 時間点が特定の範囲内にあるかチェック
    * @param {TimePoint} timePoint - チェックする時間点
@@ -128,6 +166,38 @@ export class TimeService {
    * @param {number} days - 進める日数
    * @returns {TimePoint} 新しい時間点
    */
+  advanceMonths(timePoint, months) {
+    if (!Number.isInteger(months)) {
+      throw new Error('Months increment must be an integer');
+    }
+
+    if (timePoint.month === null) {
+      throw new Error('Cannot advance months when month is unspecified');
+    }
+
+    const monthsPerYear = this._calendarConfig.monthsPerYear;
+    const startIndex = timePoint.year * monthsPerYear + (timePoint.month - 1);
+    let totalMonths = startIndex + months;
+
+    let newYear = Math.floor(totalMonths / monthsPerYear);
+    let monthIndex = totalMonths % monthsPerYear;
+    if (monthIndex < 0) {
+      monthIndex += monthsPerYear;
+      newYear -= 1;
+    }
+
+    const newMonth = monthIndex + 1;
+    let newDay = timePoint.day;
+    if (newDay !== null) {
+      const maxDay = this._getMonthDays(newMonth - 1, newYear);
+      if (newDay > maxDay) {
+        newDay = maxDay;
+      }
+    }
+
+    return this.createTimePoint(newYear, newMonth, newDay);
+  }
+
   advanceDays(timePoint, days) {
     // 基本実装 - 実際のアプリケーションではより複雑なロジックが必要
     // ここでは簡易的に実装
@@ -170,7 +240,7 @@ export class TimeService {
       newYear += Math.floor(totalDays / this._calendarConfig.daysPerYear);
     }
 
-    return new TimePoint(newYear, newMonth, newDay);
+    return this.createTimePoint(newYear, newMonth, newDay);
   }
 }
 

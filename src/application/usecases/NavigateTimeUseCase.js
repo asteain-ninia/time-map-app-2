@@ -29,7 +29,18 @@ export class NavigateTimeUseCase {
    * @returns {TimePoint} 設定された時間点
    */
   moveToTime(year, month = null, day = null) {
-    this._currentTime = new TimePoint(year, month, day);
+    let normalizedMonth = month;
+    let normalizedDay = day;
+
+    if (normalizedMonth === null) {
+      normalizedDay = null;
+    } else if (normalizedMonth !== undefined && normalizedDay !== undefined && normalizedDay !== null) {
+      const coercedDay = Math.trunc(normalizedDay);
+      const maxDay = this._timeService.getDaysInMonth(year, normalizedMonth);
+      normalizedDay = Math.max(1, Math.min(maxDay, coercedDay));
+    }
+
+    this._currentTime = this._timeService.createTimePoint(year, normalizedMonth, normalizedDay);
     return this._currentTime;
   }
 
@@ -40,6 +51,16 @@ export class NavigateTimeUseCase {
    */
   advanceTime(days) {
     this._currentTime = this._timeService.advanceDays(this._currentTime, days);
+    return this._currentTime;
+  }
+
+  /**
+   * 指定した月数だけ前進
+   * @param {number} months - 進める月数
+   * @returns {TimePoint} 進んだ後の時間点
+   */
+  advanceMonths(months) {
+    this._currentTime = this._timeService.advanceMonths(this._currentTime, months);
     return this._currentTime;
   }
 
@@ -60,28 +81,28 @@ export class NavigateTimeUseCase {
   moveToNextSignificantTime(features) {
     const current = this._currentTime;
     let nextTime = null;
-    
+
     // すべてののプロパティを検索して現在より未来の最も近い時間点を見つける
     for (const feature of features) {
       for (const prop of feature.properties) {
         if (prop.timePoint.isBefore(current)) {
           continue; // 過去の時間点はスキップ
         }
-        
+
         if (prop.timePoint.equals(current)) {
           continue; // 現在と同じ時間点はスキップ
         }
-        
+
         if (nextTime === null || prop.timePoint.isBefore(nextTime)) {
           nextTime = prop.timePoint;
         }
       }
     }
-    
+
     if (nextTime) {
       this._currentTime = nextTime;
     }
-    
+
     return this._currentTime;
   }
 
@@ -93,28 +114,36 @@ export class NavigateTimeUseCase {
   moveToPreviousSignificantTime(features) {
     const current = this._currentTime;
     let prevTime = null;
-    
+
     // すべてののプロパティを検索して現在より過去の最も近い時間点を見つける
     for (const feature of features) {
       for (const prop of feature.properties) {
         if (current.isBefore(prop.timePoint)) {
           continue; // 未来の時間点はスキップ
         }
-        
+
         if (prop.timePoint.equals(current)) {
           continue; // 現在と同じ時間点はスキップ
         }
-        
+
         if (prevTime === null || prevTime.isBefore(prop.timePoint)) {
           prevTime = prop.timePoint;
         }
       }
     }
-    
+
     if (prevTime) {
       this._currentTime = prevTime;
     }
-    
+
     return this._currentTime;
+  }
+
+  getCalendarConfig() {
+    return this._timeService.calendarConfig;
+  }
+
+  getDaysInMonth(year, month) {
+    return this._timeService.getDaysInMonth(year, month);
   }
 }
