@@ -177,13 +177,12 @@ export class TimeService {
 
     const monthsPerYear = this._calendarConfig.monthsPerYear;
     const startIndex = timePoint.year * monthsPerYear + (timePoint.month - 1);
-    let totalMonths = startIndex + months;
+    const totalMonths = startIndex + months;
 
-    let newYear = Math.floor(totalMonths / monthsPerYear);
-    let monthIndex = totalMonths % monthsPerYear;
+    const newYear = Math.floor(totalMonths / monthsPerYear);
+    let monthIndex = totalMonths - newYear * monthsPerYear;
     if (monthIndex < 0) {
       monthIndex += monthsPerYear;
-      newYear -= 1;
     }
 
     const newMonth = monthIndex + 1;

@@ -65,6 +65,56 @@ describe("TimeService", () => {
     expect(retreated.day).toBe(26);
   });
 
+  it("advances months forward across year boundaries", () => {
+    const service = new TimeService();
+    const start = new TimePoint(-1, 12, 10);
+
+    const advanced = service.advanceMonths(start, 1);
+    expect(advanced.year).toBe(0);
+    expect(advanced.month).toBe(1);
+    expect(advanced.day).toBe(10);
+  });
+
+  it("retreats months across year boundaries without double decrementing years", () => {
+    const service = new TimeService();
+    const start = new TimePoint(0, 1, 15);
+
+    const retreated = service.advanceMonths(start, -1);
+    expect(retreated.year).toBe(-1);
+    expect(retreated.month).toBe(12);
+    expect(retreated.day).toBe(15);
+  });
+
+  it("retreats many months while keeping month index consistent", () => {
+    const service = new TimeService();
+    const start = new TimePoint(0, 1, 10);
+
+    const retreated = service.advanceMonths(start, -13);
+    expect(retreated.year).toBe(-2);
+    expect(retreated.month).toBe(12);
+    expect(retreated.day).toBe(10);
+  });
+
+  it("clamps the day when advancing months to shorter periods", () => {
+    const service = new TimeService();
+    const start = new TimePoint(2023, 1, 31);
+
+    const advanced = service.advanceMonths(start, 1);
+    expect(advanced.year).toBe(2023);
+    expect(advanced.month).toBe(2);
+    expect(advanced.day).toBe(28);
+  });
+
+  it("clamps the day when retreating months to shorter periods, including leap years", () => {
+    const service = new TimeService();
+    const start = new TimePoint(2020, 3, 31);
+
+    const retreated = service.advanceMonths(start, -1);
+    expect(retreated.year).toBe(2020);
+    expect(retreated.month).toBe(2);
+    expect(retreated.day).toBe(29);
+  });
+
   it("calculates span when month/day are unspecified", () => {
     const service = new TimeService();
     const start = new TimePoint(1000);
