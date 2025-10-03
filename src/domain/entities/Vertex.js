@@ -1,3 +1,5 @@
+import { Coordinate } from '../value-objects/Coordinate.js';
+
 /**
  * 地図上の点を表すエンティティ
  */
