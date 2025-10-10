@@ -560,7 +560,10 @@ export class MapView {
     categorySelect.name = 'category';
     categorySelect.style.width='100%';
     const currentTool = this._editingViewModel.getTool();
-    const categories = this._getCategoriesForFeatureType(currentTool); // 現在のツールに応じたカテゴリを取得
+    const categories = this._getCategoriesForFeatureType(currentTool); // 現在のツールに対応したカテゴリ一覧を取得
+    const defaultTimeRange = typeof this._viewModel.getDefaultPropertyTimeRange === 'function'
+      ? this._viewModel.getDefaultPropertyTimeRange()
+      : null;
     categories.forEach(cat => {
         const option = document.createElement('option');
         option.value = cat.id; // カテゴリIDを値に設定
@@ -586,6 +589,16 @@ export class MapView {
     endInput.type = 'number';
     endInput.name = 'endYear';
     endInput.style.width = '70px';
+
+    if (defaultTimeRange?.start) {
+      startInput.value = `${defaultTimeRange.start.year}`;
+    }
+    if (defaultTimeRange?.end) {
+      const inclusiveEndYear = defaultTimeRange.end.year - 1;
+      if (Number.isFinite(inclusiveEndYear)) {
+        endInput.value = `${inclusiveEndYear}`;
+      }
+    }
     timeRow.appendChild(startLabel);
     timeRow.appendChild(startInput);
     timeRow.appendChild(endLabel);
@@ -627,11 +640,17 @@ export class MapView {
             alert('終了年は開始年より後に設定してください。');
             return;
         }
-        // 現在のレイヤーIDを取得 (なければデフォルト)
+
+        const rangeForFallback = defaultTimeRange || (typeof this._viewModel.getDefaultPropertyTimeRange === 'function'
+          ? this._viewModel.getDefaultPropertyTimeRange()
+          : null);
+
         const currentLayerId = this._viewModel.getWorld()?.layers[0]?.id || 'layer-base';
-        // 実際の地物追加処理を呼び出す
-        this._confirmAddFeatureWithProperties(properties, currentLayerId);
-        dialog.remove(); // ダイアログを閉じる
+        this._confirmAddFeatureWithProperties({
+            ...properties,
+            rangeFallback: rangeForFallback
+        }, currentLayerId);
+        dialog.remove();
     };
     // キャンセルボタンのクリック処理
     cancelButton.onclick = () => {
@@ -644,15 +663,23 @@ export class MapView {
   async _confirmAddFeatureWithProperties(properties, layerId) {
     try {
         // ViewModelから現在の時間点を取得
+        const rangeForFallback = properties.rangeFallback || (typeof this._viewModel.getDefaultPropertyTimeRange === 'function'
+          ? this._viewModel.getDefaultPropertyTimeRange()
+          : null);
         const correctTimePoint = this._viewModel.getCurrentTime();
-        const startTp = properties.startYear !== null ? new TimePoint(properties.startYear) : null;
-        const endTp = properties.endYear !== null ? new TimePoint(properties.endYear) : null;
+        const startTp = properties.startYear !== null
+          ? new TimePoint(properties.startYear)
+          : (rangeForFallback?.start || correctTimePoint);
+        const endTp = properties.endYear !== null
+          ? new TimePoint(properties.endYear + 1)
+          : (rangeForFallback?.end || null);
         const propertyTimePoint = startTp || correctTimePoint;
+        const { name, description, category } = properties;
         const domainProperty = new Property(
             propertyTimePoint,
-            properties.name,
-            properties.description,
-            { category: properties.category },
+            name,
+            description,
+            { category },
             startTp,
             endTp
         );

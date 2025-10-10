@@ -141,23 +141,14 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withProperties(properties) {
-    // Feature.withProperties と同様のロジックで singlePropertyArray を準備
-    let singlePropertyArray;
-    if (Array.isArray(properties) && properties.length > 0 && properties[0] instanceof Property) {
-        singlePropertyArray = [properties[0]];
-    } else if (properties instanceof Property) {
-        singlePropertyArray = [properties];
-    } else {
-        console.warn(`Polygon.withProperties (id: ${this._id}): new properties array is empty, invalid, or not a Property instance. Keeping original properties.`);
-        singlePropertyArray = this._properties; // 元のプロパティを維持
-    }
+    const normalized = Feature._normalizeProperties(this._id, properties);
     return new Polygon(
       this._id,
-      singlePropertyArray, // 準備した配列を使用
+      normalized,
       this._layerId,
       this._parentId,
       this._childIds,
-      this._rings // リングはそのまま引き継ぐ
+      this._rings
     );
   }
 

@@ -43,16 +43,8 @@ export class Line extends Feature {
    * @returns {Line} 新しい線情報オブジェクト
    */
   withProperties(properties) {
-    let singlePropertyArray;
-    if (Array.isArray(properties) && properties.length > 0 && properties[0] instanceof Property) {
-        singlePropertyArray = [properties[0]];
-    } else if (properties instanceof Property) {
-        singlePropertyArray = [properties];
-    } else {
-        console.warn(`Line.withProperties (id: ${this._id}): new properties array is empty, invalid, or not a Property instance. Keeping original properties.`);
-        singlePropertyArray = this._properties;
-    }
-    return new Line(this._id, this._vertexIds, singlePropertyArray, this._layerId);
+    const normalized = Feature._normalizeProperties(this._id, properties);
+    return new Line(this._id, this._vertexIds, normalized, this._layerId);
   }
 
   /**
@@ -76,3 +68,4 @@ export class Line extends Feature {
     return new Line(this._id, vertexIds, this._properties, this._layerId);
   }
 }
+

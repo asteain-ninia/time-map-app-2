@@ -54,17 +54,8 @@ export class Point extends Feature {
    * @returns {Point} 新しい点情報オブジェクト
    */
   withProperties(properties) {
-    // Feature.withProperties と同様のロジック
-    let singlePropertyArray;
-    if (Array.isArray(properties) && properties.length > 0 && properties[0] instanceof Property) {
-        singlePropertyArray = [properties[0]];
-    } else if (properties instanceof Property) {
-        singlePropertyArray = [properties];
-    } else {
-        console.warn(`Point.withProperties (id: ${this._id}): new properties array is empty, invalid, or not a Property instance. Keeping original properties.`);
-        singlePropertyArray = this._properties;
-    }
-    return new Point(this._id, this._vertexIds, singlePropertyArray, this._layerId);
+    const normalized = Feature._normalizeProperties(this._id, properties);
+    return new Point(this._id, this._vertexIds, normalized, this._layerId);
   }
 
   /**
@@ -90,3 +81,4 @@ export class Point extends Feature {
     return new Point(this._id, vertexIds, this._properties, this._layerId);
   }
 }
+

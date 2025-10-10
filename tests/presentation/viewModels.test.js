@@ -83,7 +83,8 @@ describe("MapViewModel", () => {
     const editFeatureUseCase = { _worldRepository: worldRepository };
     const navigateTimeUseCase = {
       getCurrentTime: vi.fn(() => new TimePoint(0)),
-      moveToTime: vi.fn((year, month = null, day = null) => new TimePoint(year, month, day))
+      moveToTime: vi.fn((year, month = null, day = null) => new TimePoint(year, month, day)),
+      createTimePoint: vi.fn((year, month = null, day = null) => new TimePoint(year, month, day))
     };
     const manageLayersUseCase = {};
     const geometryService = {};
@@ -123,6 +124,18 @@ describe("MapViewModel", () => {
       { settings: expect.objectContaining({ sliderMin: 0, sliderMax: 100 }) }
     );
     expect(notifications.some(({ type }) => type === "world")).toBe(true);
+  });
+
+  it("provides a default property time range from slider settings", async () => {
+    const { viewModel, navigateTimeUseCase } = setupViewModel();
+
+    await viewModel.loadWorld();
+
+    const range = viewModel.getDefaultPropertyTimeRange();
+    expect(range.start.year).toBe(0);
+    expect(range.end.year).toBe(101);
+    expect(navigateTimeUseCase.createTimePoint).toHaveBeenCalledWith(0);
+    expect(navigateTimeUseCase.createTimePoint).toHaveBeenCalledWith(101);
   });
 
   it("updates project settings via the injected use case", async () => {

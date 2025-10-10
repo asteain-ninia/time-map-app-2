@@ -43,7 +43,8 @@ export class MapViewModel {
     this._selectedVertexOwnerIds = new Set(); // (Set<string>) 頂点選択に関与する地物ID集合
     this._hoveredFeature = null; // ホバー中の地物インスタンス
     this._hoveredVertex = null; // ホバー中の頂点データ {id, x, y}
-    this._projectSettings = null; // プロジェクト固有設定を保持
+    this._projectSettings = null; // プロジェクト用設定を保持
+    this._defaultPropertyTimeRange = { start: null, end: null };
 
     // 観測者の登録
     this._observers = [];
@@ -70,6 +71,8 @@ export class MapViewModel {
           console.warn("Project settings not found in world.metadata. Using default fallbacks.");
           this._projectSettings = this.getDefaultProjectSettings(); // デフォルト値を取得
       }
+
+      this._applyDefaultPropertyTimeRange();
 
       // 現在の時間点に対応する地物をフィルタリング
       await this._loadFeaturesForCurrentTime();
@@ -869,6 +872,33 @@ export class MapViewModel {
    * プロジェクト固有設定を取得 (ディープコピーを返す)
    * @returns {Object | null} プロジェクト設定オブジェクト、または未ロードの場合はnull
    */
+  _applyDefaultPropertyTimeRange() {
+    if (!this._projectSettings) {
+      this._defaultPropertyTimeRange = { start: null, end: null };
+      return;
+    }
+
+    const rawMin = this._projectSettings.sliderMin;
+    const rawMax = this._projectSettings.sliderMax;
+    const hasMin = typeof rawMin === 'number' && Number.isFinite(rawMin);
+    const hasMax = typeof rawMax === 'number' && Number.isFinite(rawMax);
+    const normalizedMin = hasMin ? rawMin : 0;
+    const normalizedMaxCandidate = hasMax ? rawMax : normalizedMin;
+    const normalizedMax = normalizedMaxCandidate >= normalizedMin ? normalizedMaxCandidate : normalizedMin;
+
+    const startTime = this._navigateTimeUseCase.createTimePoint(normalizedMin);
+    const endTime = this._navigateTimeUseCase.createTimePoint(normalizedMax + 1);
+
+    this._defaultPropertyTimeRange = { start: startTime, end: endTime };
+  }
+
+  getDefaultPropertyTimeRange() {
+    if (!this._defaultPropertyTimeRange.start || !this._defaultPropertyTimeRange.end) {
+      this._applyDefaultPropertyTimeRange();
+    }
+    return { ...this._defaultPropertyTimeRange };
+  }
+
   getProjectSettings() {
       return this._projectSettings ? JSON.parse(JSON.stringify(this._projectSettings)) : null;
   }
@@ -1050,6 +1080,7 @@ export class MapViewModel {
       try {
           const updatedSettings = await this._updateProjectSettingsUseCase.execute(newSettings);
           this._projectSettings = updatedSettings; // ViewModelの内部状態を更新
+          this._applyDefaultPropertyTimeRange();
 
           // 世界データ全体の metadata.settings も更新されたものとして扱う
           if (this._world && this._world.metadata) {
