@@ -87,6 +87,28 @@ export class AddFeatureUseCase {
               parentId: null
           };
           const rings = [outerRing];
+
+          if (Array.isArray(processedGeometry.holesVertexIds) && processedGeometry.holesVertexIds.length > 0) {
+            for (const holeVertexIds of processedGeometry.holesVertexIds) {
+              if (!Array.isArray(holeVertexIds) || holeVertexIds.length < 3) {
+                continue;
+              }
+              const holeVertices = this._getVerticesFromIds(holeVertexIds, world);
+              if (holeVertices.length !== holeVertexIds.length) {
+                throw new Error("Hole ring contains unknown vertex IDs.");
+              }
+              if (this._geometryService.isPolygonSelfIntersecting(holeVertices)) {
+                throw new Error("追加された穴リングが自己交差しています。");
+              }
+              rings.push({
+                id: this._generateId('ring'),
+                vertexIds: [...holeVertexIds],
+                ringType: 'hole',
+                parentId: outerRing.id
+              });
+            }
+          }
+
           feature = new Polygon(
               featureId,
               properties, // 修正: properties を直接使用
