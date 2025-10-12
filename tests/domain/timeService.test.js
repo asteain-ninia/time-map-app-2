@@ -65,6 +65,16 @@ describe("TimeService", () => {
     expect(retreated.day).toBe(26);
   });
 
+  it("does not borrow a whole year when retreating less than one year on coarse time points", () => {
+    const service = new TimeService();
+    const start = new TimePoint(1200);
+
+    const retreated = service.advanceDays(start, -1);
+    expect(retreated.year).toBe(1200);
+    expect(retreated.month).toBeNull();
+    expect(retreated.day).toBeNull();
+  });
+
   it("advances months forward across year boundaries", () => {
     const service = new TimeService();
     const start = new TimePoint(-1, 12, 10);

@@ -236,7 +236,11 @@ export class TimeService {
       }
     } else {
       // 日付が指定されていない場合は、年だけを進める
-      newYear += Math.floor(totalDays / this._calendarConfig.daysPerYear);
+      const daysPerYear = this._calendarConfig.daysPerYear;
+      if (totalDays < 0 && Math.abs(totalDays) < daysPerYear) {
+        return this.createTimePoint(newYear, null, null);
+      }
+      newYear += Math.floor(totalDays / daysPerYear);
     }
 
     return this.createTimePoint(newYear, newMonth, newDay);
