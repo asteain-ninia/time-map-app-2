@@ -237,10 +237,33 @@ export class TimeService {
     } else {
       // 日付が指定されていない場合は、年だけを進める
       const daysPerYear = this._calendarConfig.daysPerYear;
-      if (totalDays < 0 && Math.abs(totalDays) < daysPerYear) {
+      if (!Number.isFinite(daysPerYear) || daysPerYear === 0) {
         return this.createTimePoint(newYear, null, null);
       }
-      newYear += Math.floor(totalDays / daysPerYear);
+
+      if (totalDays === 0) {
+        return this.createTimePoint(newYear, null, null);
+      }
+
+      const absDaysPerYear = Math.abs(daysPerYear);
+      const tolerance = 1 / absDaysPerYear; // compensate fractional year lengths (e.g., 365.25)
+      const rawYears = totalDays / daysPerYear;
+      let yearDelta;
+
+      if (totalDays > 0) {
+        yearDelta = Math.floor(rawYears + tolerance);
+      } else {
+        if (Math.abs(totalDays) < absDaysPerYear) {
+          return this.createTimePoint(newYear, null, null);
+        }
+        yearDelta = Math.floor(rawYears + tolerance);
+      }
+
+      if (yearDelta === 0) {
+        return this.createTimePoint(newYear, null, null);
+      }
+
+      newYear += yearDelta;
     }
 
     return this.createTimePoint(newYear, newMonth, newDay);

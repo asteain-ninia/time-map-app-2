@@ -75,6 +75,17 @@ describe("TimeService", () => {
     expect(retreated.day).toBeNull();
   });
 
+  it("advances to the next year once coarse time points receive roughly a year's worth of days", () => {
+    const service = new TimeService();
+    const start = new TimePoint(1200);
+    const approxYearDays = Math.floor(service.calendarConfig.daysPerYear);
+
+    const advanced = service.advanceDays(start, approxYearDays);
+    expect(advanced.year).toBe(1201);
+    expect(advanced.month).toBeNull();
+    expect(advanced.day).toBeNull();
+  });
+
   it("advances months forward across year boundaries", () => {
     const service = new TimeService();
     const start = new TimePoint(-1, 12, 10);
