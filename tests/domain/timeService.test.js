@@ -75,6 +75,17 @@ describe("TimeService", () => {
     expect(retreated.day).toBeNull();
   });
 
+  it("retreats coarse time points by a full year once supplied with roughly a year's worth of days", () => {
+    const service = new TimeService();
+    const start = new TimePoint(1200);
+    const approxYearDays = Math.floor(service.calendarConfig.daysPerYear);
+
+    const retreated = service.advanceDays(start, -approxYearDays);
+    expect(retreated.year).toBe(1199);
+    expect(retreated.month).toBeNull();
+    expect(retreated.day).toBeNull();
+  });
+
   it("advances to the next year once coarse time points receive roughly a year's worth of days", () => {
     const service = new TimeService();
     const start = new TimePoint(1200);

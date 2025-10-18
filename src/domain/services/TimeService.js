@@ -253,10 +253,16 @@ export class TimeService {
       if (totalDays > 0) {
         yearDelta = Math.floor(rawYears + tolerance);
       } else {
-        if (Math.abs(totalDays) < absDaysPerYear) {
+        const absTotalDays = Math.abs(totalDays);
+        const guardThreshold = Math.max(0, Math.floor(absDaysPerYear) - 1);
+        if (absTotalDays <= guardThreshold) {
           return this.createTimePoint(newYear, null, null);
         }
-        yearDelta = Math.floor(rawYears + tolerance);
+        if (absTotalDays < absDaysPerYear) {
+          yearDelta = -1;
+        } else {
+          yearDelta = Math.floor(rawYears + tolerance);
+        }
       }
 
       if (yearDelta === 0) {
