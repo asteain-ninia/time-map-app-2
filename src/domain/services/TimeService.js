@@ -1,5 +1,11 @@
 import { TimePoint } from '../value-objects/TimePoint';
 
+const DEFAULT_CALENDAR_CONFIG = {
+  daysPerYear: 365.25,
+  monthsPerYear: 12,
+  daysPerMonth: [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+};
+
 /**
  * 時間操作と時間依存データの取得を担当するドメインサービス
  */
@@ -9,12 +15,7 @@ export class TimeService {
    * @param {Object} customCalendarConfig - カスタムカレンダー設定（省略可能）
    */
   constructor(customCalendarConfig = null) {
-    // デフォルトのカレンダー設定
-    this._calendarConfig = customCalendarConfig || {
-      daysPerYear: 365.25,   // 1年の日数
-      monthsPerYear: 12,     // 1年の月数
-      daysPerMonth: [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] // 各月の日数
-    };
+    this._calendarConfig = this._normalizeCalendarConfig(customCalendarConfig, DEFAULT_CALENDAR_CONFIG);
   }
 
   /**
@@ -22,7 +23,10 @@ export class TimeService {
    * @returns {Object} カレンダー設定
    */
   get calendarConfig() {
-    return { ...this._calendarConfig };
+    return {
+      ...this._calendarConfig,
+      daysPerMonth: [...this._calendarConfig.daysPerMonth]
+    };
   }
 
   /**
@@ -30,7 +34,7 @@ export class TimeService {
    * @param {Object} newConfig - 新しいカレンダー設定
    */
   updateCalendarConfig(newConfig) {
-    this._calendarConfig = { ...newConfig };
+    this._calendarConfig = this._normalizeCalendarConfig(newConfig, this._calendarConfig);
   }
 
   createTimePoint(year, month = null, day = null) {
@@ -61,6 +65,97 @@ export class TimeService {
     }
 
     return new TimePoint(year, normalizedMonth, normalizedDay);
+  }
+
+  /**
+   * カレンダー設定を正規化
+   * @param {Object|null|undefined} overrides - 新しい設定
+   * @param {Object} baseConfig - 既存設定
+   * @returns {{daysPerYear: number, monthsPerYear: number, daysPerMonth: number[]}}
+   * @private
+   */
+  _normalizeCalendarConfig(overrides, baseConfig = DEFAULT_CALENDAR_CONFIG) {
+    const candidate = (overrides && typeof overrides === 'object') ? overrides : null;
+
+    const baseDaysPerYear = Number.isFinite(baseConfig?.daysPerYear) && baseConfig.daysPerYear > 0
+      ? baseConfig.daysPerYear
+      : DEFAULT_CALENDAR_CONFIG.daysPerYear;
+    const baseMonthsPerYear = Number.isInteger(baseConfig?.monthsPerYear) && baseConfig.monthsPerYear >= 1
+      ? baseConfig.monthsPerYear
+      : DEFAULT_CALENDAR_CONFIG.monthsPerYear;
+
+    let daysPerYear = baseDaysPerYear;
+    let monthsPerYear = baseMonthsPerYear;
+    let daysPerMonth = this._normalizeDaysPerMonth(baseConfig?.daysPerMonth) ?? [...DEFAULT_CALENDAR_CONFIG.daysPerMonth];
+
+    if (candidate) {
+      if ('daysPerYear' in candidate) {
+        const numericDaysPerYear = Number(candidate.daysPerYear);
+        if (Number.isFinite(numericDaysPerYear) && numericDaysPerYear > 0) {
+          daysPerYear = numericDaysPerYear;
+        }
+      }
+
+      if ('monthsPerYear' in candidate) {
+        const numericMonths = Number(candidate.monthsPerYear);
+        if (Number.isInteger(numericMonths) && numericMonths >= 1) {
+          monthsPerYear = numericMonths;
+        }
+      }
+
+      if ('daysPerMonth' in candidate) {
+        const normalizedOverride = this._normalizeDaysPerMonth(candidate.daysPerMonth);
+        if (normalizedOverride) {
+          daysPerMonth = normalizedOverride;
+        }
+      }
+    }
+
+    if (!Number.isFinite(daysPerYear) || daysPerYear <= 0) {
+      daysPerYear = DEFAULT_CALENDAR_CONFIG.daysPerYear;
+    }
+
+    if (!Number.isInteger(monthsPerYear) || monthsPerYear < 1) {
+      monthsPerYear = DEFAULT_CALENDAR_CONFIG.monthsPerYear;
+    }
+
+    if (!Array.isArray(daysPerMonth) || daysPerMonth.length === 0) {
+      daysPerMonth = [...DEFAULT_CALENDAR_CONFIG.daysPerMonth];
+    }
+
+    const normalizedDaysPerMonth = [];
+    for (let i = 0; i < monthsPerYear; i++) {
+      normalizedDaysPerMonth.push(daysPerMonth[i % daysPerMonth.length]);
+    }
+
+    return {
+      daysPerYear,
+      monthsPerYear,
+      daysPerMonth: normalizedDaysPerMonth
+    };
+  }
+
+  /**
+   * 月ごとの日数配列を検証・正規化
+   * @param {*} source - 入力の候補
+   * @returns {number[]|null}
+   * @private
+   */
+  _normalizeDaysPerMonth(source) {
+    if (!Array.isArray(source) || source.length === 0) {
+      return null;
+    }
+
+    const normalized = [];
+    for (const value of source) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return null;
+      }
+      normalized.push(numeric);
+    }
+
+    return normalized;
   }
 
   getDaysInMonth(year, month) {

@@ -13,6 +13,34 @@ describe("TimeService", () => {
     expect(service.calendarConfig.daysPerYear).toBe(300);
   });
 
+  it("retains required calendar fields when partially updating configuration", () => {
+    const service = new TimeService();
+    const customDaysPerMonth = Array(12).fill(30);
+
+    service.updateCalendarConfig({ daysPerMonth: customDaysPerMonth });
+
+    const configAfterPartialUpdate = service.calendarConfig;
+    expect(configAfterPartialUpdate.monthsPerYear).toBe(12);
+    expect(configAfterPartialUpdate.daysPerYear).toBe(365.25);
+    expect(configAfterPartialUpdate.daysPerMonth).toEqual(customDaysPerMonth);
+
+    const advancedWithinDefaults = service.advanceMonths(new TimePoint(2024, 1, 15), 1);
+    expect(advancedWithinDefaults.year).toBe(2024);
+    expect(advancedWithinDefaults.month).toBe(2);
+    expect(advancedWithinDefaults.day).toBe(15);
+
+    service.updateCalendarConfig({ monthsPerYear: 10, daysPerYear: 300 });
+    const configAfterMonthsChange = service.calendarConfig;
+    expect(configAfterMonthsChange.monthsPerYear).toBe(10);
+    expect(configAfterMonthsChange.daysPerYear).toBe(300);
+    expect(configAfterMonthsChange.daysPerMonth).toHaveLength(10);
+
+    const advancedAcrossBoundary = service.advanceMonths(new TimePoint(2024, 10, 10), 1);
+    expect(advancedAcrossBoundary.year).toBe(2025);
+    expect(advancedAcrossBoundary.month).toBe(1);
+    expect(advancedAcrossBoundary.day).toBe(10);
+  });
+
   it("determines whether a time point lies within a range", () => {
     const service = new TimeService();
     const start = new TimePoint(1500, 1, 1);
