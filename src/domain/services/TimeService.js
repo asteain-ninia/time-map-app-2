@@ -356,7 +356,8 @@ export class TimeService {
         if (absTotalDays < absDaysPerYear) {
           yearDelta = -1;
         } else {
-          yearDelta = Math.floor(rawYears + tolerance);
+          // ceil handles negative fractional years without over-borrowing (e.g. -1.09 -> -1)
+          yearDelta = Math.ceil(rawYears - tolerance);
         }
       }
 

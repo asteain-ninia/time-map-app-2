@@ -184,12 +184,12 @@ describe("TimeService", () => {
     expect(result).toBeCloseTo(5 * service.calendarConfig.daysPerYear, 5);
   });
 
-  it("advances negative days for coarse time points", () => {
+  it("retreats negative days for coarse time points without double borrowing", () => {
     const service = new TimeService();
     const start = new TimePoint(1200);
 
     const moved = service.advanceDays(start, -400);
-    expect(moved.year).toBe(1198);
+    expect(moved.year).toBe(1199);
     expect(moved.month).toBeNull();
     expect(moved.day).toBeNull();
   });

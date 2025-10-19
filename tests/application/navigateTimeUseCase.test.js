@@ -35,6 +35,15 @@ describe("NavigateTimeUseCase", () => {
     expect(retreated.month).toBe(1);
     expect(retreated.day).toBe(31);
   });
+
+  it("retreats more than a year without double borrowing", () => {
+    useCase.moveToTime(2000, null, null);
+
+    const retreated = useCase.retreatTime(400);
+    expect(retreated.year).toBe(1999);
+    expect(retreated.month).toBeNull();
+    expect(retreated.day).toBeNull();
+  });
   it("advances months with calendar-aware adjustments", () => {
     useCase.moveToTime(2000, 1, 31);
 
