@@ -428,8 +428,9 @@ export class MapViewRendererHelper {
             gcPoints.push(...segment);
         }
         if (gcPoints.length >= 2) {
+            const unwrappedGcPoints = this._unwrapLongitudeSequence(gcPoints);
             for (const offsetX of finalOffsets) {
-                const offsetGcPoints = gcPoints.map(p => ({ x: p.x + offsetX, y: p.y }));
+                const offsetGcPoints = unwrappedGcPoints.map(p => ({ x: p.x + offsetX, y: p.y }));
                 const gcElem = this._renderer.drawLine(offsetGcPoints, editingStyles.greatCircleLine, viewport);
                 if (gcElem) this._measureElements.push(gcElem);
             }
@@ -540,5 +541,38 @@ export class MapViewRendererHelper {
     this._temporaryElements = [];
     // ViewModel側のクリアはViewModelが行う想定
     // this._editingViewModel.clearTemporaryElements();
+  }
+
+  _unwrapLongitudeSequence(points) {
+    if (!Array.isArray(points) || points.length === 0) {
+      return [];
+    }
+
+    const result = [{ x: points[0].x, y: points[0].y }];
+    let previousLongitude = points[0].x;
+    let wrapOffset = 0;
+
+    for (let i = 1; i < points.length; i++) {
+      const point = points[i];
+      if (!point) {
+        continue;
+      }
+
+      let adjustedLongitude = point.x + wrapOffset;
+      const delta = adjustedLongitude - previousLongitude;
+
+      if (delta > 180) {
+        wrapOffset -= 360;
+        adjustedLongitude = point.x + wrapOffset;
+      } else if (delta < -180) {
+        wrapOffset += 360;
+        adjustedLongitude = point.x + wrapOffset;
+      }
+
+      previousLongitude = adjustedLongitude;
+      result.push({ x: adjustedLongitude, y: point.y });
+    }
+
+    return result;
   }
 }
