@@ -608,15 +608,69 @@ describe("HistoryService integration", () => {
     ]);
 
     ctx.eventBus.events.length = 0;
+  await ctx.historyService.redo();
+  const worldAfterRedo = await ctx.worldRepository.getWorld();
+  const lineAfterRedo = worldAfterRedo.features.find((f) => f.id === storedLine.id);
+  expect(lineAfterRedo.vertexIds[1]).toBe(newVertexId);
+  expect(ctx.historyService.canUndo()).toBe(true);
+  expect(ctx.historyService.canRedo()).toBe(false);
+  expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+    "VertexAddedToEdge",
+    "FeatureUpdated",
+    "WorldUpdated",
+    "HistoryChanged"
+  ]);
+  });
+
+  it("records legacy add entries via addHistoryEntry without throwing", async () => {
+    const feature = await ctx.editFeatureUseCase.addFeature(
+      "point",
+      [createProperty("LegacyPoint")],
+      { vertices: [{ x: 3, y: 4 }] },
+      "layer-0"
+    );
+
+    const worldAfterAdd = await ctx.worldRepository.getWorld();
+    const storedFeature = worldAfterAdd.features.find((f) => f.id === feature.id);
+    expect(storedFeature).toBeDefined();
+
+    const addedVerticesData = storedFeature.vertexIds
+      .map((vertexId) => worldAfterAdd.vertices.find((v) => v.id === vertexId))
+      .filter(Boolean)
+      .map((vertexData) => serializeVertex(ctx.serializer, vertexData));
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.addHistoryEntry("add", {
+      featureId: storedFeature.id,
+      featureData: ctx.serializer.serialize(storedFeature),
+      addedVerticesData
+    });
+
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual(["HistoryChanged"]);
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.undo();
+    const worldAfterUndo = await ctx.worldRepository.getWorld();
+    expect(worldAfterUndo.features.some((f) => f.id === storedFeature.id)).toBe(false);
+    expect(worldAfterUndo.vertices.some((v) => storedFeature.vertexIds.includes(v.id))).toBe(false);
+    expect(ctx.historyService.canUndo()).toBe(false);
+    expect(ctx.historyService.canRedo()).toBe(true);
+    expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
+      "FeatureDeleted",
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
+
+    ctx.eventBus.events.length = 0;
     await ctx.historyService.redo();
     const worldAfterRedo = await ctx.worldRepository.getWorld();
-    const lineAfterRedo = worldAfterRedo.features.find((f) => f.id === storedLine.id);
-    expect(lineAfterRedo.vertexIds[1]).toBe(newVertexId);
+    expect(worldAfterRedo.features.some((f) => f.id === storedFeature.id)).toBe(true);
     expect(ctx.historyService.canUndo()).toBe(true);
     expect(ctx.historyService.canRedo()).toBe(false);
     expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
-      "VertexAddedToEdge",
-      "FeatureUpdated",
+      "FeatureAdded",
       "WorldUpdated",
       "HistoryChanged"
     ]);

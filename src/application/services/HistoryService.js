@@ -94,39 +94,18 @@ export class HistoryService {
     // 2. 操作が成功した場合のみ、コマンドを生成して履歴に登録
     let command;
     try {
-        // このswitch文は、addHistoryEntryからほぼそのまま持ってくる
-        switch (commandType) {
-            case 'add':
-                command = new AddFeatureCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
-                break;
-            case 'delete':
-                command = new DeleteFeatureCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
-                break;
-            case 'deleteVertices':
-                command = new DeleteVerticesCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
-                break;
-            case 'updateProperties':
-                command = new UpdatePropertiesCommand(payload, this._editFeatureUseCase, this._serializer);
-                break;
-            case 'moveVertices':
-                command = new MoveVerticesCommand(payload, this._editFeatureUseCase, this._serializer);
-                break;
-            case 'addRing':
-                command = new AddRingCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
-                break;
-            case 'addVertexToEdge':
-                command = new AddVertexToEdgeCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
-                break;
-            default:
-                console.error(`HistoryService.executeAndRecord: Unsupported command type: ${commandType}`);
-                // 操作は実行されたが履歴は残らない。これは設計上の問題を示す可能性がある。
-                return operationResult;
-        }
+      command = this._instantiateCommand(commandType, payload);
     } catch (commandError) {
-        console.error(`Command instantiation failed for type ${commandType} after a successful operation. The operation was saved, but undo may not be possible.`, commandError);
-        // このケースは深刻なバグを示す。操作は完了しているがアンドゥできない。
-        // ここで何らかのフォールバック（例：ユーザーへの警告）が必要かもしれない。
-        return operationResult;
+      console.error(
+        `Command instantiation failed for type ${commandType} after a successful operation. The operation was saved, but undo may not be possible.`,
+        commandError
+      );
+      return operationResult;
+    }
+
+    if (!command) {
+      console.error(`HistoryService.executeAndRecord: Unsupported command type: ${commandType}`);
+      return operationResult;
     }
 
     if (command) {
@@ -142,34 +121,28 @@ export class HistoryService {
   }
 
   async addHistoryEntry(operationType, payload) {
-    // このメソッドは後方互換性のために残すが、内部で新しい executeAndRecord を呼び出すように変更する
-    // これにより、ViewModel側の変更を段階的に行うことができる
-    let operationFunc;
-    let commandPayload;
-    
-    // 【コマンド追加方法メモ】ここに新しいcaseを追加し、対応するCommandをインスタンス化してください。
-    // このコメントは削除しないでください。
-    switch (operationType) {
-      case 'add':
-        operationFunc = () => this._editFeatureUseCase.addFeature(
-            payload.featureType, // ViewModelから渡してもらう必要がある
-            [payload.featureInstance.properties[0]], // プロパティインスタンス
-            { vertices: payload.featureInstance.vertexIds.map(id => this._worldRepository._world.vertices.find(v => v.id === id)) }, // これは不正確だが、互換性のための仮実装
-            payload.featureInstance.layerId
-        );
-        // addHistoryEntryの呼び出し側でUseCaseが実行済みのため、ここでは何もしない関数を渡すのが安全
-        // しかし、それではトランザクションが実現できない。呼び出し側(ViewModel)の変更が必須となる。
-        // ここでは、ViewModelがまだ古い形式で呼び出していることを前提とし、
-        // 不完全ながらも動作する形を目指すのではなく、新しいフローへの移行を強制する。
-        // よって、このメソッドは将来的に非推奨とし、今は新しい形式でラップする。
-        console.error("addHistoryEntry is deprecated. Use executeAndRecord instead.");
-        return; // 新しいフローに移行するまで何もしない、またはエラーを投げる
+    console.warn("HistoryService.addHistoryEntry is deprecated. Use executeAndRecord instead.");
+
+    if (!payload || typeof payload !== 'object') {
+      console.error("HistoryService.addHistoryEntry: payload must be an object.", payload);
+      return;
     }
 
-    if (command) {
-        this._stackManager.pushUndo(command);
-        this._notifyHistoryChanged();
+    let command;
+    try {
+      command = this._instantiateCommand(operationType, payload);
+    } catch (error) {
+      console.error(`HistoryService.addHistoryEntry: Failed to create command for ${operationType}.`, error, payload);
+      throw error;
     }
+
+    if (!command) {
+      console.warn(`HistoryService.addHistoryEntry: Unsupported operation type: ${operationType}`);
+      return;
+    }
+
+    this._stackManager.pushUndo(command);
+    this._notifyHistoryChanged();
   }
 
   canUndo() {
@@ -245,5 +218,26 @@ export class HistoryService {
         (feature.vertexIds || []).forEach(id => vertexIds.add(id));
     }
     return await this._getVerticesDataForHistory(Array.from(vertexIds));
+  }
+
+  _instantiateCommand(commandType, payload) {
+    switch (commandType) {
+      case 'add':
+        return new AddFeatureCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+      case 'delete':
+        return new DeleteFeatureCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+      case 'deleteVertices':
+        return new DeleteVerticesCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+      case 'updateProperties':
+        return new UpdatePropertiesCommand(payload, this._editFeatureUseCase, this._serializer);
+      case 'moveVertices':
+        return new MoveVerticesCommand(payload, this._editFeatureUseCase, this._serializer);
+      case 'addRing':
+        return new AddRingCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+      case 'addVertexToEdge':
+        return new AddVertexToEdgeCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+      default:
+        return null;
+    }
   }
 }
