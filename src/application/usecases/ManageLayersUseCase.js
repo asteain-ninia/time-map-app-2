@@ -41,14 +41,15 @@ export class ManageLayersUseCase {
     const layerId = `layer-${new Date().getTime()}`;
     const newLayer = new Layer(layerId, name, nextOrder, true, 1.0, description);
     
-    // 世界データに追加
-    world.layers.push(newLayer);
-    
     // レイヤー階層を検証
-    const isValid = this._layerService.validateLayerHierarchy(world.layers);
+    const proposedLayers = [...world.layers, newLayer];
+    const isValid = this._layerService.validateLayerHierarchy(proposedLayers);
     if (!isValid) {
       throw new Error('Layer hierarchy validation failed');
     }
+    
+    // 世界データに追加
+    world.layers.push(newLayer);
     
     // 世界データを保存
     await this._worldRepository.saveWorld(world);
@@ -168,32 +169,32 @@ export class ManageLayersUseCase {
     // 注意: 実際の実装では、レイヤーの階層変更によって、
     // 関連するポリゴンの親子関係を再検証する必要があります。
     
-    // 一旦レイヤーを取り除く
-    world.layers.splice(layerIndex, 1);
+    // 一旦レイヤーを取り除いた配列を作成
+    const layersWithoutTarget = [
+      ...world.layers.slice(0, layerIndex),
+      ...world.layers.slice(layerIndex + 1)
+    ];
     
     // 新しい順序で再配置
-    let updatedLayers = [...world.layers];
-    updatedLayers.splice(newOrder, 0, layer);
+    const reorderedLayers = [...layersWithoutTarget];
+    reorderedLayers.splice(newOrder, 0, layer);
     
     // 順序を再設定
-    updatedLayers = updatedLayers.map((l, index) => {
+    const normalizedLayers = reorderedLayers.map((l, index) => {
       if (l.order !== index) {
-        const updatedLayer = new Layer(
-          l.id, l.name, index, l.visible, l.opacity, l.description
-        );
-        return updatedLayer;
+        return l.withOrder(index);
       }
       return l;
     });
     
-    // 更新されたレイヤーで置き換え
-    world.layers = updatedLayers;
-    
     // レイヤー階層を検証
-    const isValid = this._layerService.validateLayerHierarchy(world.layers);
+    const isValid = this._layerService.validateLayerHierarchy(normalizedLayers);
     if (!isValid) {
       throw new Error('Layer hierarchy validation failed');
     }
+    
+    // 更新されたレイヤーで置き換え
+    world.layers = normalizedLayers;
     
     // 世界データを保存
     await this._worldRepository.saveWorld(world);

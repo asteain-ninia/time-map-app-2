@@ -83,18 +83,27 @@ describe("ManageLayersUseCase", () => {
   });
 
   it("throws when layer hierarchy validation fails on add", async () => {
+    const originalIds = world.layers.map((layer) => layer.id);
+    const originalOrders = world.layers.map((layer) => layer.order);
     layerService.validateLayerHierarchy.mockReturnValueOnce(false);
 
     await expect(useCase.addLayer("Invalid")).rejects.toThrow("Layer hierarchy validation failed");
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    expect(world.layers.map((layer) => layer.id)).toEqual(originalIds);
+    expect(world.layers.map((layer) => layer.order)).toEqual(originalOrders);
+    expect(world.layers).toHaveLength(1);
   });
 
   it("does not save when reordered layers break hierarchy", async () => {
     world.layers.push(new Layer("layer-1", "Overlay", 1, true, 1.0));
     world.layers.push(new Layer("layer-2", "Top", 2, true, 1.0));
+    const originalIds = world.layers.map((layer) => layer.id);
+    const originalOrders = world.layers.map((layer) => layer.order);
     layerService.validateLayerHierarchy.mockReturnValueOnce(false);
 
     await expect(useCase.reorderLayer("layer-2", 0)).rejects.toThrow("Layer hierarchy validation failed");
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    expect(world.layers.map((layer) => layer.id)).toEqual(originalIds);
+    expect(world.layers.map((layer) => layer.order)).toEqual(originalOrders);
   });
 });
