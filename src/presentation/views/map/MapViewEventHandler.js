@@ -476,6 +476,9 @@ export class MapViewEventHandler {
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
     const subMode = this._editingViewModel.getAddingSubMode();
+    const activeFeatureId = this._viewModel.getActiveFeatureId();
+    const selectedVertexIdsSnapshot = this._viewModel.getSelectedVertexIds();
+    const hasSelection = !!activeFeatureId || selectedVertexIdsSnapshot.size > 0;
 
     if (event.key === 'Escape') {
        event.preventDefault();
@@ -487,8 +490,8 @@ export class MapViewEventHandler {
            // 地物/穴/飛び地追加中にEsc -> キャンセル
          this.handleCancelClick(); // MapViewのキャンセル処理を呼び出す
          console.log("Add/Hole/Enclave operation cancelled by ESC.");
-       } else if (mode === 'edit' && (this._viewModel.getActiveFeatureId() || this._viewModel.getSelectedVertexIds().size > 0)) {
-           // 編集モードで何か選択中にEsc -> 選択解除
+       } else if (hasSelection) {
+           // 選択状態がある場合はEscで選択解除
          this._viewModel.clearSelection();
          console.log("Selection cleared by ESC.");
        } else if (this._mapView.isMeasuringDistance()) {
