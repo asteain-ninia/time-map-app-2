@@ -61,6 +61,9 @@ export class LayerService {
     
     // 順序が連続しているかをチェック
     orders.sort((a, b) => a - b);
+    if (orders.length > 0 && orders[0] !== 0) {
+      return false;
+    }
     for (let i = 1; i < orders.length; i++) {
       if (orders[i] !== orders[i-1] + 1) {
         return false;

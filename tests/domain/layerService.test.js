@@ -36,6 +36,11 @@ describe("LayerService", () => {
     expect(service.validateLayerHierarchy(gap)).toBe(false);
   });
 
+  it("rejects hierarchies whose lowest order is not zero", () => {
+    const layers = [makeLayer("base", 5), makeLayer("mid", 6)];
+    expect(service.validateLayerHierarchy(layers)).toBe(false);
+  });
+
   it("checks polygon hierarchy based on parent layers", () => {
     const layers = [makeLayer("base", 0), makeLayer("upper", 1)];
     const rootPolygon = makePolygon({
