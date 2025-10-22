@@ -116,7 +116,11 @@ export class DependencyInjection {
     // --- History 関連サービスここまで ---
 
     this._container.navigateTimeUseCase = new NavigateTimeUseCase(this._container.timeService);
-    this._container.manageLayersUseCase = new ManageLayersUseCase(this._container.worldRepository, this._container.layerService);
+    this._container.manageLayersUseCase = new ManageLayersUseCase(
+      this._container.worldRepository,
+      this._container.layerService,
+      this._container.idGenerationService
+    );
     this._container.updateProjectSettingsUseCase = new UpdateProjectSettingsUseCase(this._container.worldRepository);
   }
 

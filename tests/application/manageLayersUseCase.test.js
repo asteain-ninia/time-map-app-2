@@ -12,6 +12,7 @@ describe("ManageLayersUseCase", () => {
   let world;
   let worldRepository;
   let layerService;
+  let idGenerationService;
   let useCase;
 
   beforeEach(() => {
@@ -25,7 +26,14 @@ describe("ManageLayersUseCase", () => {
     layerService = {
       validateLayerHierarchy: vi.fn(() => true)
     };
-    useCase = new ManageLayersUseCase(worldRepository, layerService);
+    let counter = 0;
+    idGenerationService = {
+      generateId: vi.fn(() => {
+        counter += 1;
+        return `layer-generated-${counter}`;
+      })
+    };
+    useCase = new ManageLayersUseCase(worldRepository, layerService, idGenerationService);
   });
 
   it("adds a layer with sequential order and persists the world", async () => {
@@ -105,5 +113,17 @@ describe("ManageLayersUseCase", () => {
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
     expect(world.layers.map((layer) => layer.id)).toEqual(originalIds);
     expect(world.layers.map((layer) => layer.order)).toEqual(originalOrders);
+  });
+
+  it("retries layer ID generation when a duplicate candidate is produced", async () => {
+    world.layers.push(new Layer("layer-generated-1", "Existing", 1, true, 1.0));
+    idGenerationService.generateId
+      .mockReturnValueOnce("layer-generated-1")
+      .mockReturnValueOnce("layer-generated-2");
+
+    const newLayer = await useCase.addLayer("Overlay");
+
+    expect(newLayer.id).toBe("layer-generated-2");
+    expect(idGenerationService.generateId).toHaveBeenCalledTimes(2);
   });
 });
