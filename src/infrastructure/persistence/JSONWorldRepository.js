@@ -1,4 +1,5 @@
 import { WorldRepository } from '../../application/WorldRepository';
+import { Layer } from '../../domain/entities/Layer';
 
 /**
  * JSONファイルベースのリポジトリ実装
@@ -88,14 +89,7 @@ export class JSONWorldRepository extends WorldRepository {
   _createEmptyWorld() {
     return {
       layers: [
-        {
-          id: "layer-base",
-          name: "基本レイヤー",
-          order: 0,
-          visible: true,
-          opacity: 1.0,
-          description: "最初のレイヤー"
-        }
+        new Layer("layer-base", "基本レイヤー", 0, true, 1.0, "最初のレイヤー")
       ],
       vertices: [],
       features: [],
