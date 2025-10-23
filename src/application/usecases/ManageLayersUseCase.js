@@ -34,28 +34,29 @@ export class ManageLayersUseCase {
    */
   async addLayer(name, description = "") {
     const world = await this._worldRepository.getWorld();
+    const currentLayers = Array.isArray(world.layers) ? world.layers : [];
 
     // 次のレイヤー順序を決定
-    const nextOrder = world.layers.length > 0
-      ? Math.max(...world.layers.map(l => l.order)) + 1
+    const nextOrder = currentLayers.length > 0
+      ? Math.max(...currentLayers.map(l => l.order)) + 1
       : 0;
 
     // 新しいレイヤーを作成
-    const layerId = this._createUniqueLayerId(world.layers);
+    const layerId = this._createUniqueLayerId(currentLayers);
     const newLayer = new Layer(layerId, name, nextOrder, true, 1.0, description);
 
     // レイヤー階層を検証
-    const proposedLayers = [...world.layers, newLayer];
+    const proposedLayers = [...currentLayers, newLayer];
     const isValid = this._layerService.validateLayerHierarchy(proposedLayers);
     if (!isValid) {
       throw new Error('Layer hierarchy validation failed');
     }
 
-    // 世界データに追加
-    world.layers.push(newLayer);
-
     // 世界データを保存
-    await this._worldRepository.saveWorld(world);
+    const updatedWorld = this._buildWorldWithLayers(world, proposedLayers);
+
+    await this._worldRepository.saveWorld(updatedWorld);
+    this._replaceLayersInPlace(world, updatedWorld.layers);
 
     return newLayer;
   }
@@ -68,39 +69,42 @@ export class ManageLayersUseCase {
    */
   async updateLayer(layerId, updates) {
     const world = await this._worldRepository.getWorld();
+    const currentLayers = Array.isArray(world.layers) ? world.layers : [];
 
     // レイヤーを検索
-    const layerIndex = world.layers.findIndex(l => l.id === layerId);
+    const layerIndex = currentLayers.findIndex(l => l.id === layerId);
     if (layerIndex === -1) {
       throw new Error(`Layer not found with ID: ${layerId}`);
     }
 
-    let layer = world.layers[layerIndex];
+    let updatedLayer = currentLayers[layerIndex];
 
     // 更新内容に応じてレイヤーを変更
     if (updates.name !== undefined) {
-      layer = layer.withName(updates.name);
+      updatedLayer = updatedLayer.withName(updates.name);
     }
 
     if (updates.visible !== undefined) {
-      layer = layer.withVisibility(updates.visible);
+      updatedLayer = updatedLayer.withVisibility(updates.visible);
     }
 
     if (updates.opacity !== undefined) {
-      layer = layer.withOpacity(updates.opacity);
+      updatedLayer = updatedLayer.withOpacity(updates.opacity);
     }
 
     if (updates.description !== undefined) {
-      layer = layer.withDescription(updates.description);
+      updatedLayer = updatedLayer.withDescription(updates.description);
     }
 
-    // 更新されたレイヤーを置き換え
-    world.layers[layerIndex] = layer;
+    const updatedLayers = currentLayers.map((layer, index) => index === layerIndex ? updatedLayer : layer);
 
     // 世界データを保存
-    await this._worldRepository.saveWorld(world);
+    const updatedWorld = this._buildWorldWithLayers(world, updatedLayers);
 
-    return layer;
+    await this._worldRepository.saveWorld(updatedWorld);
+    this._replaceLayersInPlace(world, updatedWorld.layers);
+
+    return updatedLayer;
   }
 
   /**
@@ -110,14 +114,15 @@ export class ManageLayersUseCase {
    */
   async deleteLayer(layerId) {
     const world = await this._worldRepository.getWorld();
+    const currentLayers = Array.isArray(world.layers) ? world.layers : [];
 
     // レイヤーを検索
-    const layerIndex = world.layers.findIndex(l => l.id === layerId);
+    const layerIndex = currentLayers.findIndex(l => l.id === layerId);
     if (layerIndex === -1) {
       throw new Error(`Layer not found with ID: ${layerId}`);
     }
 
-    const layer = world.layers[layerIndex];
+    const layer = currentLayers[layerIndex];
 
     // このレイヤーに関連するオブジェクトがあるか確認
     const hasRelatedFeatures = world.features.some(f => f.layerId === layerId);
@@ -125,21 +130,15 @@ export class ManageLayersUseCase {
       throw new Error('Cannot delete a layer that has related features');
     }
 
-    // レイヤーを削除
-    world.layers.splice(layerIndex, 1);
-
-    // レイヤー順序を再整理
-    world.layers.sort((a, b) => a.order - b.order);
-
-    for (let i = 0; i < world.layers.length; i++) {
-      if (world.layers[i].order !== i) {
-        const updatedLayer = world.layers[i].withOrder(i);
-        world.layers[i] = updatedLayer;
-      }
-    }
+    const remainingLayers = currentLayers.filter(l => l.id !== layerId);
+    const sortedLayers = [...remainingLayers].sort((a, b) => a.order - b.order);
+    const normalizedLayers = sortedLayers.map((l, index) => (l.order !== index ? l.withOrder(index) : l));
 
     // 世界データを保存
-    await this._worldRepository.saveWorld(world);
+    const updatedWorld = this._buildWorldWithLayers(world, normalizedLayers);
+
+    await this._worldRepository.saveWorld(updatedWorld);
+    this._replaceLayersInPlace(world, updatedWorld.layers);
   }
 
   /**
@@ -150,22 +149,23 @@ export class ManageLayersUseCase {
    */
   async reorderLayer(layerId, newOrder) {
     const world = await this._worldRepository.getWorld();
+    const currentLayers = Array.isArray(world.layers) ? world.layers : [];
 
     // レイヤーを検索
-    const layerIndex = world.layers.findIndex(l => l.id === layerId);
+    const layerIndex = currentLayers.findIndex(l => l.id === layerId);
     if (layerIndex === -1) {
       throw new Error(`Layer not found with ID: ${layerId}`);
     }
 
-    const layer = world.layers[layerIndex];
+    const layer = currentLayers[layerIndex];
     const oldOrder = layer.order;
 
     // 有効範囲内の順序に調整
-    newOrder = Math.max(0, Math.min(world.layers.length - 1, newOrder));
+    newOrder = Math.max(0, Math.min(currentLayers.length - 1, newOrder));
 
     // 順序が変わらない場合は何もしない
     if (oldOrder === newOrder) {
-      return world.layers;
+      return currentLayers;
     }
 
     // レイヤーの順序を更新
@@ -174,8 +174,8 @@ export class ManageLayersUseCase {
 
     // 一旦レイヤーを取り除いた配列を作成
     const layersWithoutTarget = [
-      ...world.layers.slice(0, layerIndex),
-      ...world.layers.slice(layerIndex + 1)
+      ...currentLayers.slice(0, layerIndex),
+      ...currentLayers.slice(layerIndex + 1)
     ];
 
     // 新しい順序で再配置
@@ -196,13 +196,42 @@ export class ManageLayersUseCase {
       throw new Error('Layer hierarchy validation failed');
     }
 
-    // 更新されたレイヤーで置き換え
-    world.layers = normalizedLayers;
-
     // 世界データを保存
-    await this._worldRepository.saveWorld(world);
+    const updatedWorld = this._buildWorldWithLayers(world, normalizedLayers);
 
-    return world.layers;
+    await this._worldRepository.saveWorld(updatedWorld);
+    this._replaceLayersInPlace(world, updatedWorld.layers);
+
+    return updatedWorld.layers;
+  }
+
+  /**
+   * 新しいレイヤー配列を反映した世界データを構築する
+   * @param {Object} world - 元の世界データ
+   * @param {Layer[]} layers - 反映するレイヤー配列
+   * @returns {Object} 新しい世界データ
+   * @private
+   */
+  _buildWorldWithLayers(world, layers) {
+    return {
+      ...world,
+      layers: Array.isArray(layers) ? [...layers] : []
+    };
+  }
+
+  /**
+   * 永続化成功後に元のworldオブジェクトへレイヤー配列を反映する
+   * @param {Object} targetWorld - 永続化前に取得した世界データ
+   * @param {Layer[]} layers - 反映するレイヤー配列
+   * @private
+   */
+  _replaceLayersInPlace(targetWorld, layers) {
+    const nextLayers = Array.isArray(layers) ? [...layers] : [];
+    if (!Array.isArray(targetWorld.layers)) {
+      targetWorld.layers = nextLayers;
+      return;
+    }
+    targetWorld.layers.splice(0, targetWorld.layers.length, ...nextLayers);
   }
 
   /**
