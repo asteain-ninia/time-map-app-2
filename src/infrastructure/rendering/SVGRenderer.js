@@ -615,7 +615,7 @@ _renderGrid(viewport, gridSettings) {
 
     const invertY = true; // Y座標を反転させるフラグ
 
-    const verticesMap = new Map(vertices.map(v => [v.id, v])); // �����Q�Ɨp
+    const verticesMap = new Map(vertices.map(v => [v.id, v]));
     const worldWidth = this.getWorldWidth();
     const childrenByRingId = new Map();
     for (const ring of polygon.rings) {
@@ -627,16 +627,34 @@ _renderGrid(viewport, gridSettings) {
             if (bucket) bucket.push(ring);
         }
     }
+    const ringVerticesCache = new Map();
+    for (const ring of polygon.rings) {
+        const ringVertices = ring.vertexIds
+            .map(id => verticesMap.get(id))
+            .filter(v => v);
+        ringVerticesCache.set(ring.id, ringVertices);
+    }
+
+    let labelAnchor = null;
+    if (property.name && style.showLabel) {
+        labelAnchor = this._determinePolygonLabelAnchor(
+            polygon,
+            childrenByRingId,
+            viewport,
+            ringVerticesCache
+        );
+    }
+
     const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
 
     for (const offsetX of finalOffsets) {
         const buildSubPath = (ring) => {
-            const ringVerticesOriginal = ring.vertexIds.map(id => verticesMap.get(id)).filter(v => v); // ���̒��_�I�u�W�F�N�g���擾
+            const ringVerticesOriginal = ringVerticesCache.get(ring.id) || [];
             if (ringVerticesOriginal.length < 3) {
                 console.warn(`Ring ${ring.id} in polygon ${polygon.id} has less than 3 valid vertices. Skipping ring.`);
-                return null; // 3�_�����̃����O�͕`�悵�Ȃ�
+                return null;
             }
-            const ringVerticesWithOffset = ringVerticesOriginal.map(v => ({ x: v.x + offsetX, y: v.y })); // �I�t�Z�b�g�K�p��̒��_
+            const ringVerticesWithOffset = ringVerticesOriginal.map(v => ({ x: v.x + offsetX, y: v.y }));
             let subPath = ` M ${this._toScreenX(ringVerticesWithOffset[0].x, viewport)} ${invertY ? -this._toScreenY(ringVerticesWithOffset[0].y, viewport) : this._toScreenY(ringVerticesWithOffset[0].y, viewport)}`;
             for (let i = 1; i < ringVerticesWithOffset.length; i++) {
                 subPath += ` L ${this._toScreenX(ringVerticesWithOffset[i].x, viewport)} ${invertY ? -this._toScreenY(ringVerticesWithOffset[i].y, viewport) : this._toScreenY(ringVerticesWithOffset[i].y, viewport)}`;
@@ -671,45 +689,140 @@ _renderGrid(viewport, gridSettings) {
             group.appendChild(pathElement);
         }
         // ラベル描画（オプション）(このオフセットの中心に対して)
-        if (property.name && style.showLabel) {
-          // ポリゴンの中心を計算（外周リングの重心）
-          const firstTerritoryRing = polygon.rings.find(r => r.ringType === "territory" && r.parentId === null);
-          if (firstTerritoryRing) {
-              const ringVerticesOriginal = firstTerritoryRing.vertexIds
-                  .map(id => verticesMap.get(id))
-                  .filter(v => v); // 元の頂点
-              if (ringVerticesOriginal.length > 0) {
-                  let centroidXOriginal = 0; // オフセットなしの中心X
-                  let centroidYOriginal = 0; // オフセットなしの中心Y
-                  for (const vertex of ringVerticesOriginal) {
-                      centroidXOriginal += vertex.x;
-                      centroidYOriginal += vertex.y;
-                  }
-                  centroidXOriginal /= ringVerticesOriginal.length;
-                  centroidYOriginal /= ringVerticesOriginal.length;
-                  const svgX = this._toScreenX(centroidXOriginal + offsetX, viewport); // オフセット適用
-                  const svgY = invertY ? -this._toScreenY(centroidYOriginal, viewport) : this._toScreenY(centroidYOriginal, viewport);
-                  const baseFontSize = style.fontSize || 12;
-                  // フォントサイズを 1/zoom でスケール
-                  const fontSize = Math.max(6 / viewport.zoom, Math.min(20 / viewport.zoom, baseFontSize / viewport.zoom));
-                  const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                  text.setAttribute("x", svgX);
-                  text.setAttribute("y", svgY);
-                  text.setAttribute("text-anchor", "middle");
-                  text.setAttribute("dominant-baseline", "middle");
-                  text.setAttribute("font-size", fontSize);
-                  text.setAttribute("fill", style.textColor);
-                  text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
-                  text.textContent = property.name;
-                  // クリックイベントを透過させる
-                  text.setAttribute("pointer-events", "none");
-                  group.appendChild(text);
-              }
-          }
+        if (labelAnchor) {
+            const svgX = this._toScreenX(labelAnchor.x + offsetX, viewport);
+            const svgY = invertY ? -this._toScreenY(labelAnchor.y, viewport) : this._toScreenY(labelAnchor.y, viewport);
+            const baseFontSize = style.fontSize || 12;
+            const fontSize = Math.max(6 / viewport.zoom, Math.min(20 / viewport.zoom, baseFontSize / viewport.zoom));
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("x", svgX);
+            text.setAttribute("y", svgY);
+            text.setAttribute("text-anchor", "middle");
+            text.setAttribute("dominant-baseline", "middle");
+            text.setAttribute("font-size", fontSize);
+            text.setAttribute("fill", style.textColor);
+            text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
+            text.textContent = property.name;
+            // クリックイベントを透過させる
+            text.setAttribute("pointer-events", "none");
+            group.appendChild(text);
         }
     }
     if (group.childNodes.length === 0) return null; // 何も描画されなかった場合
     return group;
+  }
+
+  /**
+   * ポリゴンラベルのアンカー座標を算出する
+   * @param {Polygon} polygon
+   * @param {Map<string, Array>} childrenByRingId
+   * @param {Object} viewport
+   * @param {Map<string, Array>} ringVerticesCache
+   * @returns {{x:number,y:number}|null}
+   * @private
+   */
+  _determinePolygonLabelAnchor(polygon, childrenByRingId, viewport, ringVerticesCache) {
+    const territoryInfos = [];
+
+    for (const ring of polygon.rings) {
+      if (ring.ringType !== "territory") continue;
+      const outerVertices = (ringVerticesCache.get(ring.id) || []).map(v => ({ x: v.x, y: v.y }));
+      if (outerVertices.length < 3) continue;
+
+      const holeRings = (childrenByRingId.get(ring.id) || []).filter(child => child.ringType === "hole");
+      const holeVerticesList = [];
+      for (const hole of holeRings) {
+        const holeVertices = (ringVerticesCache.get(hole.id) || []).map(v => ({ x: v.x, y: v.y }));
+        if (holeVertices.length < 3) continue;
+        holeVerticesList.push(holeVertices);
+      }
+
+      const areaOuter = Math.abs(calculateSignedArea(outerVertices));
+      if (!Number.isFinite(areaOuter) || areaOuter === 0) continue;
+
+      let holesArea = 0;
+      const holeInfoList = [];
+      for (const holeVertices of holeVerticesList) {
+        const areaHole = Math.abs(calculateSignedArea(holeVertices));
+        if (!Number.isFinite(areaHole) || areaHole === 0) continue;
+        holesArea += areaHole;
+        holeInfoList.push({ vertices: holeVertices, area: areaHole });
+      }
+
+      const effectiveArea = areaOuter - holesArea;
+      if (effectiveArea <= 0) continue;
+
+      const centroidOuter = calculatePolygonCentroid(outerVertices);
+      if (!centroidOuter) continue;
+
+      let weightedX = centroidOuter.x * areaOuter;
+      let weightedY = centroidOuter.y * areaOuter;
+      for (const holeInfo of holeInfoList) {
+        const centroidHole = calculatePolygonCentroid(holeInfo.vertices);
+        if (!centroidHole) continue;
+        weightedX -= centroidHole.x * holeInfo.area;
+        weightedY -= centroidHole.y * holeInfo.area;
+      }
+
+      const weightedCentroid = {
+        x: weightedX / effectiveArea,
+        y: weightedY / effectiveArea,
+      };
+
+      territoryInfos.push({
+        ringId: ring.id,
+        outer: outerVertices,
+        holes: holeInfoList.map(info => info.vertices),
+        effectiveArea,
+        centroid: weightedCentroid,
+      });
+    }
+
+    if (territoryInfos.length === 0) {
+      return null;
+    }
+
+    territoryInfos.sort((a, b) => {
+      if (b.effectiveArea !== a.effectiveArea) {
+        return b.effectiveArea - a.effectiveArea;
+      }
+      return a.ringId.localeCompare(b.ringId);
+    });
+
+    const target = territoryInfos[0];
+    const threshold = 2 / viewport.zoom;
+    const tolerance = Math.max(1 / viewport.zoom, 1e-4);
+
+    let anchorPoint = null;
+    let anchorDistance = -Infinity;
+
+    if (
+      Number.isFinite(target.centroid.x) &&
+      Number.isFinite(target.centroid.y) &&
+      isPointInPolygon(target.centroid, target.outer, target.holes)
+    ) {
+      const centroidDistance = pointToPolygonDistance(target.centroid, target.outer, target.holes);
+      anchorPoint = { x: target.centroid.x, y: target.centroid.y };
+      anchorDistance = centroidDistance.distance;
+    }
+
+    if (!anchorPoint || anchorDistance < threshold) {
+      const polyPoint = polylabel(target.outer, target.holes, tolerance);
+      if (polyPoint) {
+        anchorPoint = { x: polyPoint.x, y: polyPoint.y };
+        anchorDistance = polyPoint.distance;
+      }
+    }
+
+    if (!anchorPoint) {
+      return null;
+    }
+
+    if (anchorDistance < 0) {
+      anchorDistance = 0;
+    }
+
+    return anchorPoint;
   }
 
   /**
@@ -1008,4 +1121,194 @@ toWorldY(svgY, viewport) {
     // このメソッドは直接 render を呼ばず、状態変更のみ行う
     // 描画は次の render サイクルで行われる
   }
+}
+
+function calculateSignedArea(points) {
+  if (!points || points.length < 3) return 0;
+  let sum = 0;
+  for (let i = 0, len = points.length; i < len; i++) {
+    const { x: x1, y: y1 } = points[i];
+    const { x: x2, y: y2 } = points[(i + 1) % len];
+    sum += x1 * y2 - x2 * y1;
+  }
+  return sum / 2;
+}
+
+function calculatePolygonCentroid(points) {
+  const area = calculateSignedArea(points);
+  if (area === 0) return null;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0, len = points.length; i < len; i++) {
+    const { x: x1, y: y1 } = points[i];
+    const { x: x2, y: y2 } = points[(i + 1) % len];
+    const factor = x1 * y2 - x2 * y1;
+    cx += (x1 + x2) * factor;
+    cy += (y1 + y2) * factor;
+  }
+  const areaFactor = 1 / (6 * area);
+  return { x: cx * areaFactor, y: cy * areaFactor };
+}
+
+function isPointInRing(point, ringPoints) {
+  if (!ringPoints || ringPoints.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = ringPoints.length - 1; i < ringPoints.length; j = i++) {
+    const xi = ringPoints[i].x;
+    const yi = ringPoints[i].y;
+    const xj = ringPoints[j].x;
+    const yj = ringPoints[j].y;
+
+    const intersect =
+      yi > point.y !== yj > point.y &&
+      point.x < ((xj - xi) * (point.y - yi)) / (yj - yi || Number.EPSILON) + xi;
+    if (intersect) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function isPointInPolygon(point, outer, holes) {
+  if (!isPointInRing(point, outer)) return false;
+  if (!holes) return true;
+  for (const hole of holes) {
+    if (isPointInRing(point, hole)) return false;
+  }
+  return true;
+}
+
+function pointToSegmentDistanceSquared(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  if (dx === 0 && dy === 0) {
+    const diffX = px - ax;
+    const diffY = py - ay;
+    return diffX * diffX + diffY * diffY;
+  }
+  const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
+  const clampedT = Math.max(0, Math.min(1, t));
+  const closestX = ax + clampedT * dx;
+  const closestY = ay + clampedT * dy;
+  const distX = px - closestX;
+  const distY = py - closestY;
+  return distX * distX + distY * distY;
+}
+
+function pointToPolygonDistance(point, outer, holes) {
+  const pointInOuter = isPointInRing(point, outer);
+  let pointInHole = false;
+  if (pointInOuter && holes) {
+    for (const hole of holes) {
+      if (isPointInRing(point, hole)) {
+        pointInHole = true;
+        break;
+      }
+    }
+  }
+
+  let minDistSq = Infinity;
+  const processRing = (ring) => {
+    for (let i = 0; i < ring.length; i++) {
+      const { x: ax, y: ay } = ring[i];
+      const { x: bx, y: by } = ring[(i + 1) % ring.length];
+      const distSq = pointToSegmentDistanceSquared(point.x, point.y, ax, ay, bx, by);
+      if (distSq < minDistSq) {
+        minDistSq = distSq;
+      }
+    }
+  };
+
+  processRing(outer);
+  if (holes) {
+    for (const hole of holes) {
+      processRing(hole);
+    }
+  }
+
+  const distance = Math.sqrt(minDistSq);
+  const inside = pointInOuter && !pointInHole;
+  return { distance: inside ? distance : -distance };
+}
+
+class PolyLabelCell {
+  constructor(x, y, h, outer, holes) {
+    this.x = x;
+    this.y = y;
+    this.h = h;
+    const distInfo = pointToPolygonDistance({ x, y }, outer, holes);
+    this.d = distInfo.distance;
+    this.max = this.d + this.h * Math.SQRT2;
+  }
+}
+
+function polylabel(outer, holes, tolerance) {
+  if (!outer || outer.length === 0) return null;
+
+  let minX = outer[0].x;
+  let minY = outer[0].y;
+  let maxX = outer[0].x;
+  let maxY = outer[0].y;
+  for (const point of outer) {
+    if (point.x < minX) minX = point.x;
+    if (point.y < minY) minY = point.y;
+    if (point.x > maxX) maxX = point.x;
+    if (point.y > maxY) maxY = point.y;
+  }
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+  let cellSize = Math.max(width, height);
+  if (cellSize === 0) {
+    const first = outer[0];
+    return { x: first.x, y: first.y, distance: 0 };
+  }
+
+  const cellQueue = [];
+  const h = cellSize / 2;
+
+  for (let x = minX; x < maxX; x += cellSize) {
+    for (let y = minY; y < maxY; y += cellSize) {
+      cellQueue.push(new PolyLabelCell(x + h, y + h, h, outer, holes));
+    }
+  }
+
+  const centroid = calculatePolygonCentroid(outer);
+  const initialPoint = centroid || outer[0];
+  let bestCell = new PolyLabelCell(initialPoint.x, initialPoint.y, 0, outer, holes);
+
+  cellQueue.sort((a, b) => b.max - a.max);
+
+  const effectiveTolerance = Math.max(tolerance || 1, 1e-4);
+
+  while (cellQueue.length) {
+    const cell = cellQueue.shift();
+    if (cell.d > bestCell.d) {
+      bestCell = cell;
+    }
+    if (cell.max - bestCell.d <= effectiveTolerance) {
+      continue;
+    }
+    if (cell.h <= effectiveTolerance) {
+      continue;
+    }
+
+    const newH = cell.h / 2;
+    const cells = [
+      new PolyLabelCell(cell.x - newH, cell.y - newH, newH, outer, holes),
+      new PolyLabelCell(cell.x + newH, cell.y - newH, newH, outer, holes),
+      new PolyLabelCell(cell.x - newH, cell.y + newH, newH, outer, holes),
+      new PolyLabelCell(cell.x + newH, cell.y + newH, newH, outer, holes),
+    ];
+    for (const subCell of cells) {
+      cellQueue.push(subCell);
+    }
+    cellQueue.sort((a, b) => b.max - a.max);
+  }
+
+  return {
+    x: bestCell.x,
+    y: bestCell.y,
+    distance: Math.max(bestCell.d, 0),
+  };
 }
