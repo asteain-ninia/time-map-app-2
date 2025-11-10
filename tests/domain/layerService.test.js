@@ -182,4 +182,59 @@ describe("LayerService", () => {
     const exclusive = service.checkExclusivity(polygon, [polygon], vertices, geometryService);
     expect(exclusive).toBe(false);
   });
+
+  it("allows enclave territories nested inside a hole of the same polygon", () => {
+    const polygon = makePolygon({
+      id: "enclave-poly",
+      layerId: "layer",
+      rings: [
+        makeRing("outer", ["o1", "o2", "o3", "o4"]),
+        makeRing("hole", ["h1", "h2", "h3", "h4"], "hole", "outer"),
+        makeRing("enclave", ["e1", "e2", "e3", "e4"], "territory", "hole")
+      ]
+    });
+    const vertices = [
+      makeVertex("o1", 0, 0),
+      makeVertex("o2", 10, 0),
+      makeVertex("o3", 10, 10),
+      makeVertex("o4", 0, 10),
+      makeVertex("h1", 2, 2),
+      makeVertex("h2", 8, 2),
+      makeVertex("h3", 8, 8),
+      makeVertex("h4", 2, 8),
+      makeVertex("e1", 3, 3),
+      makeVertex("e2", 4, 3),
+      makeVertex("e3", 4, 4),
+      makeVertex("e4", 3, 4)
+    ];
+    const geometryService = new GeometryService();
+
+    const exclusive = service.checkExclusivity(polygon, [polygon], vertices, geometryService);
+    expect(exclusive).toBe(true);
+  });
+
+  it("rejects containment when territories lack an intervening hole", () => {
+    const polygon = makePolygon({
+      id: "invalid-nesting",
+      layerId: "layer",
+      rings: [
+        makeRing("outer", ["o1", "o2", "o3", "o4"]),
+        makeRing("inner", ["i1", "i2", "i3", "i4"]) // parentId remains null -> invalid structure
+      ]
+    });
+    const vertices = [
+      makeVertex("o1", 0, 0),
+      makeVertex("o2", 10, 0),
+      makeVertex("o3", 10, 10),
+      makeVertex("o4", 0, 10),
+      makeVertex("i1", 2, 2),
+      makeVertex("i2", 4, 2),
+      makeVertex("i3", 4, 4),
+      makeVertex("i4", 2, 4)
+    ];
+    const geometryService = new GeometryService();
+
+    const exclusive = service.checkExclusivity(polygon, [polygon], vertices, geometryService);
+    expect(exclusive).toBe(false);
+  });
 });

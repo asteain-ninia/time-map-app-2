@@ -42,6 +42,45 @@ function pickRingCoordinatePairs(polygon, vertexMap, ringType) {
     .map(ring => ({ ring, coordinates: toRingCoordinates(ring, vertexMap) }));
 }
 
+function buildRingMapFromPolygon(polygon) {
+  const map = new Map();
+  if (!polygon || !Array.isArray(polygon.rings)) {
+    return map;
+  }
+  for (const ring of polygon.rings) {
+    if (ring && typeof ring.id === 'string') {
+      map.set(ring.id, ring);
+    }
+  }
+  return map;
+}
+
+function hasTerritoryAncestorThroughHole(descendantRingId, ancestorRingId, ringMap) {
+  if (!ringMap.has(descendantRingId) || !ringMap.has(ancestorRingId)) {
+    return false;
+  }
+  let currentRing = ringMap.get(descendantRingId);
+  let holeEncountered = false;
+
+  while (currentRing && currentRing.parentId !== null && currentRing.parentId !== undefined) {
+    const parentRing = ringMap.get(currentRing.parentId);
+    if (!parentRing) {
+      return false;
+    }
+    if (parentRing.ringType === 'hole') {
+      holeEncountered = true;
+    } else if (parentRing.ringType === 'territory') {
+      if (holeEncountered && parentRing.id === ancestorRingId) {
+        return true;
+      }
+      holeEncountered = false;
+    }
+    currentRing = parentRing;
+  }
+
+  return false;
+}
+
 /**
  * レイヤー間の関係管理を担当するドメインサービス
  */
@@ -216,6 +255,7 @@ export class LayerService {
    */
   checkExclusivity(polygon, layerPolygons, allVertices, geometryService) {
     const vertexMap = buildVertexMap(allVertices);
+    const ringMap = buildRingMapFromPolygon(polygon);
     const targetTerritories = pickRingCoordinatePairs(polygon, vertexMap, 'territory');
     const targetHoles = pickRingCoordinatePairs(polygon, vertexMap, 'hole');
 
@@ -234,10 +274,13 @@ export class LayerService {
           return false;
         }
 
-        if (
-          geometryService.isRingCompletelyInsideRing(first.coordinates, second.coordinates) ||
-          geometryService.isRingCompletelyInsideRing(second.coordinates, first.coordinates)
-        ) {
+        const firstInsideSecond = geometryService.isRingCompletelyInsideRing(first.coordinates, second.coordinates);
+        if (firstInsideSecond && !hasTerritoryAncestorThroughHole(first.ring.id, second.ring.id, ringMap)) {
+          return false;
+        }
+
+        const secondInsideFirst = geometryService.isRingCompletelyInsideRing(second.coordinates, first.coordinates);
+        if (secondInsideFirst && !hasTerritoryAncestorThroughHole(second.ring.id, first.ring.id, ringMap)) {
           return false;
         }
       }
