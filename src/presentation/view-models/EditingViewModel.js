@@ -123,6 +123,14 @@ export class EditingViewModel {
   }
 
   /**
+   * 穴/飛び地追加の準備状態を外部からリセット
+   */
+  cancelHoleOrEnclavePreparation() {
+      if (this._tool !== 'add-hole') { return; }
+      this._clearAddingState();
+  }
+
+  /**
    * 穴/飛び地追加対象のポリゴンインスタンスを取得
    * @returns {DomainPolygon | null} 対象ポリゴンインスタンス
    */

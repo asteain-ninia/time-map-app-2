@@ -1,11 +1,7 @@
 // src/presentation/views/MapView.js
 import { Property } from '../../domain/value-objects/Property.js';
 import { TimePoint } from '../../domain/value-objects/TimePoint.js';
-// ドメインエンティティの直接インポートは不要 (ViewModel経由で扱うため)
-// import { Point as DomainPoint } from '../../domain/entities/Point.js';
-// import { Line as DomainLine } from '../../domain/entities/Line.js';
-// import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
-// import { Vertex } from '../../domain/entities/Vertex.js';
+import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 
 // 分割したクラスをインポート
 import { MapViewInteractionLogic } from './map/MapViewInteractionLogic.js';
@@ -160,6 +156,9 @@ export class MapView {
         break;
       // 他のタイプのイベントはここでは処理しない
     }
+    if (type === 'activeFeature') {
+        this._syncAddHoleToolTarget(data);
+    }
   }
 
   /**
@@ -191,6 +190,13 @@ export class MapView {
         this._render(); // 再描画
         break;
       // 他のタイプのイベントはここでは処理しない
+    }
+    if (
+        type === 'tool' ||
+        type === 'targetPolygon' ||
+        type === 'addingState'
+    ) {
+        this._syncAddHoleToolTarget();
     }
   }
 
@@ -481,6 +487,26 @@ export class MapView {
       }
 
       // this._render(); // ViewModelの変更通知経由で再描画されるはず
+  }
+
+  /**
+   * 穴追加ツールのターゲットと現在の地物選択を同期
+   * @param {Feature|null} [activeFeatureOverride]
+   * @private
+   */
+  _syncAddHoleToolTarget(activeFeatureOverride) {
+      if (this._editingViewModel.getTool() !== 'add-hole') {
+          return;
+      }
+      const candidate = arguments.length > 0 ? activeFeatureOverride : this._viewModel.getActiveFeature();
+      if (candidate && candidate instanceof DomainPolygon) {
+          const currentTarget = this._editingViewModel.getTargetPolygon();
+          if (!currentTarget || currentTarget.id !== candidate.id) {
+              this._editingViewModel.startAddingHoleOrEnclave(candidate);
+          }
+      } else {
+          this._editingViewModel.cancelHoleOrEnclavePreparation();
+      }
   }
 
   /** 測定点を追加 (EventHandlerから呼ばれる) */
