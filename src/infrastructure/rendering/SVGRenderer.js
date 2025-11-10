@@ -975,6 +975,53 @@ toWorldY(svgY, viewport) {
   }
 
   /**
+   * 複数サブパスを持つ多角形を描画 (一時要素用)
+   * @param {Array<Array<{x:number,y:number}>>} loopPointsList - 1つ目が領域、以降が穴になるようなループ群
+   * @param {Object} style - スタイル情報
+   * @param {Object} viewport - ビューポート情報
+   * @returns {SVGElement|null}
+   */
+  drawPolygonLoops(loopPointsList, style, viewport) {
+    if (!Array.isArray(loopPointsList) || loopPointsList.length === 0) return null;
+
+    let pathData = "";
+    for (const loop of loopPointsList) {
+      if (!Array.isArray(loop) || loop.length < 3) continue;
+      pathData += `M ${this._toScreenX(loop[0].x, viewport)} ${-this._toScreenY(loop[0].y, viewport)}`;
+      for (let i = 1; i < loop.length; i++) {
+        pathData += ` L ${this._toScreenX(loop[i].x, viewport)} ${-this._toScreenY(loop[i].y, viewport)}`;
+      }
+      pathData += " Z";
+    }
+
+    if (pathData === "") return null;
+
+    const pathElement = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    pathElement.setAttribute("d", pathData);
+
+    const fillValue = style.fill !== undefined ? style.fill : 'none';
+    pathElement.setAttribute("fill", fillValue);
+    if (style.fillRule) {
+      pathElement.setAttribute("fill-rule", style.fillRule);
+    }
+
+    const strokeValue = style.stroke !== undefined ? style.stroke : '#000000';
+    pathElement.setAttribute("stroke", strokeValue);
+    const strokeWidth = style.strokeWidth !== undefined ? style.strokeWidth : 2;
+    pathElement.setAttribute("stroke-width", strokeWidth / viewport.zoom);
+    if (style.strokeDasharray) {
+      const pattern = style.strokeDasharray.split(',').map(v => parseFloat(v.trim()) / viewport.zoom).join(',');
+      pathElement.setAttribute("stroke-dasharray", pattern);
+    } else {
+      pathElement.setAttribute("stroke-dasharray", "");
+    }
+
+    pathElement.setAttribute("pointer-events", "none");
+    this._mainGroup.appendChild(pathElement);
+    return pathElement;
+  }
+
+  /**
    * テキストを描画 (一時要素用)
    * @param {number} x - 世界X座標
    * @param {number} y - 世界Y座標

@@ -4,6 +4,7 @@ import { Point as DomainPoint } from '../../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../../domain/entities/Polygon.js';
 import { editingStyles } from '../../../infrastructure/rendering/RenderStyleProvider.js';
+import { buildPolygonFillLoopSets } from './polygonFillUtils.js';
 
 /**
  * MapView における描画補助（選択、プレビュー、測定など）を担当
@@ -104,16 +105,19 @@ export class MapViewRendererHelper {
                     });
                 } else if (feature instanceof DomainPolygon) {
                     if (feature.rings && Array.isArray(feature.rings)) {
+                        if (editingStyles.selectedPolygonFill && editingStyles.selectedPolygonFill.fill !== 'none') {
+                            const loopSets = buildPolygonFillLoopSets(feature, verticesMap, offsetX);
+                            for (const loops of loopSets) {
+                                const fillElem = this._renderer.drawPolygonLoops(loops, editingStyles.selectedPolygonFill, viewport);
+                                if (fillElem) this._selectionElements.push(fillElem);
+                            }
+                        }
                         feature.rings.forEach(ring => {
                              const ringPoints = ring.vertexIds.map(id => {
                                  const v = verticesMap.get(id); // Always use current data for path
                                  return v ? { x: v.x + offsetX, y: v.y } : null;
                              }).filter(Boolean);
                              if (ringPoints.length >= 3) {
-                                 if (editingStyles.selectedPolygonFill && editingStyles.selectedPolygonFill.fill !== 'none' && ring.ringType !== 'hole') {
-                                     const fillElem = this._renderer.drawLine([...ringPoints, ringPoints[0]], editingStyles.selectedPolygonFill, viewport);
-                                     if (fillElem) this._selectionElements.push(fillElem);
-                                 }
                                  const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport);
                                  if (elem) this._selectionElements.push(elem);
                              }
@@ -150,16 +154,19 @@ export class MapViewRendererHelper {
                 }
             } else if (feature instanceof DomainPolygon) {
                 if (feature.rings && Array.isArray(feature.rings)) {
+                    if (editingStyles.highlightPolygonFill && editingStyles.highlightPolygonFill.fill !== 'none') {
+                        const loopSets = buildPolygonFillLoopSets(feature, verticesMap, offsetX);
+                        for (const loops of loopSets) {
+                            const fillElem = this._renderer.drawPolygonLoops(loops, editingStyles.highlightPolygonFill, viewport);
+                            if (fillElem) this._selectionElements.push(fillElem);
+                        }
+                    }
                     feature.rings.forEach(ring => {
                         const ringPoints = ring.vertexIds.map(id => {
                             const v = verticesMap.get(id);
                             return v ? { x: v.x + offsetX, y: v.y } : null;
                         }).filter(Boolean);
                         if (ringPoints.length >= 3) {
-                            if (editingStyles.highlightPolygonFill && editingStyles.highlightPolygonFill.fill !== 'none' && ring.ringType !== 'hole') {
-                                const fillElem = this._renderer.drawLine([...ringPoints, ringPoints[0]], editingStyles.highlightPolygonFill, viewport);
-                                if (fillElem) this._selectionElements.push(fillElem);
-                            }
                             const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport);
                             if (elem) this._selectionElements.push(elem);
                         }
