@@ -190,7 +190,7 @@ render(world, viewport, currentTime, projectSettings) {
 
     // 面 → 線 → 点の順で描画
     for (const polygon of polygons) {
-      const element = this._renderPolygon(polygon, world.vertices, currentTime, viewport); // currentTime を渡す
+      const element = this._renderPolygon(polygon, world.vertices, currentTime, viewport, projectSettings); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
@@ -589,7 +589,7 @@ _renderGrid(viewport, gridSettings) {
    * @returns {SVGElement | null} SVG要素、または描画できない場合はnull
    * @private
    */
-  _renderPolygon(polygon, vertices, currentTime, viewport) {
+  _renderPolygon(polygon, vertices, currentTime, viewport, projectSettings) {
     const property = polygon.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
     if (!property) return null; // 修正: property が null なら描画しない
 
@@ -635,13 +635,14 @@ _renderGrid(viewport, gridSettings) {
         ringVerticesCache.set(ring.id, ringVertices);
     }
 
-    let labelAnchor = null;
+    let labelAnchors = [];
     if (property.name && style.showLabel) {
-        labelAnchor = this._determinePolygonLabelAnchor(
+        labelAnchors = this._determinePolygonLabelAnchors(
             polygon,
             childrenByRingId,
             viewport,
-            ringVerticesCache
+            ringVerticesCache,
+            this._resolveMinLabelScreenRatio(projectSettings)
         );
     }
 
@@ -689,23 +690,25 @@ _renderGrid(viewport, gridSettings) {
             group.appendChild(pathElement);
         }
         // ラベル描画（オプション）(このオフセットの中心に対して)
-        if (labelAnchor) {
-            const svgX = this._toScreenX(labelAnchor.x + offsetX, viewport);
-            const svgY = invertY ? -this._toScreenY(labelAnchor.y, viewport) : this._toScreenY(labelAnchor.y, viewport);
-            const baseFontSize = style.fontSize || 12;
-            const fontSize = Math.max(6 / viewport.zoom, Math.min(20 / viewport.zoom, baseFontSize / viewport.zoom));
-            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            text.setAttribute("x", svgX);
-            text.setAttribute("y", svgY);
-            text.setAttribute("text-anchor", "middle");
-            text.setAttribute("dominant-baseline", "middle");
-            text.setAttribute("font-size", fontSize);
-            text.setAttribute("fill", style.textColor);
-            text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
-            text.textContent = property.name;
-            // クリックイベントを透過させる
-            text.setAttribute("pointer-events", "none");
-            group.appendChild(text);
+        if (labelAnchors.length > 0) {
+            for (const anchorInfo of labelAnchors) {
+                const anchor = anchorInfo.anchor;
+                const svgX = this._toScreenX(anchor.x + offsetX, viewport);
+                const svgY = invertY ? -this._toScreenY(anchor.y, viewport) : this._toScreenY(anchor.y, viewport);
+                const baseFontSize = style.fontSize || 12;
+                const fontSize = Math.max(6 / viewport.zoom, Math.min(20 / viewport.zoom, baseFontSize / viewport.zoom));
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", svgX);
+                text.setAttribute("y", svgY);
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("dominant-baseline", "middle");
+                text.setAttribute("font-size", fontSize);
+                text.setAttribute("fill", style.textColor);
+                text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
+                text.textContent = property.name;
+                text.setAttribute("pointer-events", "none");
+                group.appendChild(text);
+            }
         }
     }
     if (group.childNodes.length === 0) return null; // 何も描画されなかった場合
@@ -713,83 +716,141 @@ _renderGrid(viewport, gridSettings) {
   }
 
   /**
-   * ポリゴンラベルのアンカー座標を算出する
+   * ポリゴンラベルのアンカー座標をリングごとに算出する
    * @param {Polygon} polygon
    * @param {Map<string, Array>} childrenByRingId
    * @param {Object} viewport
    * @param {Map<string, Array>} ringVerticesCache
-   * @returns {{x:number,y:number}|null}
+   * @param {number} minLabelScreenRatio
+   * @returns {Array<{ringId:string, anchor:{x:number,y:number}, effectiveArea:number}>}
    * @private
    */
-  _determinePolygonLabelAnchor(polygon, childrenByRingId, viewport, ringVerticesCache) {
-    const territoryInfos = [];
+  _determinePolygonLabelAnchors(polygon, childrenByRingId, viewport, ringVerticesCache, minLabelScreenRatio) {
+    const viewBoxWidth = viewport.width / viewport.zoom;
+    const viewBoxHeight = viewport.height / viewport.zoom;
+    const visibleWorldArea = viewBoxWidth * viewBoxHeight;
+    if (!Number.isFinite(visibleWorldArea) || visibleWorldArea <= 0) {
+      return [];
+    }
+
+    const ratio = Number.isFinite(minLabelScreenRatio) ? Math.max(0, minLabelScreenRatio) : 0.0005;
+    const minEffectiveArea = visibleWorldArea * ratio;
+
+    const ringById = new Map(polygon.rings.map(r => [r.id, r]));
+    const anchorCandidates = [];
 
     for (const ring of polygon.rings) {
       if (ring.ringType !== "territory") continue;
+
       const outerVertices = (ringVerticesCache.get(ring.id) || []).map(v => ({ x: v.x, y: v.y }));
       if (outerVertices.length < 3) continue;
 
       const holeRings = (childrenByRingId.get(ring.id) || []).filter(child => child.ringType === "hole");
-      const holeVerticesList = [];
+      const holeInfoList = [];
+      let holesArea = 0;
       for (const hole of holeRings) {
         const holeVertices = (ringVerticesCache.get(hole.id) || []).map(v => ({ x: v.x, y: v.y }));
         if (holeVertices.length < 3) continue;
-        holeVerticesList.push(holeVertices);
-      }
-
-      const areaOuter = Math.abs(calculateSignedArea(outerVertices));
-      if (!Number.isFinite(areaOuter) || areaOuter === 0) continue;
-
-      let holesArea = 0;
-      const holeInfoList = [];
-      for (const holeVertices of holeVerticesList) {
         const areaHole = Math.abs(calculateSignedArea(holeVertices));
         if (!Number.isFinite(areaHole) || areaHole === 0) continue;
         holesArea += areaHole;
         holeInfoList.push({ vertices: holeVertices, area: areaHole });
       }
 
+      const areaOuter = Math.abs(calculateSignedArea(outerVertices));
+      if (!Number.isFinite(areaOuter) || areaOuter === 0) continue;
+
       const effectiveArea = areaOuter - holesArea;
-      if (effectiveArea <= 0) continue;
+      if (!Number.isFinite(effectiveArea) || effectiveArea <= 0) continue;
+      if (effectiveArea < minEffectiveArea) continue;
 
-      const centroidOuter = calculatePolygonCentroid(outerVertices);
-      if (!centroidOuter) continue;
+      const weightedCentroid = this._calculateWeightedRingCentroid(outerVertices, holeInfoList, areaOuter, effectiveArea);
+      if (!weightedCentroid) continue;
 
-      let weightedX = centroidOuter.x * areaOuter;
-      let weightedY = centroidOuter.y * areaOuter;
-      for (const holeInfo of holeInfoList) {
-        const centroidHole = calculatePolygonCentroid(holeInfo.vertices);
-        if (!centroidHole) continue;
-        weightedX -= centroidHole.x * holeInfo.area;
-        weightedY -= centroidHole.y * holeInfo.area;
-      }
+      const anchorPoint = this._locateAnchorPointForRing(weightedCentroid, outerVertices, holeInfoList.map(info => info.vertices), viewport);
+      if (!anchorPoint) continue;
 
-      const weightedCentroid = {
-        x: weightedX / effectiveArea,
-        y: weightedY / effectiveArea,
-      };
-
-      territoryInfos.push({
+      anchorCandidates.push({
         ringId: ring.id,
-        outer: outerVertices,
-        holes: holeInfoList.map(info => info.vertices),
+        anchor: anchorPoint,
         effectiveArea,
-        centroid: weightedCentroid,
+        depth: this._calculateRingDepth(ring, ringById),
       });
     }
 
-    if (territoryInfos.length === 0) {
-      return null;
-    }
-
-    territoryInfos.sort((a, b) => {
+    anchorCandidates.sort((a, b) => {
+      if (a.depth !== b.depth) {
+        return a.depth - b.depth;
+      }
       if (b.effectiveArea !== a.effectiveArea) {
         return b.effectiveArea - a.effectiveArea;
       }
       return a.ringId.localeCompare(b.ringId);
     });
 
-    const target = territoryInfos[0];
+    return anchorCandidates;
+  }
+
+  /**
+   * ラベル表示に用いる最小画面占有率を取得する
+   * @param {Object} projectSettings
+   * @returns {number}
+   * @private
+   */
+  _resolveMinLabelScreenRatio(projectSettings) {
+    const defaultRatio = 0.0005;
+    const ratio = projectSettings?.rendering?.minLabelScreenRatio;
+    if (typeof ratio !== "number" || !Number.isFinite(ratio)) {
+      return defaultRatio;
+    }
+    if (ratio < 0) {
+      return 0;
+    }
+    return ratio;
+  }
+
+  /**
+   * 穴を考慮したリングの重心を算出する
+   * @param {Array<{x:number,y:number}>} outerVertices
+   * @param {Array<{vertices:Array<{x:number,y:number}>, area:number}>} holeInfoList
+   * @param {number} areaOuter
+   * @param {number} effectiveArea
+   * @returns {{x:number,y:number}|null}
+   * @private
+   */
+  _calculateWeightedRingCentroid(outerVertices, holeInfoList, areaOuter, effectiveArea) {
+    const centroidOuter = calculatePolygonCentroid(outerVertices);
+    if (!centroidOuter) return null;
+
+    if (!holeInfoList || holeInfoList.length === 0) {
+      return centroidOuter;
+    }
+
+    let weightedX = centroidOuter.x * areaOuter;
+    let weightedY = centroidOuter.y * areaOuter;
+    for (const holeInfo of holeInfoList) {
+      const centroidHole = calculatePolygonCentroid(holeInfo.vertices);
+      if (!centroidHole) continue;
+      weightedX -= centroidHole.x * holeInfo.area;
+      weightedY -= centroidHole.y * holeInfo.area;
+    }
+
+    return {
+      x: weightedX / effectiveArea,
+      y: weightedY / effectiveArea,
+    };
+  }
+
+  /**
+   * 指定リングのラベルアンカーを決定する
+   * @param {{x:number,y:number}} weightedCentroid
+   * @param {Array<{x:number,y:number}>} outerVertices
+   * @param {Array<Array<{x:number,y:number}>>} holeVerticesList
+   * @param {Object} viewport
+   * @returns {{x:number,y:number}|null}
+   * @private
+   */
+  _locateAnchorPointForRing(weightedCentroid, outerVertices, holeVerticesList, viewport) {
     const threshold = 2 / viewport.zoom;
     const tolerance = Math.max(1 / viewport.zoom, 1e-4);
 
@@ -797,17 +858,17 @@ _renderGrid(viewport, gridSettings) {
     let anchorDistance = -Infinity;
 
     if (
-      Number.isFinite(target.centroid.x) &&
-      Number.isFinite(target.centroid.y) &&
-      isPointInPolygon(target.centroid, target.outer, target.holes)
+      Number.isFinite(weightedCentroid.x) &&
+      Number.isFinite(weightedCentroid.y) &&
+      isPointInPolygon(weightedCentroid, outerVertices, holeVerticesList)
     ) {
-      const centroidDistance = pointToPolygonDistance(target.centroid, target.outer, target.holes);
-      anchorPoint = { x: target.centroid.x, y: target.centroid.y };
+      const centroidDistance = pointToPolygonDistance(weightedCentroid, outerVertices, holeVerticesList);
+      anchorPoint = { x: weightedCentroid.x, y: weightedCentroid.y };
       anchorDistance = centroidDistance.distance;
     }
 
     if (!anchorPoint || anchorDistance < threshold) {
-      const polyPoint = polylabel(target.outer, target.holes, tolerance);
+      const polyPoint = polylabel(outerVertices, holeVerticesList, tolerance);
       if (polyPoint) {
         anchorPoint = { x: polyPoint.x, y: polyPoint.y };
         anchorDistance = polyPoint.distance;
@@ -823,6 +884,25 @@ _renderGrid(viewport, gridSettings) {
     }
 
     return anchorPoint;
+  }
+
+  /**
+   * リングのネスト深度を算出する
+   * @param {Object} ring
+   * @param {Map<string, Object>} ringById
+   * @returns {number}
+   * @private
+   */
+  _calculateRingDepth(ring, ringById) {
+    let depth = 0;
+    let parentId = ring.parentId;
+    while (parentId) {
+      const parentRing = ringById.get(parentId);
+      if (!parentRing) break;
+      depth += 1;
+      parentId = parentRing.parentId;
+    }
+    return depth;
   }
 
   /**
@@ -979,6 +1059,7 @@ toWorldY(svgY, viewport) {
    * @param {Array<Array<{x:number,y:number}>>} loopPointsList - 1つ目が領域、以降が穴になるようなループ群
    * @param {Object} style - スタイル情報
    * @param {Object} viewport - ビューポート情報
+   * @param {Object} projectSettings - プロジェクト設定
    * @returns {SVGElement|null}
    */
   drawPolygonLoops(loopPointsList, style, viewport) {

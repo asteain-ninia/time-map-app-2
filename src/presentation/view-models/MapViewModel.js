@@ -1115,7 +1115,10 @@ export class MapViewModel {
           sliderMin: 0,
           sliderMax: 10000,
           worldName: "新しい世界", 
-          worldDescription: ""
+          worldDescription: "",
+          rendering: {
+              minLabelScreenRatio: 0.0005
+          }
       };
   }
 }

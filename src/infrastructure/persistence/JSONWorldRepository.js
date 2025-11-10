@@ -107,7 +107,10 @@ export class JSONWorldRepository extends WorldRepository {
           gridColor: "#cccccc",
           gridOpacity: 0.5,
           sliderMin: 0, // metadata直下から移動
-          sliderMax: 10000 // metadata直下から移動
+          sliderMax: 10000, // metadata直下から移動
+          rendering: {
+            minLabelScreenRatio: 0.0005
+          }
         }
       }
     };

@@ -19,6 +19,10 @@ const DEFAULT_PROJECT_SETTINGS = {
   autoSaveInterval: 300, // autoSaveIntervalもプロジェクト固有と見なす場合
 };
 
+const DEFAULT_RENDERING_SETTINGS = {
+  minLabelScreenRatio: 0.0005,
+};
+
 
 /**
  * JSON形式でのデータシリアライズ/デシリアライズ
@@ -87,6 +91,16 @@ export class JSONSerializer {
     for (const key in DEFAULT_PROJECT_SETTINGS) {
       if (metadata.settings[key] === undefined) {
         metadata.settings[key] = DEFAULT_PROJECT_SETTINGS[key];
+      }
+    }
+
+    if (!metadata.settings.rendering || typeof metadata.settings.rendering !== 'object') {
+      metadata.settings.rendering = { ...DEFAULT_RENDERING_SETTINGS };
+    } else {
+      for (const key in DEFAULT_RENDERING_SETTINGS) {
+        if (metadata.settings.rendering[key] === undefined) {
+          metadata.settings.rendering[key] = DEFAULT_RENDERING_SETTINGS[key];
+        }
       }
     }
 
