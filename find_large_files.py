@@ -30,6 +30,7 @@ EXCLUDE_PATTERNS = [
     'ehthumbs.db',   # Windows システムファイル
     '*.lock',        # ロックファイル
     '.*.sw?',        # Vim swap files
+    'package-lock.json', # npmのロックファイル
     # 特定のファイル名を除外したい場合もここに追加
     # 'specific_file_to_exclude.txt',
 ]
@@ -52,6 +53,8 @@ EXCLUDE_DIRS = {
     'out',
     'bin', # プロジェクトによっては除外したい場合がある
     'obj', # 同上
+    'backups', # プロジェクト固有のバックアップフォルダ
+    'ARCHIVE', # プロジェクト固有のアーカイブフォルダ
 }
 # --- 除外設定 ここまで ---
 
