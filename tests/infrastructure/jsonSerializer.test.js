@@ -66,6 +66,32 @@ describe("JSONSerializer", () => {
     expect(restoredPolygon.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
   });
 
+  it("deserializes vertices as mutable plain objects to allow editing", () => {
+    const raw = JSON.stringify({
+      version: "1.2-ringtype",
+      layers: [],
+      vertices: [{ id: "vx-1", x: 3, y: 4 }],
+      points: [],
+      lines: [],
+      polygons: [],
+      metadata: {}
+    });
+
+    const world = serializer.deserialize(raw);
+    expect(world.vertices).toHaveLength(1);
+
+    const restoredVertex = world.vertices[0];
+    expect(restoredVertex).not.toBeInstanceOf(Vertex);
+
+    expect(() => {
+      restoredVertex.x = 99;
+      restoredVertex.y = -5;
+    }).not.toThrow();
+
+    expect(restoredVertex.x).toBe(99);
+    expect(restoredVertex.y).toBe(-5);
+  });
+
   it("fills metadata defaults and migrates slider bounds into settings", () => {
     const raw = JSON.stringify({
       version: "1.2-ringtype",

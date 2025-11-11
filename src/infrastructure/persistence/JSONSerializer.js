@@ -1,6 +1,5 @@
 // src\infrastructure\persistence\JSONSerializer.js
 
-import { Vertex } from '../../domain/entities/Vertex';
 import { Point } from '../../domain/entities/Point';
 import { Line } from '../../domain/entities/Line';
 import { Polygon } from '../../domain/entities/Polygon';
@@ -147,7 +146,7 @@ export class JSONSerializer {
 
   /**
    * 頂点をシリアライズ
-   * @param {Vertex} vertex - 頂点
+   * @param {{id: string, x: number, y: number}} vertex - 頂点
    * @returns {Object} シリアライズされた頂点
    * @private
    */
@@ -162,11 +161,15 @@ export class JSONSerializer {
   /**
    * 頂点をデシリアライズ
    * @param {Object} data - シリアライズされた頂点
-   * @returns {Vertex} 頂点
+   * @returns {{id: string, x: number, y: number}} プレーンな頂点データ
    * @private
    */
   _deserializeVertex(data) {
-    return new Vertex(data.id, data.x, data.y);
+    return {
+      id: data.id,
+      x: data.x,
+      y: data.y
+    };
   }
 
   /**
