@@ -51,16 +51,27 @@ export class PropertiesTabView {
   update() {
     // --- 変更ここから ---
     const featureForProperties = this._mapViewModel.getSelectionContextFeature();
+    const selectedVertexIds = typeof this._mapViewModel.getSelectedVertexIds === 'function'
+      ? this._mapViewModel.getSelectedVertexIds()
+      : new Set();
+    const vertexOwnerIds = typeof this._mapViewModel.getVertexSelectionOwnerIds === 'function'
+      ? this._mapViewModel.getVertexSelectionOwnerIds()
+      : new Set();
+    const ownerIdList = Array.from(vertexOwnerIds).filter(ownerId => ownerId !== null && ownerId !== undefined);
+    const hasVertexSelection = selectedVertexIds.size > 0;
     // --- 変更ここまで ---
 
     this._propertiesContainer.innerHTML = ''; // 既存の内容をクリア
 
     // --- 変更ここから ---
     if (!featureForProperties) {
-      const noSelectionMsg = document.createElement('p');
-      // メッセージをより包括的に変更
-      noSelectionMsg.textContent = '地物または頂点が選択されていません';
-      this._propertiesContainer.appendChild(noSelectionMsg);
+      if (ownerIdList.length > 1) {
+        this._renderMultiSelectionMessage(ownerIdList);
+      } else if (hasVertexSelection && ownerIdList.length === 0) {
+        this._renderAmbiguousSelectionMessage();
+      } else {
+        this._renderNoSelectionMessage();
+      }
       return;
     }
     this._buildPropertyForm(featureForProperties);
@@ -640,12 +651,133 @@ export class PropertiesTabView {
       case 'polygon':
         return [ ...defaultCategories,
           { id: 'kingdom', name: '王国' },
-          { id: 'empire', name: '帝国' },
-          { id: 'province', name: '地方' },
-          { id: 'ocean', name: '海洋' },
-          { id: 'lake', name: '湖沼' }];
+      { id: 'empire', name: '帝国' },
+      { id: 'province', name: '地方' },
+      { id: 'ocean', name: '海洋' },
+      { id: 'lake', name: '湖沼' }];
       default: return defaultCategories;
     }
+  }
+
+  _renderNoSelectionMessage() {
+    const noSelectionMsg = document.createElement('p');
+    noSelectionMsg.textContent = '地物または頂点が選択されていません';
+    this._propertiesContainer.appendChild(noSelectionMsg);
+  }
+
+  _renderAmbiguousSelectionMessage() {
+    const message = document.createElement('p');
+    message.textContent = '選択された頂点の所有者を特定できません。可視レイヤーの地物を直接選択してください。';
+    this._propertiesContainer.appendChild(message);
+  }
+
+  _renderMultiSelectionMessage(ownerIds) {
+    const normalizedIds = ownerIds
+      .map(id => id === null || id === undefined ? '' : String(id))
+      .filter(id => id.trim() !== '')
+      .sort();
+
+    if (normalizedIds.length === 0) {
+      this._renderAmbiguousSelectionMessage();
+      return;
+    }
+
+    const container = document.createElement('div');
+    container.className = 'properties-multi-selection';
+
+    const lead = document.createElement('p');
+    lead.textContent = '複数の地物が選択されています。プロパティ編集は1件ずつ行ってください。';
+    container.appendChild(lead);
+
+    const list = document.createElement('ul');
+    list.style.margin = '0 0 8px 16px';
+    list.style.paddingLeft = '16px';
+
+    const lookupMap = this._buildFeatureLookupMap();
+    const maxEntries = 5;
+    normalizedIds.slice(0, maxEntries).forEach(id => {
+      const li = document.createElement('li');
+      li.textContent = this._formatFeatureLabel(lookupMap.get(id), id);
+      list.appendChild(li);
+    });
+    container.appendChild(list);
+
+    if (normalizedIds.length > maxEntries) {
+      const remainder = document.createElement('p');
+      remainder.style.fontSize = '0.9em';
+      remainder.textContent = `…他 ${normalizedIds.length - maxEntries} 件`;
+      container.appendChild(remainder);
+    }
+
+    this._propertiesContainer.appendChild(container);
+  }
+
+  _buildFeatureLookupMap() {
+    const lookup = new Map();
+    if (typeof this._mapViewModel.getFeatures === 'function') {
+      const visibleFeatures = this._mapViewModel.getFeatures() || [];
+      visibleFeatures.forEach(feature => {
+        if (!feature || feature.id === null || feature.id === undefined) {
+          return;
+        }
+        const key = String(feature.id);
+        if (key && !lookup.has(key)) {
+          lookup.set(key, feature);
+        }
+      });
+    }
+
+    if (typeof this._mapViewModel.getWorld === 'function') {
+      const world = this._mapViewModel.getWorld();
+      if (world && Array.isArray(world.features)) {
+        world.features.forEach(feature => {
+          if (!feature || feature.id === null || feature.id === undefined) {
+            return;
+          }
+          const key = String(feature.id);
+          if (key && !lookup.has(key)) {
+            lookup.set(key, feature);
+          }
+        });
+      }
+    }
+
+    return lookup;
+  }
+
+  _formatFeatureLabel(feature, fallbackId) {
+    if (!feature) {
+      return `ID: ${fallbackId}`;
+    }
+
+    let property = null;
+    if (typeof feature.getPropertyAt === 'function' && typeof this._mapViewModel.getCurrentTime === 'function') {
+      property = feature.getPropertyAt(this._mapViewModel.getCurrentTime());
+    } else if (Array.isArray(feature.properties) && feature.properties.length > 0) {
+      property = feature.properties[0];
+    }
+
+    let displayName = '';
+    if (property) {
+      if (typeof property.name === 'string' && property.name.trim() !== '') {
+        displayName = property.name.trim();
+      } else if (typeof property.getAttribute === 'function') {
+        const attrName = property.getAttribute('name');
+        if (typeof attrName === 'string' && attrName.trim() !== '') {
+          displayName = attrName.trim();
+        }
+      }
+    }
+
+    if (!displayName) {
+      displayName = '名称未設定';
+    }
+
+    const identifier = feature.id === null || feature.id === undefined
+      ? fallbackId
+      : String(feature.id);
+
+    return `${displayName} (ID: ${identifier})`;
   }
 
   /**
