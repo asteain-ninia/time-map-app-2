@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -8,12 +8,16 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
       preload: path.join(__dirname, 'preload.js')
     }
   });
+
+  Menu.setApplicationMenu(null);
+  mainWindow.setMenuBarVisibility(false);
 
   mainWindow.loadFile(path.join(__dirname, 'public/index.html'));
   
