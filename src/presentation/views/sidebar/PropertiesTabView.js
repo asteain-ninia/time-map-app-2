@@ -85,7 +85,7 @@ export class PropertiesTabView {
    */
   _buildPropertyForm(feature) {
     this._timeFieldRefs = {};
-    
+
     // 地物の種類を特定
     let featureType = 'unknown';
     if (feature.constructor.name === 'Point') featureType = 'point';
@@ -103,28 +103,27 @@ export class PropertiesTabView {
 
     // Featureが持つ唯一のPropertyを取得 (現在の単純化モデルに基づく)
     const currentProperty = (feature.properties && feature.properties.length > 0)
-                            ? feature.properties[0]
-                            : null;
-    
+      ? feature.properties[0]
+      : null;
+
     if (!currentProperty) {
-        const noPropertyMsg = document.createElement('p');
-        noPropertyMsg.textContent = 'この地物のプロパティ情報が見つかりません。';
-        this._propertiesContainer.appendChild(noPropertyMsg);
-        return;
+      const noPropertyMsg = document.createElement('p');
+      noPropertyMsg.textContent = 'この地物のプロパティ情報が見つかりません。';
+      this._propertiesContainer.appendChild(noPropertyMsg);
+      return;
     }
 
 
     const form = document.createElement('form');
     form.addEventListener('submit', e => {
       e.preventDefault();
-      this._handleSaveProperties(feature.id, form);
+      this._handleSaveProperties(feature.id, form, currentProperty);
     });
 
     // 基本プロパティ (名前, 説明, カテゴリ)
     const basicPropsConfig = [
       { id: 'name', label: '名前', type: 'text', value: currentProperty.name || '' },
-      { id: 'description', label: '説明', type: 'textarea', value: currentProperty.description || '' },
-      { id: 'category', label: 'カテゴリ', type: 'select', value: currentProperty.getAttribute('category', 'default') }
+      { id: 'description', label: '説明', type: 'textarea', value: currentProperty.description || '' }
     ];
 
     basicPropsConfig.forEach(propConfig => {
@@ -142,17 +141,6 @@ export class PropertiesTabView {
         inputElement.style.width = 'calc(100% - 6px)'; /* padding考慮 */
         inputElement.style.minHeight = '60px';
         inputElement.value = propConfig.value;
-      } else if (propConfig.type === 'select') {
-        inputElement = document.createElement('select');
-        inputElement.style.width = '100%';
-        const categories = this._getCategoriesForFeatureType(featureType);
-        categories.forEach(cat => {
-          const option = document.createElement('option');
-          option.value = cat.id;
-          option.textContent = cat.name;
-          if (cat.id === propConfig.value) option.selected = true;
-          inputElement.appendChild(option);
-        });
       } else {
         inputElement = document.createElement('input');
         inputElement.type = propConfig.type;
@@ -197,11 +185,10 @@ export class PropertiesTabView {
    * @param {HTMLFormElement} formElement - プロパティフォーム
    * @private
    */
-  async _handleSaveProperties(featureId, formElement) {
+  async _handleSaveProperties(featureId, formElement, currentProperty) {
     const formData = new FormData(formElement);
     const name = formData.get('name')?.trim() || '名称未設定';
     const description = formData.get('description')?.trim() || '';
-    const category = formData.get('category') || 'default';
 
     const startResult = this._extractTimePoint('start');
     if (startResult.error) {
@@ -220,11 +207,15 @@ export class PropertiesTabView {
       return;
     }
 
+    const preservedAttributes = currentProperty && typeof currentProperty.getAttributes === 'function'
+      ? currentProperty.getAttributes()
+      : {};
+
     const newPropertyInstance = new Property(
       startTp ?? null,
       name,
       description,
-      { category },
+      preservedAttributes,
       startTp,
       endTp
     );
@@ -621,42 +612,6 @@ export class PropertiesTabView {
       'point': '点', 'line': '線', 'polygon': '面', 'unknown': '不明'
     };
     return typeMap[type.toLowerCase()] || type;
-  }
-
-  /**
-   * 地物種類に応じたカテゴリの取得 (SidebarViewから移植)
-   * @param {string} type - 地物種類
-   * @returns {Array<{id: string, name: string}>} カテゴリの配列
-   * @private
-   */
-  _getCategoriesForFeatureType(type) {
-    const defaultCategories = [
-      { id: '', name: '-- カテゴリなし --' },
-      { id: 'default', name: 'デフォルト' }
-    ];
-    switch (type.toLowerCase()) {
-      case 'point':
-        return [ ...defaultCategories,
-          { id: 'city', name: '都市' },
-          { id: 'town', name: '町村' },
-          { id: 'battle', name: '戦闘' },
-          { id: 'ruin', name: '遺跡' }];
-      case 'line':
-        return [ ...defaultCategories,
-          { id: 'road', name: '道路' },
-          { id: 'railway', name: '鉄道' },
-          { id: 'river', name: '河川' },
-          { id: 'trade_route', name: '交易路' },
-          { id: 'border', name: '国境' }];
-      case 'polygon':
-        return [ ...defaultCategories,
-          { id: 'kingdom', name: '王国' },
-      { id: 'empire', name: '帝国' },
-      { id: 'province', name: '地方' },
-      { id: 'ocean', name: '海洋' },
-      { id: 'lake', name: '湖沼' }];
-      default: return defaultCategories;
-    }
   }
 
   _renderNoSelectionMessage() {

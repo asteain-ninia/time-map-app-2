@@ -78,12 +78,12 @@ export class JSONSerializer {
     }
     // sliderMin/Max が metadata 直下にある古い形式の場合、settings に移動
     if (metadata.sliderMin !== undefined && metadata.settings.sliderMin === undefined) {
-        metadata.settings.sliderMin = metadata.sliderMin;
-        delete metadata.sliderMin;
+      metadata.settings.sliderMin = metadata.sliderMin;
+      delete metadata.sliderMin;
     }
     if (metadata.sliderMax !== undefined && metadata.settings.sliderMax === undefined) {
-        metadata.settings.sliderMax = metadata.sliderMax;
-        delete metadata.sliderMax;
+      metadata.settings.sliderMax = metadata.sliderMax;
+      delete metadata.sliderMax;
     }
 
     // プロジェクト固有設定のデフォルト値で補完
@@ -215,11 +215,12 @@ export class JSONSerializer {
    * @private
    */
   _serializeProperty(property) {
+    const attributes = property.getAttributes();
     const result = {
       timePoint: this._serializeTimePoint(property.timePoint),
       name: property.name,
       description: property.description,
-      attributes: property.getAttributes() // 修正: ...展開をやめ、メソッド経由で取得
+      attributes
     };
 
     if (property.startTime || property.endTime) { // startかendどちらかがあればtimeRangeを作る
@@ -282,7 +283,7 @@ export class JSONSerializer {
    * @private
    */
   _serializeLayer(layer) {
-    return {
+    const serialized = {
       id: layer.id,
       name: layer.name,
       order: layer.order,
@@ -290,6 +291,10 @@ export class JSONSerializer {
       opacity: layer.opacity,
       description: layer.description
     };
+    if (layer.style) {
+      serialized.style = JSON.parse(JSON.stringify(layer.style));
+    }
+    return serialized;
   }
 
   /**
@@ -305,7 +310,8 @@ export class JSONSerializer {
       data.order,
       data.visible !== undefined ? data.visible : true, // visibleのデフォルト値をtrueに
       data.opacity !== undefined ? data.opacity : 1.0,   // opacityのデフォルト値を1.0に
-      data.description || ""
+      data.description || "",
+      data.style || null
     );
   }
 

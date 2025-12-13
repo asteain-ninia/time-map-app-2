@@ -141,7 +141,7 @@ export class DependencyInjection {
     // MapViewModel, TimelineViewModel, Renderer, Views, Controllers は変更なし
     this._container.mapViewModel = new MapViewModel(this._container.editFeatureUseCase, this._container.navigateTimeUseCase, this._container.manageLayersUseCase, this._container.geometryService, this._container.eventBus, this._container.updateProjectSettingsUseCase);
     this._container.timelineViewModel = new TimelineViewModel(this._container.navigateTimeUseCase, this._container.eventBus);
-    this._container.renderer = new SVGRenderer(mapContainer, {});
+    this._container.renderer = new SVGRenderer(mapContainer, {}, this._container.layerService);
     this._container.mapView = new MapView(mapContainer, this._container.mapViewModel, this._container.editingViewModel, this._container.viewportManager, this._container.renderer, this._container.configManager);
     this._container.timelineView = new TimelineView(timelineContainer, this._container.timelineViewModel);
     this._container.toolbarView = new ToolbarView(toolbarContainer, this._container.editingViewModel, this._container.mapView);

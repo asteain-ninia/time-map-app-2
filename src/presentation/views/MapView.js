@@ -576,29 +576,9 @@ export class MapView {
     descRow.appendChild(descInput);
     form.appendChild(descRow);
 
-    // カテゴリ選択フィールド
-    const categoryRow = document.createElement('div');
-    categoryRow.style.marginBottom='10px';
-    const categoryLabel = document.createElement('label');
-    categoryLabel.textContent = 'カテゴリ: ';
-    categoryLabel.style.display='block';
-    const categorySelect = document.createElement('select');
-    categorySelect.name = 'category';
-    categorySelect.style.width='100%';
-    const currentTool = this._editingViewModel.getTool();
-    const categories = this._getCategoriesForFeatureType(currentTool); // 現在のツールに対応したカテゴリ一覧を取得
     const defaultTimeRange = typeof this._viewModel.getDefaultPropertyTimeRange === 'function'
       ? this._viewModel.getDefaultPropertyTimeRange()
       : null;
-    categories.forEach(cat => {
-        const option = document.createElement('option');
-        option.value = cat.id; // カテゴリIDを値に設定
-        option.textContent = cat.name; // カテゴリ名を表示
-        categorySelect.appendChild(option);
-    });
-    categoryRow.appendChild(categoryLabel);
-    categoryRow.appendChild(categorySelect);
-    form.appendChild(categoryRow);
 
     // 存在期間入力フィールド
     const timeRow = document.createElement('div');
@@ -658,7 +638,6 @@ export class MapView {
         const properties = {
             name: nameInput.value.trim() || '名称未設定', // 名前が空ならデフォルト値
             description: descInput.value.trim(),
-            category: categorySelect.value || 'default', // カテゴリが空ならデフォルト値
             startYear: (startYearStr !== '') ? Number(startYearStr) : null,
             endYear: (endYearStr !== '') ? Number(endYearStr) : null
         };
@@ -700,12 +679,12 @@ export class MapView {
           ? new TimePoint(properties.endYear + 1)
           : (rangeForFallback?.end || null);
         const propertyTimePoint = startTp || correctTimePoint;
-        const { name, description, category } = properties;
+        const { name, description } = properties;
         const domainProperty = new Property(
             propertyTimePoint,
             name,
             description,
-            { category },
+            {},
             startTp,
             endTp
         );
@@ -718,18 +697,4 @@ export class MapView {
     }
   }
 
-  /** カテゴリ取得ヘルパー */
-  _getCategoriesForFeatureType(featureType) {
-      // デフォルトカテゴリは選択肢に含めない方がUXが良い場合もある
-      const baseCategories = [
-        // { id: '', name: '-- カテゴリ選択 --' }, // 選択肢としての空項目
-        { id: 'default', name: 'デフォルト' }
-      ];
-      switch (featureType) {
-          case 'point': return [...baseCategories, { id: 'city', name: '都市' }, { id: 'town', name: '町村' }, { id: 'battle', name: '戦闘' }, { id: 'ruin', name: '遺跡' }];
-          case 'line': return [...baseCategories, { id: 'road', name: '道路' }, { id: 'railway', name: '鉄道' }, { id: 'river', name: '河川' }, { id: 'trade_route', name: '交易路' }, { id: 'border', name: '国境' }];
-          case 'polygon': return [...baseCategories, { id: 'kingdom', name: '王国' }, { id: 'empire', name: '帝国' }, { id: 'province', name: '地方' }, { id: 'ocean', name: '海洋' }, { id: 'lake', name: '湖沼' }];
-          default: return baseCategories;
-      }
-  }
 }

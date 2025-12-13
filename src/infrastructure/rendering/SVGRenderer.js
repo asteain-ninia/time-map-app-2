@@ -3,6 +3,7 @@
 import { Point } from '../../domain/entities/Point.js';
 import { Line } from '../../domain/entities/Line.js';
 import { Polygon } from '../../domain/entities/Polygon.js';
+import { LayerService } from '../../domain/services/LayerService.js';
 import {
   getPointStyle,
   getLineStyle,
@@ -18,7 +19,7 @@ export class SVGRenderer {
    * @param {HTMLElement} container - SVG要素を配置するコンテナ
    * @param {Object} [options={}] - レンダリングオプション (グリッド関連は削除)
    */
-  constructor(container, options = {}) {
+  constructor(container, options = {}, layerService = null) {
     this._container = container;
     this._svg = null;
     this._defs = null;
@@ -46,6 +47,7 @@ export class SVGRenderer {
       showGrid: true, // グリッド表示状態 (これはUIトグル用なので残す)
       ...options
     };
+    this._layerService = layerService || new LayerService();
 
     this._initSVG();
   }
@@ -190,21 +192,21 @@ render(world, viewport, currentTime, projectSettings) {
 
     // 面 → 線 → 点の順で描画
     for (const polygon of polygons) {
-      const element = this._renderPolygon(polygon, world.vertices, currentTime, viewport, projectSettings); // currentTime を渡す
+      const element = this._renderPolygon(polygon, layer, world.vertices, currentTime, viewport, projectSettings); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
     }
 
     for (const line of lines) {
-      const element = this._renderLine(line, world.vertices, currentTime, viewport); // currentTime を渡す
+      const element = this._renderLine(line, layer, world.vertices, currentTime, viewport); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
     }
 
     for (const point of points) {
-      const element = this._renderPoint(point, world.vertices, currentTime, viewport); // currentTime を渡す
+      const element = this._renderPoint(point, layer, world.vertices, currentTime, viewport); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
@@ -419,7 +421,7 @@ _renderGrid(viewport, gridSettings) {
    * @returns {SVGElement | null} SVG要素
    * @private
    */
-  _renderPoint(point, vertices, currentTime, viewport) {
+  _renderPoint(point, layer, vertices, currentTime, viewport) {
     const property = point.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
     if (!property) return null; // 修正: property が null なら描画しない
 
@@ -428,8 +430,8 @@ _renderGrid(viewport, gridSettings) {
     const vertex = vertices.find(v => v.id === vertexId);
     if (!vertex) return null;
 
-    // カテゴリに基づいたスタイルを取得
-    const style = this._getPointStyle(property);
+    // レイヤーに基づいたスタイルを取得
+    const style = this._getPointStyle(layer);
 
     // グループ要素を作成 (これは地物ごとに1つ)
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -498,7 +500,7 @@ _renderGrid(viewport, gridSettings) {
    * @returns {SVGElement | null} SVG要素
    * @private
    */
-  _renderLine(line, vertices, currentTime, viewport) {
+  _renderLine(line, layer, vertices, currentTime, viewport) {
     const property = line.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
     if (!property) return null; // 修正: property が null なら描画しない
 
@@ -506,8 +508,8 @@ _renderGrid(viewport, gridSettings) {
     const lineVerticesOriginal = line.vertexIds.map(id => vertices.find(v => v.id === id));
     if (lineVerticesOriginal.some(v => !v) || lineVerticesOriginal.length < 2) return null;
 
-    // カテゴリに基づいたスタイルを取得
-    const style = this._getLineStyle(property);
+    // レイヤーに基づいたスタイルを取得
+    const style = this._getLineStyle(layer);
 
     // グループ要素を作成 (地物ごとに1つ)
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -589,7 +591,7 @@ _renderGrid(viewport, gridSettings) {
    * @returns {SVGElement | null} SVG要素、または描画できない場合はnull
    * @private
    */
-  _renderPolygon(polygon, vertices, currentTime, viewport, projectSettings) {
+  _renderPolygon(polygon, layer, vertices, currentTime, viewport, projectSettings) {
     const property = polygon.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
     if (!property) return null; // 修正: property が null なら描画しない
 
@@ -604,8 +606,8 @@ _renderGrid(viewport, gridSettings) {
     group.setAttribute("class", `polygon-${polygon.id}`);
     group.setAttribute("data-id", polygon.id);
 
-    // カテゴリに基づいたスタイルを取得
-    const style = this._getPolygonStyle(property);
+    // レイヤーに基づいたスタイルを取得
+    const style = this._getPolygonStyle(layer);
 
     // 共通スタイル
     const fill = style.fill;
@@ -964,8 +966,8 @@ toWorldY(svgY, viewport) {
    * @returns {Object} スタイル情報
    * @private
    */
-  _getPointStyle(property) {
-    return getPointStyle(property);
+  _getPointStyle(layer) {
+    return getPointStyle(this._layerService, layer);
   }
 
   /**
@@ -974,8 +976,8 @@ toWorldY(svgY, viewport) {
    * @returns {Object} スタイル情報
    * @private
    */
-  _getLineStyle(property) {
-    return getLineStyle(property);
+  _getLineStyle(layer) {
+    return getLineStyle(this._layerService, layer);
   }
 
   /**
@@ -984,8 +986,8 @@ toWorldY(svgY, viewport) {
    * @returns {Object} スタイル情報
    * @private
    */
-  _getPolygonStyle(property) {
-    return getPolygonStyle(property);
+  _getPolygonStyle(layer) {
+    return getPolygonStyle(this._layerService, layer);
   }
 
   /**

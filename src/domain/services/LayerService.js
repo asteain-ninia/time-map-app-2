@@ -1,5 +1,38 @@
 import { Coordinate } from '../value-objects/Coordinate';
 
+const DEFAULT_LAYER_STYLES = Object.freeze({
+  point: Object.freeze({
+    radius: 5,
+    fill: "#3388ff",
+    stroke: "#000000",
+    strokeWidth: 1,
+    textColor: "#000000",
+    fontSize: 10,
+    showLabel: true,
+  }),
+  line: Object.freeze({
+    stroke: "#3388ff",
+    strokeWidth: 3,
+    strokeDasharray: "",
+    textColor: "#000000",
+    fontSize: 10,
+    showLabel: true,
+  }),
+  polygon: Object.freeze({
+    fill: "#ffcc88",
+    stroke: "#ff8800",
+    strokeWidth: 3,
+    fillOpacity: 0.7,
+    textColor: "#000000",
+    fontSize: 12,
+    showLabel: true,
+  }),
+});
+
+function cloneStyle(style) {
+  return { ...style };
+}
+
 function buildVertexMap(allVertices) {
   const map = new Map();
   if (!Array.isArray(allVertices)) {
@@ -330,6 +363,24 @@ export class LayerService {
     }
 
     return true;
+  }
+
+  /**
+   * レイヤーと地物種別に紐づく描画スタイルを取得
+   * @param {Layer|null} layer - スタイルを取得するレイヤー
+   * @param {'point'|'line'|'polygon'} featureType - 地物種別
+   * @returns {Object} 描画スタイル
+   */
+  getLayerStyle(layer, featureType) {
+    const baseStyle = DEFAULT_LAYER_STYLES[featureType];
+    const resolvedBase = baseStyle ? cloneStyle(baseStyle) : {};
+    const overrides = layer && layer.style && typeof layer.style === 'object'
+      ? layer.style[featureType]
+      : null;
+    if (!overrides || typeof overrides !== 'object') {
+      return resolvedBase;
+    }
+    return { ...resolvedBase, ...overrides };
   }
 }
 

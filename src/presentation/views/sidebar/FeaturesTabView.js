@@ -88,18 +88,18 @@ export class FeaturesTabView {
       return;
     }
 
-    // カテゴリーごとにグループ化
-    const categorizedFeatures = this._categorizeFeaturesBy(filteredFeatures, currentTime);
+    // レイヤーごとにグループ化
+    const groupedByLayer = this._groupFeaturesByLayer(filteredFeatures);
 
-    // カテゴリーごとに表示
-    Object.keys(categorizedFeatures).sort().forEach(categoryName => { // カテゴリ名をソートして表示
-      const categoryGroup = document.createElement('div');
-      categoryGroup.className = 'feature-category';
-      categoryGroup.style.marginBottom = '10px';
+    // レイヤーごとに表示
+    groupedByLayer.forEach(group => {
+      const layerGroup = document.createElement('div');
+      layerGroup.className = 'feature-layer-group';
+      layerGroup.style.marginBottom = '10px';
 
-      const categoryHeader = document.createElement('h3');
-      categoryHeader.textContent = categoryName;
-      categoryHeader.style.cssText = `
+      const layerHeader = document.createElement('h3');
+      layerHeader.textContent = group.title;
+      layerHeader.style.cssText = `
         margin: 5px 0;
         padding: 5px;
         background-color: #eee;
@@ -108,16 +108,16 @@ export class FeaturesTabView {
         font-weight: bold;
       `;
 
-      const categoryContent = document.createElement('div');
-      categoryContent.className = 'category-content';
-      // categoryContent.style.display = 'none'; // 初期状態は折りたたむ場合
+      const layerContent = document.createElement('div');
+      layerContent.className = 'layer-content';
+      // layerContent.style.display = 'none'; // 初期状態は折りたたむ場合
 
-      categoryHeader.addEventListener('click', () => {
-        categoryContent.style.display =
-          categoryContent.style.display === 'none' ? 'block' : 'none';
+      layerHeader.addEventListener('click', () => {
+        layerContent.style.display =
+          layerContent.style.display === 'none' ? 'block' : 'none';
       });
 
-      categorizedFeatures[categoryName].forEach(feature => {
+      group.features.forEach(feature => {
         const prop = feature.getPropertyAt(currentTime);
         if (!prop) return;
 
@@ -146,12 +146,12 @@ export class FeaturesTabView {
         });
 
         featureItem.appendChild(nameLabel);
-        categoryContent.appendChild(featureItem);
+        layerContent.appendChild(featureItem);
       });
 
-      categoryGroup.appendChild(categoryHeader);
-      categoryGroup.appendChild(categoryContent);
-      this._featuresContainer.appendChild(categoryGroup);
+      layerGroup.appendChild(layerHeader);
+      layerGroup.appendChild(layerContent);
+      this._featuresContainer.appendChild(layerGroup);
     });
   }
 
@@ -177,66 +177,42 @@ export class FeaturesTabView {
   }
 
   /**
-   * 地物をカテゴリでグループ化
+   * 地物をレイヤー単位でグループ化
    * @param {Array<Feature>} features - 地物の配列
-   * @param {TimePoint} currentTime - 現在の時間
-   * @returns {Object} カテゴリごとの地物オブジェクト
+   * @returns {Array<{title: string, layerId: string|null, features: Feature[]}>} レイヤーごとの情報
    * @private
    */
-  _categorizeFeaturesBy(features, currentTime) {
-    const categorized = {};
-    features.forEach(feature => {
-      const property = feature.getPropertyAt(currentTime);
-      if (!property) return;
-
-      let category = property.getAttribute('category');
-      if (!category || category === 'default' || category === '') {
-        // 地物の種類に基づいてフォールバックカテゴリを設定
-        if (feature.constructor.name === 'Point') category = '点情報';
-        else if (feature.constructor.name === 'Line') category = '線情報';
-        else if (feature.constructor.name === 'Polygon') category = '面情報';
-        else category = 'その他';
-      } else {
-        category = this._getCategoryDisplayName(category); // 既存の表示名変換を利用
-      }
-      
-      if (!categorized[category]) {
-        categorized[category] = [];
-      }
-      categorized[category].push(feature);
+  _groupFeaturesByLayer(features) {
+    const world = typeof this._mapViewModel.getWorld === 'function'
+      ? this._mapViewModel.getWorld()
+      : null;
+    const sortedLayers = world && Array.isArray(world.layers)
+      ? [...world.layers].sort((a, b) => a.order - b.order)
+      : [];
+    const layerBuckets = [];
+    const layerBucketMap = new Map();
+    sortedLayers.forEach(layer => {
+      const bucket = {
+        title: layer.name || `レイヤー (${layer.id})`,
+        layerId: layer.id,
+        features: []
+      };
+      layerBuckets.push(bucket);
+      layerBucketMap.set(layer.id, bucket);
     });
-    return categorized;
-  }
 
-  /**
-   * カテゴリ表示名の取得 (SidebarViewから移植)
-   * @param {string} category - カテゴリID
-   * @returns {string} 表示名
-   * @private
-   */
-  _getCategoryDisplayName(category) {
-    const categoryMap = {
-      'city': '都市',
-      'town': '町村',
-      'battle': '戦闘',
-      'ruin': '遺跡',
-      'road': '道路',
-      'railway': '鉄道',
-      'river': '河川',
-      'trade_route': '交易路',
-      'border': '国境',
-      'kingdom': '王国',
-      'empire': '帝国',
-      'province': '地方',
-      'ocean': '海洋',
-      'lake': '湖沼',
-      'point': '点情報',
-      'line': '線情報',
-      'polygon': '面情報', // 型ベースのフォールバック
-      'other': 'その他',
-      'default': 'デフォルト'
-    };
-    return categoryMap[category.toLowerCase()] || category; // 小文字で比較
+    const fallbackBucket = { title: '不明なレイヤー', layerId: null, features: [] };
+
+    features.forEach(feature => {
+      const bucket = layerBucketMap.get(feature.layerId) || fallbackBucket;
+      bucket.features.push(feature);
+    });
+
+    const result = layerBuckets.filter(bucket => bucket.features.length > 0);
+    if (fallbackBucket.features.length > 0) {
+      result.push(fallbackBucket);
+    }
+    return result;
   }
 
   /**
