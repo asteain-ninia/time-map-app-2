@@ -283,8 +283,8 @@ export class MapViewInteractionLogic {
            // 頂点が見つからない場合、地物を検索 (包含関係・ネスト考慮)
            const clickedFeature = this.findClosestFeature(worldPoint);
            if (clickedFeature) {
-                // 地物選択時は常に単一選択 (addToSelection は無視)
-                this._viewModel.selectFeature(clickedFeature.id);
+                // 地物選択はShiftなどの追加選択にも対応
+                this._viewModel.selectFeature(clickedFeature.id, addToSelection);
            } else if (!addToSelection) {
                 // 何もヒットせず、追加選択でもない場合は選択解除
                 this._viewModel.clearSelection();
@@ -297,13 +297,13 @@ export class MapViewInteractionLogic {
    * ビューモードでのクリック処理
    * @param {object} worldPoint - ワールド座標 {x, y}
    */
-  handleClickInViewMode(worldPoint) {
+  handleClickInViewMode(worldPoint, addToSelection = false) {
     console.log("Click at World (view mode):", worldPoint.x, worldPoint.y);
     // findClosestFeature は包含関係を考慮するようになった
     const clickedFeature = this.findClosestFeature(worldPoint);
     if (clickedFeature) {
-        this._viewModel.selectFeature(clickedFeature.id);
-    } else {
+        this._viewModel.selectFeature(clickedFeature.id, addToSelection);
+    } else if (!addToSelection) {
         this._viewModel.clearSelection();
     }
   }

@@ -51,6 +51,10 @@ export class PropertiesTabView {
   update() {
     // --- 変更ここから ---
     const featureForProperties = this._mapViewModel.getSelectionContextFeature();
+    const selectedFeatureIds = typeof this._mapViewModel.getSelectedFeatureIds === 'function'
+      ? this._mapViewModel.getSelectedFeatureIds()
+      : new Set();
+    const hasFeatureMultiSelection = selectedFeatureIds.size > 1;
     const selectedVertexIds = typeof this._mapViewModel.getSelectedVertexIds === 'function'
       ? this._mapViewModel.getSelectedVertexIds()
       : new Set();
@@ -65,7 +69,9 @@ export class PropertiesTabView {
 
     // --- 変更ここから ---
     if (!featureForProperties) {
-      if (ownerIdList.length > 1) {
+      if (hasFeatureMultiSelection) {
+        this._renderMultiSelectionMessage(Array.from(selectedFeatureIds));
+      } else if (ownerIdList.length > 1) {
         this._renderMultiSelectionMessage(ownerIdList);
       } else if (hasVertexSelection && ownerIdList.length === 0) {
         this._renderAmbiguousSelectionMessage();

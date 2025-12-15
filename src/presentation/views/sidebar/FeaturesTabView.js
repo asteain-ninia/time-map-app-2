@@ -132,16 +132,18 @@ export class FeaturesTabView {
         `;
         featureItem.dataset.featureId = feature.id; // 地物IDをdata属性に
 
-        const activeFeatureId = this._mapViewModel.getActiveFeatureId();
-        if (activeFeatureId === feature.id) {
+        const selectedFeatureIds = typeof this._mapViewModel.getSelectedFeatureIds === 'function'
+          ? this._mapViewModel.getSelectedFeatureIds()
+          : new Set();
+        if (selectedFeatureIds.has(feature.id)) {
           featureItem.style.backgroundColor = '#d0e0ff'; // 選択中の地物のスタイル
         }
 
         const nameLabel = document.createElement('span');
         nameLabel.textContent = prop.name || '名称なし';
 
-        featureItem.addEventListener('click', () => {
-          this._mapViewModel.selectFeature(feature.id);
+        featureItem.addEventListener('click', ev => {
+          this._mapViewModel.selectFeature(feature.id, ev.shiftKey === true);
           // クリックされたアイテムのスタイル更新はViewModelの通知経由で行う
         });
 

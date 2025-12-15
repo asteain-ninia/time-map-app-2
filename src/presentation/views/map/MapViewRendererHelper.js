@@ -48,7 +48,9 @@ export class MapViewRendererHelper {
   renderSelection() {
     this.clearPersistentVertexMarkers();
     this.clearSelectionHighlights();
-    const activeFeatureId = this._viewModel.getActiveFeatureId();
+    const selectedFeatureIds = typeof this._viewModel.getSelectedFeatureIds === 'function'
+      ? this._viewModel.getSelectedFeatureIds()
+      : new Set();
     const selectedVertexIds = this._viewModel.getSelectedVertexIds(); // Set<string>
     const vertexContextFeatureId = this._viewModel.getVertexSelectionContextId();
     const vertexOwnerIds = this._viewModel.getVertexSelectionOwnerIds();
@@ -74,70 +76,68 @@ export class MapViewRendererHelper {
         return verticesMap.get(vertexId); // {id, x, y}
     };
 
-    // 主選択地物
-    if (activeFeatureId) {
-        const feature = this._viewModel.getFeatures().find(f => f.id === activeFeatureId);
-        if (feature && feature.existsAt(currentTime)) {
-            const style = editingStyles.selectedOutline;
-            for (const offsetX of finalOffsets) {
-                if (feature instanceof DomainPoint) {
-                    const vData = verticesMap.get(feature.vertexId); // Points always have original data for this
-                    if (vData && !selectedVertexIds.has(vData.id) && !draggingVerticesInfo.has(vData.id)) { // Only draw if not specially handled
-                        const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, editingStyles.selectedPointOutline, viewport);
-                        if (elem) this._selectionElements.push(elem);
+    const renderFeatureSelection = (feature) => {
+        const style = editingStyles.selectedOutline;
+        for (const offsetX of finalOffsets) {
+            if (feature instanceof DomainPoint) {
+                const vData = verticesMap.get(feature.vertexId);
+                if (vData && !selectedVertexIds.has(vData.id) && !draggingVerticesInfo.has(vData.id)) {
+                    const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, editingStyles.selectedPointOutline, viewport);
+                    if (elem) this._selectionElements.push(elem);
+                }
+            } else if (feature instanceof DomainLine) {
+                const linePoints = feature.vertexIds.map(id => {
+                    const v = verticesMap.get(id);
+                    return v ? { x: v.x + offsetX, y: v.y } : null;
+                }).filter(Boolean);
+                if (linePoints.length >= 2) {
+                    const elem = this._renderer.drawLine(linePoints, style, viewport);
+                    if (elem) this._selectionElements.push(elem);
+                }
+                feature.vertexIds.forEach(id => {
+                    const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
+                    if (vData) {
+                        const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                        if (marker) this._selectionElements.push(marker);
                     }
-                } else if (feature instanceof DomainLine) {
-                    const linePoints = feature.vertexIds.map(id => {
-                        const v = verticesMap.get(id); // Always use current data for path
-                        return v ? { x: v.x + offsetX, y: v.y } : null;
-                    }).filter(Boolean);
-                    if (linePoints.length >= 2) {
-                        const elem = this._renderer.drawLine(linePoints, style, viewport);
-                        if (elem) this._selectionElements.push(elem);
+                });
+            } else if (feature instanceof DomainPolygon) {
+                if (feature.rings && Array.isArray(feature.rings)) {
+                    if (editingStyles.selectedPolygonFill && editingStyles.selectedPolygonFill.fill !== 'none') {
+                        const loopSets = buildPolygonFillLoopSets(feature, verticesMap, offsetX);
+                        for (const loops of loopSets) {
+                            const fillElem = this._renderer.drawPolygonLoops(loops, editingStyles.selectedPolygonFill, viewport);
+                            if (fillElem) this._selectionElements.push(fillElem);
+                        }
                     }
-                    // 通常頂点マーカー
-                    feature.vertexIds.forEach(id => {
-                        const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
-                        if (vData) {
-                            const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
-                            if (marker) this._selectionElements.push(marker);
-                        }
-                    });
-                } else if (feature instanceof DomainPolygon) {
-                    if (feature.rings && Array.isArray(feature.rings)) {
-                        if (editingStyles.selectedPolygonFill && editingStyles.selectedPolygonFill.fill !== 'none') {
-                            const loopSets = buildPolygonFillLoopSets(feature, verticesMap, offsetX);
-                            for (const loops of loopSets) {
-                                const fillElem = this._renderer.drawPolygonLoops(loops, editingStyles.selectedPolygonFill, viewport);
-                                if (fillElem) this._selectionElements.push(fillElem);
-                            }
-                        }
-                        feature.rings.forEach(ring => {
-                             const ringPoints = ring.vertexIds.map(id => {
-                                 const v = verticesMap.get(id); // Always use current data for path
-                                 return v ? { x: v.x + offsetX, y: v.y } : null;
-                             }).filter(Boolean);
-                             if (ringPoints.length >= 3) {
-                                 const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport);
-                                 if (elem) this._selectionElements.push(elem);
+                    feature.rings.forEach(ring => {
+                         const ringPoints = ring.vertexIds.map(id => {
+                             const v = verticesMap.get(id);
+                             return v ? { x: v.x + offsetX, y: v.y } : null;
+                         }).filter(Boolean);
+                         if (ringPoints.length >= 3) {
+                             const elem = this._renderer.drawLine([...ringPoints, ringPoints[0]], style, viewport);
+                             if (elem) this._selectionElements.push(elem);
+                         }
+                         ring.vertexIds.forEach(id => {
+                             const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
+                             if (vData) {
+                                 const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                                 if (marker) this._selectionElements.push(marker);
                              }
-                             // 通常頂点マーカー
-                             ring.vertexIds.forEach(id => {
-                                 const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
-                                 if (vData) {
-                                     const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
-                                     if (marker) this._selectionElements.push(marker);
-                                 }
-                             });
-                        });
-                    }
+                         });
+                    });
                 }
             }
         }
-    }
+    };
+
+    // 選択地物 (複数対応)
+    const selectedFeatures = this._viewModel.getFeatures().filter(f => selectedFeatureIds.has(f.id) && f.existsAt(currentTime));
+    selectedFeatures.forEach(feature => renderFeatureSelection(feature));
 
     const renderContextFeature = (featureId) => {
-        if (!featureId || featureId === activeFeatureId) return;
+        if (!featureId || selectedFeatureIds.has(featureId)) return;
         const feature = this._viewModel.getFeatures().find(f => f.id === featureId);
         if (!feature || !feature.existsAt(currentTime)) return;
         const style = editingStyles.highlightOutline;

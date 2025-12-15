@@ -157,7 +157,10 @@ export class MapView {
       // 他のタイプのイベントはここでは処理しない
     }
     if (type === 'activeFeature') {
-        this._syncAddHoleToolTarget(data);
+        const primaryFeature = Array.isArray(data)
+          ? (data.length === 1 ? data[0] : this._viewModel.getActiveFeature())
+          : data;
+        this._syncAddHoleToolTarget(primaryFeature);
     }
   }
 

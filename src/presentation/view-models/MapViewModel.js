@@ -37,7 +37,8 @@ export class MapViewModel {
     // マップの状態
     this._world = null;
     this._features = []; // 現在の時間点で表示される地物の配列
-    this._activeFeatureId = null; // (string | null) 明示的に選択されている地物のID
+    this._selectedFeatureIds = new Set(); // (Set<string>) 選択されている地物ID集合
+    this._primaryFeatureId = null; // (string | null) 直近に選択された地物のID
     this._selectedVertexIds = new Set(); // (Set<string>) 選択されている頂点のIDセット
     this._vertexContextFeatureId = null; // (string | null) 頂点選択から一意に導かれる地物のID
     this._selectedVertexOwnerIds = new Set(); // (Set<string>) 頂点選択に関与する地物ID集合
@@ -108,13 +109,27 @@ export class MapViewModel {
       feature.existsAt(currentTime) && (layers.length === 0 || visibleLayerIds.has(feature.layerId))
     );
 
-    // 選択中の地物が現在の時間で存在しない場合は選択を解除
-    if (this._activeFeatureId && !this._features.some(f => f.id === this._activeFeatureId)) {
-        this.clearSelection(); // 選択解除
+    // 選択中の地物が現在の時間で存在しない場合は選択セットから除外
+    if (this._selectedFeatureIds.size > 0) {
+        const visibleFeatureIds = new Set(this._features.map(f => f.id));
+        const nextSelected = new Set();
+        this._selectedFeatureIds.forEach(id => {
+            if (visibleFeatureIds.has(id)) {
+                nextSelected.add(id);
+            }
+        });
+        if (nextSelected.size !== this._selectedFeatureIds.size) {
+            this._selectedFeatureIds = nextSelected;
+            this._primaryFeatureId = nextSelected.size > 0 ? Array.from(nextSelected).pop() : null;
+            this._notifyObservers('activeFeature');
+        }
+        if (this._selectedFeatureIds.size === 0) {
+            this._primaryFeatureId = null;
+        }
     }
     // 選択中の頂点が現在の時間で存在しない地物に属する場合も解除
     // また、world.vertices に存在しない頂点IDも選択から除外する
-    else if (this._selectedVertexIds.size > 0) {
+    if (this._selectedVertexIds.size > 0) {
         const currentVertexIds = new Set(this._world.vertices.map(v => v.id));
         const existingSelectedVertexIds = new Set();
         let selectionChanged = false;
@@ -233,8 +248,8 @@ export class MapViewModel {
     this._loadFeaturesForCurrentTime();
 
     // 更新された地物が選択中の場合、選択ハイライトを再描画するために通知
-    if (this._activeFeatureId === event.feature.id) {
-        this._notifyObservers('activeFeature', event.feature);
+    if (this._selectedFeatureIds.has(event.feature.id)) {
+        this._notifyObservers('activeFeature');
     }
     if (this._vertexContextFeatureId === event.feature.id) {
         this._notifyObservers('vertexContextFeature', event.feature);
@@ -252,9 +267,12 @@ export class MapViewModel {
     const featureIdToDelete = event.featureId;
     let selectionAffected = false;
 
-    // 削除された地物が主選択されていた場合
-    if (this._activeFeatureId === featureIdToDelete) {
-      this.clearSelection(); // 地物・頂点・ハイライトすべて解除
+    // 削除された地物が選択されていた場合
+    if (this._selectedFeatureIds.has(featureIdToDelete)) {
+      this._selectedFeatureIds.delete(featureIdToDelete);
+      if (this._primaryFeatureId === featureIdToDelete) {
+          this._primaryFeatureId = this._selectedFeatureIds.size > 0 ? Array.from(this._selectedFeatureIds).pop() : null;
+      }
       selectionAffected = true;
     }
     // 削除された地物がハイライトされていた場合 (頂点選択中)
@@ -282,6 +300,10 @@ export class MapViewModel {
 
     // 地物をリロード (選択解除後に行う)
     this._loadFeaturesForCurrentTime();
+
+    if (selectionAffected) {
+        this._notifyObservers('activeFeature');
+    }
 
     // もし選択状態に影響がなければ、明示的に再描画をトリガー
     // (選択解除されていれば _loadFeaturesForCurrentTime 内の clearSelection で通知される)
@@ -317,16 +339,37 @@ export class MapViewModel {
    * 特定レイヤーに関連する選択を解除するヘルパー
    * @param {string} layerId - 非表示になったレイヤーID
    * @private
-   */
+  */
   _clearSelectionForLayer(layerId) {
     let selectionChanged = false;
 
     // 選択中の地物がこのレイヤーに属していれば解除
-    if (this._activeFeatureId) {
-        const selectedFeature = this.getActiveFeature(); // getWorldから取得するのでレイヤーIDは最新のはず
-        if (selectedFeature && selectedFeature.layerId === layerId) {
-            this.clearSelection();
-            return; // 地物選択が解除されれば頂点選択もクリアされる
+    if (this._selectedFeatureIds.size > 0) {
+        const remaining = new Set();
+        this._selectedFeatureIds.forEach(id => {
+            const feature = this._world?.features.find(f => f.id === id);
+            if (!feature || feature.layerId === layerId) {
+                selectionChanged = true;
+            } else {
+                remaining.add(id);
+            }
+        });
+        if (selectionChanged) {
+            this._selectedFeatureIds = remaining;
+            this._primaryFeatureId = remaining.size > 0 ? Array.from(remaining).pop() : null;
+            // 地物選択が変わったので頂点選択もクリア
+            const hadVertices = this._selectedVertexIds.size > 0;
+            this._selectedVertexIds.clear();
+            this._vertexContextFeatureId = null;
+            this._selectedVertexOwnerIds.clear();
+            this._notifyObservers('activeFeature');
+            if (hadVertices) {
+                this._notifyObservers('selectedVertices');
+            }
+            this._notifyObservers('vertexContextFeature');
+            if (this._selectedFeatureIds.size === 0) {
+                return;
+            }
         }
     }
 
@@ -474,22 +517,61 @@ export class MapViewModel {
   /**
    * 地物を選択
    * @param {string} featureId - 選択する地物のID
+   * @param {boolean} [addToSelection=false] - 既存選択に追加/トグルするか
    */
-  selectFeature(featureId) {
+  selectFeature(featureId, addToSelection = false) {
     if (!this._world) return;
 
     const feature = this._features.find(f => f.id === featureId);
-    const newSelectedFeatureId = feature ? feature.id : null;
+    if (!feature) {
+        if (!addToSelection && (this._selectedFeatureIds.size > 0 || this._selectedVertexIds.size > 0 || this._vertexContextFeatureId !== null)) {
+            this.clearSelection();
+        }
+        return;
+    }
 
-    // 状態変更があった場合のみ通知
-    if (this._activeFeatureId !== newSelectedFeatureId || this._selectedVertexIds.size > 0 || this._vertexContextFeatureId !== null) {
-        this._activeFeatureId = newSelectedFeatureId;
-        this._selectedVertexIds.clear(); // 地物選択時は頂点選択をクリア
-        this._vertexContextFeatureId = null; // 地物選択時は頂点コンテキストもクリア
-        this._selectedVertexOwnerIds.clear();
+    let selectionChanged = false;
+    const nextSelected = addToSelection ? new Set(this._selectedFeatureIds) : new Set();
 
+    if (addToSelection) {
+        if (nextSelected.has(feature.id)) {
+            nextSelected.delete(feature.id);
+            selectionChanged = true;
+        } else {
+            nextSelected.add(feature.id);
+            selectionChanged = true;
+        }
+    } else {
+        if (nextSelected.size !== 1 || !nextSelected.has(feature.id) || this._primaryFeatureId !== feature.id) {
+            nextSelected.clear();
+            nextSelected.add(feature.id);
+            selectionChanged = true;
+        }
+    }
+
+    if (!selectionChanged && this._selectedVertexIds.size === 0 && this._vertexContextFeatureId === null) {
+        return;
+    }
+
+    const previousPrimary = this._primaryFeatureId;
+    this._selectedFeatureIds = nextSelected;
+    if (this._selectedFeatureIds.size > 0) {
+        this._primaryFeatureId = nextSelected.has(feature.id) ? feature.id : Array.from(nextSelected).pop();
+    } else {
+        this._primaryFeatureId = null;
+    }
+
+    // 地物選択時は頂点選択をクリア
+    const hadVertices = this._selectedVertexIds.size > 0;
+    this._selectedVertexIds.clear();
+    this._vertexContextFeatureId = null;
+    this._selectedVertexOwnerIds.clear();
+
+    if (selectionChanged || hadVertices || previousPrimary !== this._primaryFeatureId) {
         this._notifyObservers('activeFeature');
-        this._notifyObservers('selectedVertices');
+        if (hadVertices) {
+            this._notifyObservers('selectedVertices');
+        }
         this._notifyObservers('vertexContextFeature');
     }
   }
@@ -505,7 +587,7 @@ export class MapViewModel {
     const vertex = this._world.vertices.find(v => v.id === vertexId);
     if (!vertex) {
          if (!addToSelection) { // 単一選択モードで存在しない頂点をクリックしたらクリア
-             if (this._selectedVertexIds.size > 0 || this._activeFeatureId !== null || this._vertexContextFeatureId !== null) {
+             if (this._selectedVertexIds.size > 0 || this._selectedFeatureIds.size > 0 || this._vertexContextFeatureId !== null) {
                  this.clearSelection();
              }
          }
@@ -550,20 +632,21 @@ export class MapViewModel {
     }
 
     // 状態変更があった場合のみ通知
-    if (vertexSelectionChanged || this._activeFeatureId !== null || this._vertexContextFeatureId !== null) {
-        const previousActiveFeatureId = this._activeFeatureId;
+    if (vertexSelectionChanged || this._selectedFeatureIds.size > 0 || this._vertexContextFeatureId !== null) {
+        const hadFeatures = this._selectedFeatureIds.size > 0;
 
         this._selectedVertexIds = newSelectedVertexIds;
 
         if (this._selectedVertexIds.size > 0) {
-            this._activeFeatureId = null;
+            this._selectedFeatureIds.clear();
+            this._primaryFeatureId = null;
         }
 
         const contextChanged = this._applyVertexSelectionContext();
 
         this._notifyObservers('selectedVertices');
 
-        if (previousActiveFeatureId !== this._activeFeatureId) {
+        if (hadFeatures) {
             this._notifyObservers('activeFeature');
         }
         if (contextChanged) {
@@ -643,11 +726,12 @@ export class MapViewModel {
    * 選択を解除
    */
   clearSelection() {
-    const changedFeature = this._activeFeatureId !== null;
+    const changedFeature = this._selectedFeatureIds.size > 0;
     const changedVertices = this._selectedVertexIds.size > 0;
     const changedHighlight = this._vertexContextFeatureId !== null;
 
-    this._activeFeatureId = null;
+    this._selectedFeatureIds.clear();
+    this._primaryFeatureId = null;
     this._selectedVertexIds.clear();
     this._vertexContextFeatureId = null;
     this._selectedVertexOwnerIds.clear();
@@ -848,8 +932,8 @@ export class MapViewModel {
       case 'features':
         // 表示中の地物リスト（ドメインインスタンスの配列）
         return this._features;
-      case 'activeFeature': // 主選択地物の変更
-        return this.getActiveFeature(); // ゲッター経由でドメインインスタンスを返す
+      case 'activeFeature': // 選択地物の変更
+        return this.getSelectedFeatures(); // 選択中の地物配列を返す
       case 'selectedVertices': // 主選択頂点の変更
         return this.getSelectedVertices(); // ゲッター経由でVertexインスタンスの配列を返す
       case 'vertexContextFeature': // ハイライト地物の変更
@@ -942,11 +1026,19 @@ export class MapViewModel {
 
 
   /**
-   * 選択中の地物IDを取得
-   * @returns {string | null} 選択中の地物ID
+   * 選択中の地物IDを取得（主選択）
+   * @returns {string | null} 主選択中の地物ID
    */
   getActiveFeatureId() {
-      return this._activeFeatureId;
+      return this._primaryFeatureId;
+  }
+
+  /**
+   * 選択中の地物ID集合を取得
+   * @returns {Set<string>} 選択中の地物IDセット
+   */
+  getSelectedFeatureIds() {
+      return new Set(this._selectedFeatureIds);
   }
 
   /**
@@ -982,13 +1074,24 @@ export class MapViewModel {
   }
 
   /**
-   * 選択中の地物オブジェクトを取得
-   * @returns {Feature | null} 選択中の地物オブジェクト、またはnull
+   * 選択中の地物オブジェクトを取得（主選択）
+   * @returns {Feature | null} 主選択中の地物オブジェクト、またはnull
    */
   getActiveFeature() {
-    if (!this._world || !this._activeFeatureId) return null;
+    if (!this._world || !this._primaryFeatureId) return null;
     // _world.features から探す
-    return this._world.features.find(f => f.id === this._activeFeatureId) || null;
+    return this._world.features.find(f => f.id === this._primaryFeatureId) || null;
+  }
+
+  /**
+   * 選択中の地物オブジェクト配列を取得
+   * @returns {Array<Feature>}
+   */
+  getSelectedFeatures() {
+    if (!this._world || !Array.isArray(this._world.features)) return [];
+    const selectedIds = this._selectedFeatureIds;
+    if (selectedIds.size === 0) return [];
+    return this._world.features.filter(f => selectedIds.has(f.id));
   }
 
   /**
@@ -1022,7 +1125,13 @@ export class MapViewModel {
    * @returns {Feature | null}
    */
   getSelectionContextFeature() {
-      return this.getActiveFeature() || this.getVertexSelectionContextFeature();
+      if (this._vertexContextFeatureId) {
+          return this.getVertexSelectionContextFeature();
+      }
+      if (this._selectedFeatureIds.size === 1) {
+          return this.getActiveFeature();
+      }
+      return null;
   }
 
   /**

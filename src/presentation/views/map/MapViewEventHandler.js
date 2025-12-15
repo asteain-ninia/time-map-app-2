@@ -310,7 +310,7 @@ export class MapViewEventHandler {
             const svgPointRaw = this._getSVGPoint(pageX, pageY);
             const worldPoint = this._svgToWorld(svgPointRaw);
             if (worldPoint) {
-                this._interactionLogic.handleClickInViewMode(worldPoint);
+                this._interactionLogic.handleClickInViewMode(worldPoint, event.shiftKey === true);
             }
         }
         // 'add' モードのクリックは MouseDown で点追加済み
@@ -476,9 +476,11 @@ export class MapViewEventHandler {
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
     const subMode = this._editingViewModel.getAddingSubMode();
-    const activeFeatureId = this._viewModel.getActiveFeatureId();
+    const selectedFeatureIds = typeof this._viewModel.getSelectedFeatureIds === 'function'
+      ? this._viewModel.getSelectedFeatureIds()
+      : new Set();
     const selectedVertexIdsSnapshot = this._viewModel.getSelectedVertexIds();
-    const hasSelection = !!activeFeatureId || selectedVertexIdsSnapshot.size > 0;
+    const hasSelection = selectedFeatureIds.size > 0 || selectedVertexIdsSnapshot.size > 0;
 
     if (event.key === 'Escape') {
        event.preventDefault();
@@ -519,6 +521,9 @@ export class MapViewEventHandler {
         // 編集モードで何か選択中にDelete/Backspace -> 削除
        event.preventDefault();
       const selectedVertexIds = this._viewModel.getSelectedVertexIds();
+      const selectedFeatures = typeof this._viewModel.getSelectedFeatures === 'function'
+        ? this._viewModel.getSelectedFeatures()
+        : [];
       const contextFeature = this._viewModel.getSelectionContextFeature();
       if (mode === 'edit') {
           if (selectedVertexIds.size > 0) {
@@ -528,6 +533,11 @@ export class MapViewEventHandler {
           } else if (contextFeature) {
               // 地物選択中 -> 選択地物を削除
               this._editingViewModel.deleteFeature(contextFeature.id, contextFeature);
+          } else if (selectedFeatures.length > 0) {
+              // 複数地物が選択されている場合は全て削除
+              selectedFeatures.forEach(feature => {
+                  this._editingViewModel.deleteFeature(feature.id, feature);
+              });
           } else { console.log("Delete key pressed, but nothing selected."); }
       }
     } else if (event.ctrlKey || event.metaKey) {

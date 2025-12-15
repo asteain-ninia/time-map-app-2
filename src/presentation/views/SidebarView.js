@@ -191,7 +191,8 @@ export class SidebarView {
     }
 
     // 地物選択時にプロパティタブに自動切り替えするロジック
-    if (type === 'activeFeature' && data) { // data は選択された地物インスタンス
+    const hasActiveFeature = Array.isArray(data) ? data.length > 0 : !!data;
+    if (type === 'activeFeature' && hasActiveFeature) { // data は選択された地物インスタンス
       if (this._currentTabId !== 'properties') {
           this._switchTab('properties');
       }
