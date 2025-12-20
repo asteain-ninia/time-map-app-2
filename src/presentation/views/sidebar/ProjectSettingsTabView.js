@@ -7,10 +7,12 @@ export class ProjectSettingsTabView {
    * ProjectSettingsTabView を作成
    * @param {HTMLElement} parentElement - このタブビューの親となるDOM要素
    * @param {MapViewModel} mapViewModel
+   * @param {ConfigManager} configManager
    */
-  constructor(parentElement, mapViewModel) {
+  constructor(parentElement, mapViewModel, configManager) {
     this._parentElement = parentElement;
     this._mapViewModel = mapViewModel;
+    this._configManager = configManager;
 
     this._tabContentElement = null;
     this._settingsContainer = null; // 設定フォームを保持するコンテナ
@@ -60,8 +62,8 @@ export class ProjectSettingsTabView {
    * @private
    */
   _buildSettingsForm(currentSettings) {
-    const form = document.createElement('form');
-    form.addEventListener('submit', e => e.preventDefault()); // デフォルト送信抑止
+    const projectForm = document.createElement('form');
+    projectForm.addEventListener('submit', e => e.preventDefault()); // デフォルト送信抑止
 
     const createRow = (labelText, inputElement, descriptionText = null) => {
       const row = document.createElement('div');
@@ -127,14 +129,14 @@ export class ProjectSettingsTabView {
     };
 
     // 設定項目
-    form.appendChild(createRow('プロジェクト名:', createTextInput('worldName', currentSettings.worldName)));
-    form.appendChild(createRow('プロジェクト説明:', createTextareaInput('worldDescription', currentSettings.worldDescription)));
-    form.appendChild(createRow('赤道長 (km):', createNumberInput('equatorLength', currentSettings.equatorLength, 1, undefined, 1), '地図の縮尺基準となります。'));
-    form.appendChild(createRow('タイムライン最小年:', createNumberInput('sliderMin', currentSettings.sliderMin, undefined, undefined, 1)));
-    form.appendChild(createRow('タイムライン最大年:', createNumberInput('sliderMax', currentSettings.sliderMax, undefined, undefined, 1)));
-    form.appendChild(createRow('グリッド間隔 (度):', createNumberInput('gridInterval', currentSettings.gridInterval, 1, 90, 1)));
-    form.appendChild(createRow('グリッド色:', createColorInput('gridColor', currentSettings.gridColor)));
-    form.appendChild(createRow('グリッド不透明度 (0-1):', createNumberInput('gridOpacity', currentSettings.gridOpacity, 0, 1, 0.01)));
+    projectForm.appendChild(createRow('プロジェクト名:', createTextInput('worldName', currentSettings.worldName)));
+    projectForm.appendChild(createRow('プロジェクト説明:', createTextareaInput('worldDescription', currentSettings.worldDescription)));
+    projectForm.appendChild(createRow('赤道長 (km):', createNumberInput('equatorLength', currentSettings.equatorLength, 1, undefined, 1), '地図の縮尺基準となります。'));
+    projectForm.appendChild(createRow('タイムライン最小年:', createNumberInput('sliderMin', currentSettings.sliderMin, undefined, undefined, 1)));
+    projectForm.appendChild(createRow('タイムライン最大年:', createNumberInput('sliderMax', currentSettings.sliderMax, undefined, undefined, 1)));
+    projectForm.appendChild(createRow('グリッド間隔 (度):', createNumberInput('gridInterval', currentSettings.gridInterval, 1, 90, 1)));
+    projectForm.appendChild(createRow('グリッド色:', createColorInput('gridColor', currentSettings.gridColor)));
+    projectForm.appendChild(createRow('グリッド不透明度 (0-1):', createNumberInput('gridOpacity', currentSettings.gridOpacity, 0, 1, 0.01)));
 
     // ボタンコンテナ
     const buttonContainer = document.createElement('div');
@@ -147,17 +149,62 @@ export class ProjectSettingsTabView {
     const saveButton = document.createElement('button');
     saveButton.type = 'button'; // submitはformでハンドリング
     saveButton.textContent = '設定を保存';
-    saveButton.addEventListener('click', () => this._handleSaveSettings(form));
+    saveButton.addEventListener('click', () => this._handleSaveSettings(projectForm));
     buttonContainer.appendChild(saveButton);
 
     const defaultsButton = document.createElement('button');
     defaultsButton.type = 'button';
     defaultsButton.textContent = 'デフォルトに戻す';
-    defaultsButton.addEventListener('click', () => this._handleResetToDefaults(form));
+    defaultsButton.addEventListener('click', () => this._handleResetToDefaults(projectForm));
     buttonContainer.appendChild(defaultsButton);
 
-    form.appendChild(buttonContainer);
-    this._settingsContainer.appendChild(form);
+    projectForm.appendChild(buttonContainer);
+    this._settingsContainer.appendChild(projectForm);
+
+    if (this._configManager && typeof this._configManager.get === 'function') {
+      const appSection = document.createElement('div');
+      appSection.style.marginTop = '20px';
+
+      const appTitle = document.createElement('div');
+      appTitle.textContent = 'アプリ設定';
+      appTitle.style.fontWeight = 'bold';
+      appTitle.style.marginBottom = '8px';
+      appSection.appendChild(appTitle);
+
+      const appForm = document.createElement('form');
+      appForm.addEventListener('submit', e => e.preventDefault());
+
+      const snapPixelsRaw = this._configManager.get('ui.sharedVertexSnapPixels', 50);
+      const snapPixels = Number.isFinite(snapPixelsRaw) ? snapPixelsRaw : 50;
+      appForm.appendChild(createRow(
+        '共有頂点スナップ距離 (px):',
+        createNumberInput('sharedVertexSnapPixels', snapPixels, 1, undefined, 1),
+        'ドラッグ時に共有頂点化する距離の基準です。'
+      ));
+
+      const appButtonContainer = document.createElement('div');
+      appButtonContainer.style.marginTop = '20px';
+      appButtonContainer.style.textAlign = 'right';
+      appButtonContainer.style.display = 'flex';
+      appButtonContainer.style.justifyContent = 'flex-end';
+      appButtonContainer.style.gap = '10px';
+
+      const appSaveButton = document.createElement('button');
+      appSaveButton.type = 'button';
+      appSaveButton.textContent = 'アプリ設定を保存';
+      appSaveButton.addEventListener('click', () => this._handleSaveAppSettings(appForm));
+      appButtonContainer.appendChild(appSaveButton);
+
+      const appDefaultsButton = document.createElement('button');
+      appDefaultsButton.type = 'button';
+      appDefaultsButton.textContent = 'デフォルトに戻す';
+      appDefaultsButton.addEventListener('click', () => this._handleResetAppSettings(appForm));
+      appButtonContainer.appendChild(appDefaultsButton);
+
+      appForm.appendChild(appButtonContainer);
+      appSection.appendChild(appForm);
+      this._settingsContainer.appendChild(appSection);
+    }
   }
 
   /**
@@ -225,6 +272,35 @@ export class ProjectSettingsTabView {
     } else {
       alert('デフォルト設定の読み込みに失敗しました。');
     }
+  }
+
+  _handleSaveAppSettings(formElement) {
+    if (!this._configManager || typeof this._configManager.set !== 'function') {
+      alert('設定マネージャーが利用できません。');
+      return;
+    }
+    const formData = new FormData(formElement);
+    const snapPixels = parseFloat(formData.get('sharedVertexSnapPixels'));
+
+    if (isNaN(snapPixels) || snapPixels <= 0) {
+      alert('共有頂点スナップ距離は正の数値で入力してください。');
+      return;
+    }
+
+    this._configManager.set('ui.sharedVertexSnapPixels', snapPixels);
+    alert('アプリ設定を保存しました。');
+  }
+
+  _handleResetAppSettings(formElement) {
+    if (!this._configManager || typeof this._configManager.set !== 'function') {
+      alert('設定マネージャーが利用できません。');
+      return;
+    }
+
+    const defaultSnapPixels = 50;
+    formElement.sharedVertexSnapPixels.value = defaultSnapPixels;
+    this._configManager.set('ui.sharedVertexSnapPixels', defaultSnapPixels);
+    alert('アプリ設定をデフォルト値にリセットしました。');
   }
 
   /**

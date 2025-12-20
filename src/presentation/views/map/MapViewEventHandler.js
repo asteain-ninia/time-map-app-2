@@ -293,7 +293,7 @@ export class MapViewEventHandler {
         this._viewportManager.endDrag();
         this._mapOverlay.style.cursor = 'grab';
       } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
-        this._editingViewModel.endVerticesDrag();
+        this._editingViewModel.endVerticesDrag(this._getSharedVertexSnapOptions());
         this._updateCursor(this._svgToWorld(this._getSVGPoint(event.clientX, event.clientY)));
       }
     }
@@ -302,7 +302,7 @@ export class MapViewEventHandler {
         // クリックでも頂点ドラッグ状態はリセットする必要がある
         if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
             // 移動がなくてもendVerticesDragを呼び出して状態をリセット
-            this._editingViewModel.endVerticesDrag();
+            this._editingViewModel.endVerticesDrag(this._getSharedVertexSnapOptions());
         } else if (mode === 'view') {
             // 表示モードでのクリック -> 地物選択
             const pageX = event.clientX;
@@ -344,7 +344,7 @@ export class MapViewEventHandler {
         this._viewportManager.endDrag();
         this._mapOverlay.style.cursor = 'grab';
       } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && isDraggingVertices) {
-        this._editingViewModel.endVerticesDrag();
+        this._editingViewModel.endVerticesDrag(this._getSharedVertexSnapOptions());
       }
 
       // マウスダウン状態をリセット
@@ -685,6 +685,19 @@ export class MapViewEventHandler {
   /** キャンセルボタン/Escキー処理 (MapViewのメソッドを呼ぶ) */
   handleCancelClick() {
     this._mapView._handleCancelClick();
+  }
+
+  _getSharedVertexSnapOptions() {
+    const snapWorldDistance = typeof this._mapView.getSharedVertexSnapDistanceWorld === 'function'
+      ? this._mapView.getSharedVertexSnapDistanceWorld()
+      : null;
+    const worldWidth = this._renderer && typeof this._renderer.getWorldWidth === 'function'
+      ? this._renderer.getWorldWidth()
+      : null;
+    const visibleFeatures = typeof this._viewModel.getFeatures === 'function'
+      ? this._viewModel.getFeatures()
+      : [];
+    return { snapWorldDistance, worldWidth, visibleFeatures };
   }
 
   /** 穴/飛び地追加モードでのクリック処理 */

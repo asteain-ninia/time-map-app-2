@@ -54,6 +54,8 @@ export class MapViewRendererHelper {
     const selectedVertexIds = this._viewModel.getSelectedVertexIds(); // Set<string>
     const vertexContextFeatureId = this._viewModel.getVertexSelectionContextId();
     const vertexOwnerIds = this._viewModel.getVertexSelectionOwnerIds();
+    const visibleFeatures = this._viewModel.getFeatures();
+    const sharedVertexIds = this._collectSharedVertexIds(visibleFeatures);
     const viewport = this._viewportManager.getViewport();
     const world = this._viewModel.getWorld();
     const currentTime = this._viewModel.getCurrentTime();
@@ -64,10 +66,12 @@ export class MapViewRendererHelper {
     const worldWidth = this._renderer.getWorldWidth();
     const finalOffsets = [0, -worldWidth, worldWidth];
 
-    this._renderPersistentVertexMarkers(verticesMap, selectedVertexIds, draggingVerticesInfo, viewport, finalOffsets);
+    this._renderPersistentVertexMarkers(verticesMap, selectedVertexIds, draggingVerticesInfo, sharedVertexIds, viewport, finalOffsets);
 
     // 通常頂点マーカーのスタイル
     const normalVertexStyle = editingStyles.normalVertex;
+    const sharedVertexStyle = editingStyles.sharedVertex || normalVertexStyle;
+    const getVertexMarkerStyle = (vertexId) => sharedVertexIds.has(vertexId) ? sharedVertexStyle : normalVertexStyle;
 
     // ドラッグ中でない頂点の元の位置を取得する関数
     const getOriginalVertexPosIfNeitherSelectedNorDragged = (vertexId) => {
@@ -97,7 +101,8 @@ export class MapViewRendererHelper {
                 feature.vertexIds.forEach(id => {
                     const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
                     if (vData) {
-                        const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                        const markerStyle = getVertexMarkerStyle(id);
+                        const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, markerStyle, viewport);
                         if (marker) this._selectionElements.push(marker);
                     }
                 });
@@ -122,7 +127,8 @@ export class MapViewRendererHelper {
                          ring.vertexIds.forEach(id => {
                              const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
                              if (vData) {
-                                 const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                                 const markerStyle = getVertexMarkerStyle(id);
+                                 const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, markerStyle, viewport);
                                  if (marker) this._selectionElements.push(marker);
                              }
                          });
@@ -133,12 +139,12 @@ export class MapViewRendererHelper {
     };
 
     // 選択地物 (複数対応)
-    const selectedFeatures = this._viewModel.getFeatures().filter(f => selectedFeatureIds.has(f.id) && f.existsAt(currentTime));
+    const selectedFeatures = visibleFeatures.filter(f => selectedFeatureIds.has(f.id) && f.existsAt(currentTime));
     selectedFeatures.forEach(feature => renderFeatureSelection(feature));
 
     const renderContextFeature = (featureId) => {
         if (!featureId || selectedFeatureIds.has(featureId)) return;
-        const feature = this._viewModel.getFeatures().find(f => f.id === featureId);
+        const feature = visibleFeatures.find(f => f.id === featureId);
         if (!feature || !feature.existsAt(currentTime)) return;
         const style = editingStyles.highlightOutline;
 
@@ -179,7 +185,8 @@ export class MapViewRendererHelper {
                     feature.vertexIds.forEach(id => {
                         const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
                         if (vData) {
-                            const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                            const markerStyle = getVertexMarkerStyle(id);
+                            const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, markerStyle, viewport);
                             if (marker) this._selectionElements.push(marker);
                         }
                     });
@@ -189,7 +196,8 @@ export class MapViewRendererHelper {
                             ring.vertexIds.forEach(id => {
                                 const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
                                 if (vData) {
-                                    const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, normalVertexStyle, viewport);
+                                    const markerStyle = getVertexMarkerStyle(id);
+                                    const marker = this._renderer.drawPoint(vData.x + offsetX, vData.y, markerStyle, viewport);
                                     if (marker) this._selectionElements.push(marker);
                                 }
                             });
@@ -211,7 +219,10 @@ export class MapViewRendererHelper {
         if (vData) {
             for (const offsetX of finalOffsets) { // オフセットループ
                 // オフセットを適用したワールド座標で描画
-                const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, editingStyles.selectedVertex, viewport);
+                const selectedStyle = sharedVertexIds.has(vertexId) && editingStyles.selectedSharedVertex
+                  ? editingStyles.selectedSharedVertex
+                  : editingStyles.selectedVertex;
+                const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, selectedStyle, viewport);
                 if (elem) this._selectionElements.push(elem);
             }
         }
@@ -239,12 +250,23 @@ export class MapViewRendererHelper {
 
     const worldWidth = this._renderer.getWorldWidth(); // ワールド幅を取得
     const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
+    const snapWorldDistance = this._getSharedVertexSnapDistanceWorld(viewport);
+    const sharePreviewVertexIds = typeof this._editingViewModel.getSharePreviewVertexIds === 'function'
+      ? this._editingViewModel.getSharePreviewVertexIds({
+          world,
+          visibleFeatures: typeof this._viewModel.getFeatures === 'function' ? this._viewModel.getFeatures() : [],
+          worldWidth,
+          snapWorldDistance
+        })
+      : new Set();
+    const sharePreviewStyle = editingStyles.dragShareVertex || editingStyles.dragVertex;
 
     // ドラッグ中の頂点マーカー (各オフセットで描画)
     for (const [vertexId, info] of draggingVerticesInfo.entries()) {
         for (const offsetX of finalOffsets) { // オフセットループ
             // オフセットを適用したワールド座標で描画
-            const marker = this._renderer.drawPoint(info.currentPosition.x + offsetX, info.currentPosition.y, editingStyles.dragVertex, viewport);
+            const markerStyle = sharePreviewVertexIds.has(vertexId) ? sharePreviewStyle : editingStyles.dragVertex;
+            const marker = this._renderer.drawPoint(info.currentPosition.x + offsetX, info.currentPosition.y, markerStyle, viewport);
             if (marker) this._dragPreviewElements.push(marker);
         }
     }
@@ -477,8 +499,9 @@ export class MapViewRendererHelper {
   }
 
   /** 持続的な頂点マーカーを描画 */
-  _renderPersistentVertexMarkers(verticesMap, selectedVertexIds, draggingVerticesInfo, viewport, offsets) {
+  _renderPersistentVertexMarkers(verticesMap, selectedVertexIds, draggingVerticesInfo, sharedVertexIds, viewport, offsets) {
     const passiveStyle = editingStyles.persistentVertex || editingStyles.normalVertex;
+    const sharedVertexStyle = editingStyles.sharedVertex || passiveStyle;
     const selectedSet = selectedVertexIds instanceof Set ? selectedVertexIds : new Set(selectedVertexIds || []);
     const draggingSet = draggingVerticesInfo instanceof Map ? new Set(draggingVerticesInfo.keys()) : new Set();
     const features = this._viewModel.getFeatures();
@@ -491,8 +514,9 @@ export class MapViewRendererHelper {
       const vertex = verticesMap.get(vertexId);
       if (!vertex) return;
       drawnVertexIds.add(vertexId);
+      const markerStyle = sharedVertexIds && sharedVertexIds.has(vertexId) ? sharedVertexStyle : passiveStyle;
       for (const offsetX of offsets) {
-        const elem = this._renderer.drawPoint(vertex.x + offsetX, vertex.y, passiveStyle, viewport);
+        const elem = this._renderer.drawPoint(vertex.x + offsetX, vertex.y, markerStyle, viewport);
         if (elem) {
           this._selectionElements.push(elem);
           this._persistentVertexElements.push(elem);
@@ -548,6 +572,50 @@ export class MapViewRendererHelper {
     this._temporaryElements = [];
     // ViewModel側のクリアはViewModelが行う想定
     // this._editingViewModel.clearTemporaryElements();
+  }
+
+  _collectSharedVertexIds(features) {
+    const usage = new Map();
+    if (!features || features.length === 0) {
+      return new Set();
+    }
+
+    features.forEach(feature => {
+      if (!feature) return;
+      const ids = new Set();
+      if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
+        feature.rings.forEach(ring => {
+          if (Array.isArray(ring.vertexIds)) ring.vertexIds.forEach(id => ids.add(id));
+        });
+      } else if (feature instanceof DomainLine && Array.isArray(feature.vertexIds)) {
+        feature.vertexIds.forEach(id => ids.add(id));
+      } else if (feature instanceof DomainPoint && Array.isArray(feature.vertexIds)) {
+        feature.vertexIds.forEach(id => ids.add(id));
+      }
+      ids.forEach(id => {
+        const count = usage.get(id) || 0;
+        usage.set(id, count + 1);
+      });
+    });
+
+    const shared = new Set();
+    usage.forEach((count, id) => {
+      if (count > 1) shared.add(id);
+    });
+    return shared;
+  }
+
+  _getSharedVertexSnapDistanceWorld(viewport) {
+    const snapPixels = this._configManager && typeof this._configManager.get === 'function'
+      ? this._configManager.get('ui.sharedVertexSnapPixels', 50)
+      : 50;
+    if (!Number.isFinite(snapPixels) || snapPixels <= 0) {
+      return null;
+    }
+    if (!viewport || !Number.isFinite(viewport.zoom) || viewport.zoom <= 0) {
+      return null;
+    }
+    return snapPixels / viewport.zoom;
   }
 
   _unwrapLongitudeSequence(points) {

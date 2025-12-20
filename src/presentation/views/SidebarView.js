@@ -16,13 +16,15 @@ export class SidebarView {
    * @param {ManageLayersUseCase} manageLayersUseCase - レイヤー管理ユースケース
    * @param {EditingViewModel} editingViewModel - 編集ビューモデル
    * @param {EventBus} eventBus - イベントバス
+   * @param {ConfigManager} configManager - 設定マネージャー
    */
-  constructor(container, mapViewModel, manageLayersUseCase, editingViewModel, eventBus) {
+  constructor(container, mapViewModel, manageLayersUseCase, editingViewModel, eventBus, configManager) {
     this._container = container;
     this._mapViewModel = mapViewModel;
     this._manageLayersUseCase = manageLayersUseCase;
     this._editingViewModel = editingViewModel;
     this._eventBus = eventBus;
+    this._configManager = configManager;
 
     // DOM要素
     this._sidebarElement = null;
@@ -71,7 +73,7 @@ export class SidebarView {
     this._layersTabView = new LayersTabView(tabContentArea, this._mapViewModel, this._manageLayersUseCase, this._eventBus);
     this._featuresTabView = new FeaturesTabView(tabContentArea, this._mapViewModel, this._eventBus); // EventBusも渡す
     this._propertiesTabView = new PropertiesTabView(tabContentArea, this._mapViewModel, this._editingViewModel);
-    this._projectSettingsTabView = new ProjectSettingsTabView(tabContentArea, this._mapViewModel);
+    this._projectSettingsTabView = new ProjectSettingsTabView(tabContentArea, this._mapViewModel, this._configManager);
 
     this._container.appendChild(this._sidebarElement);
 

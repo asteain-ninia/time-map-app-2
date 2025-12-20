@@ -13,6 +13,8 @@ import { DeleteFeatureCommand } from './history/commands/DeleteFeatureCommand.js
 import { DeleteVerticesCommand } from './history/commands/DeleteVerticesCommand.js';
 import { AddRingCommand } from './history/commands/AddRingCommand.js';
 import { AddVertexToEdgeCommand } from './history/commands/AddVertexToEdgeCommand.js';
+import { ShareVerticesCommand } from './history/commands/ShareVerticesCommand.js';
+import { UnlinkSharedVertexCommand } from './history/commands/UnlinkSharedVertexCommand.js';
 
 export class HistoryService {
   _stackManager;
@@ -236,6 +238,10 @@ export class HistoryService {
         return new AddRingCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
       case 'addVertexToEdge':
         return new AddVertexToEdgeCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+      case 'shareVertices':
+        return new ShareVerticesCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+      case 'unlinkSharedVertex':
+        return new UnlinkSharedVertexCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
       default:
         return null;
     }

@@ -90,8 +90,8 @@ export class EditFeatureUseCase {
     return this._vertexEditUseCase.shareVertices(vertexId1, vertexId2);
   }
 
-  async unlinkSharedVertex(vertexId, featureId) {
-    return this._vertexEditUseCase.unlinkSharedVertex(vertexId, featureId);
+  async unlinkSharedVertex(vertexId, featureId, vertexIdToUse = null) {
+    return this._vertexEditUseCase.unlinkSharedVertex(vertexId, featureId, vertexIdToUse);
   }
 
   /**

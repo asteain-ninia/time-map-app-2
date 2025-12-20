@@ -361,6 +361,9 @@ export class VertexEditUseCase {
    */
   async shareVertices(vertexId1, vertexId2) {
     const world = await this._worldRepository.getWorld();
+    if (vertexId1 === vertexId2) {
+        throw new Error('Cannot share the same vertex.');
+    }
     const vertex1 = world.vertices.find(v => v.id === vertexId1);
     const vertex2 = world.vertices.find(v => v.id === vertexId2);
     if (!vertex1 || !vertex2) throw new Error('One or both vertices not found');
@@ -371,7 +374,7 @@ export class VertexEditUseCase {
     const removedVertex = keptVertexId === vertexId1 ? vertex2 : vertex1;
     const affectedFeatures = [];
 
-    // world.features を更新
+    // 更新後の地物リストを作成
     const updatedFeatures = [];
     for (let i = 0; i < world.features.length; i++) {
         let feature = world.features[i];
@@ -406,12 +409,7 @@ export class VertexEditUseCase {
             }
         }
     }
-    world.features = updatedFeatures;
-
-    const removedVertexIndex = world.vertices.findIndex(v => v.id === removedVertexId);
-    if (removedVertexIndex !== -1) {
-        world.vertices.splice(removedVertexIndex, 1);
-    } else { console.warn(`Vertex to be removed not found: ${removedVertexId}`); }
+    const updatedVertices = world.vertices.filter(v => v.id !== removedVertexId);
 
     let selfIntersectionError = null;
     const getVerticesByIdsForPolygon = (ids, currentWorldVertices) => {
@@ -425,7 +423,7 @@ export class VertexEditUseCase {
     for (const affFeature of affectedFeatures) {
         if (affFeature instanceof Polygon) {
             for (const ring of affFeature.rings) {
-                const ringVertices = getVerticesByIdsForPolygon(ring.vertexIds, world.vertices);
+                const ringVertices = getVerticesByIdsForPolygon(ring.vertexIds, updatedVertices);
                 if (this._geometryService.isPolygonSelfIntersecting(ringVertices)) {
                     selfIntersectionError = new Error(`頂点共有化によりポリゴン ${affFeature.id} のリング ${ring.id} が自己交差しました。`);
                     break;
@@ -435,9 +433,18 @@ export class VertexEditUseCase {
         if (selfIntersectionError) break;
     }
 
-    if (selfIntersectionError) {
-        throw selfIntersectionError;
+    const constraintError = this._validatePolygonConstraints(
+        affectedFeatures.filter(feature => feature instanceof Polygon),
+        { ...world, features: updatedFeatures, vertices: updatedVertices },
+        [vertexId1, vertexId2]
+    );
+
+    if (selfIntersectionError || constraintError) {
+        throw selfIntersectionError || constraintError;
     }
+
+    world.features = updatedFeatures;
+    world.vertices = updatedVertices;
 
     await this._worldRepository.saveWorld(world);
     return { keptVertex, removedVertex, affectedFeatures };
@@ -449,7 +456,7 @@ export class VertexEditUseCase {
    * @param {string} featureId - この地物に対して新しい頂点を作成
    * @returns {Promise<Object>} 更新情報 { newVertex, updatedFeature }
    */
-  async unlinkSharedVertex(vertexId, featureId) {
+  async unlinkSharedVertex(vertexId, featureId, vertexIdToUse = null) {
     const world = await this._worldRepository.getWorld();
     const vertex = world.vertices.find(v => v.id === vertexId);
     if (!vertex) throw new Error(`Vertex not found with ID: ${vertexId}`);
@@ -463,9 +470,23 @@ export class VertexEditUseCase {
                        (isPolygon && originalFeature.rings?.some(ring => ring.vertexIds.includes(vertexId)));
     if (!usesVertex) throw new Error(`Feature ${featureId} does not use vertex with ID: ${vertexId}`);
 
-    const newVertexId = this._generateId("vertex");
+    const ownerIds = new Set();
+    world.features.forEach(feature => {
+      const featureUsesVertex = (feature.vertexIds && feature.vertexIds.includes(vertexId)) ||
+        ((feature instanceof Polygon || feature.constructor?.name === "Polygon") && feature.rings?.some(ring => ring.vertexIds.includes(vertexId)));
+      if (featureUsesVertex) {
+        ownerIds.add(feature.id);
+      }
+    });
+    if (ownerIds.size <= 1) {
+      throw new Error('共有頂点ではないため解除できません。');
+    }
+
+    const newVertexId = vertexIdToUse || this._generateId("vertex");
+    if (newVertexId === vertexId) {
+      throw new Error('Cannot unlink using the same vertex ID.');
+    }
     const newVertex = { id: newVertexId, x: vertex.x, y: vertex.y };
-    world.vertices.push(newVertex);
 
     let featureUpdated = false;
     let updatedFeature = originalFeature;
@@ -489,10 +510,6 @@ export class VertexEditUseCase {
     }
 
     if (!featureUpdated) {
-        const newVertexIndex = world.vertices.findIndex(v => v.id === newVertexId);
-        if (newVertexIndex !== -1) {
-            world.vertices.splice(newVertexIndex, 1);
-        }
         console.error(`Failed to update feature ${featureId} during vertex unlink.`);
         throw new Error(`Failed to update feature ${featureId} during vertex unlink.`);
     }
@@ -507,7 +524,7 @@ export class VertexEditUseCase {
             }).filter(Boolean) || [];
         };
         for (const ring of updatedFeature.rings) {
-            const ringVertices = getVerticesByIdsForPolygon(ring.vertexIds, world.vertices);
+            const ringVertices = getVerticesByIdsForPolygon(ring.vertexIds, [...world.vertices.filter(v => v.id !== newVertexId), newVertex]);
             if (this._geometryService.isPolygonSelfIntersecting(ringVertices)) {
                 selfIntersectionError = new Error(`共有頂点解除によりポリゴン ${updatedFeature.id} のリング ${ring.id} が自己交差しました。`);
                 break;
@@ -515,16 +532,31 @@ export class VertexEditUseCase {
         }
     }
 
-    if (selfIntersectionError) {
-        const newVertexIndex = world.vertices.findIndex(v => v.id === newVertexId);
-        if (newVertexIndex !== -1) {
-            world.vertices.splice(newVertexIndex, 1);
-        }
-        world.features[featureIndex] = originalFeature;
-        throw selfIntersectionError;
+    const updatedVertices = world.vertices.map(v => {
+      if (v.id === newVertexId) {
+        return { id: newVertexId, x: newVertex.x, y: newVertex.y };
+      }
+      return v;
+    });
+    if (!updatedVertices.some(v => v.id === newVertexId)) {
+      updatedVertices.push(newVertex);
     }
 
-    world.features[featureIndex] = updatedFeature;
+    const updatedFeatures = [...world.features];
+    updatedFeatures[featureIndex] = updatedFeature;
+
+    const constraintError = this._validatePolygonConstraints(
+      updatedFeature instanceof Polygon ? [updatedFeature] : [],
+      { ...world, features: updatedFeatures, vertices: updatedVertices },
+      [vertexId, newVertexId]
+    );
+
+    if (selfIntersectionError || constraintError) {
+        throw selfIntersectionError || constraintError;
+    }
+
+    world.features = updatedFeatures;
+    world.vertices = updatedVertices;
 
     await this._worldRepository.saveWorld(world);
     return { newVertex: newVertex, updatedFeature: world.features[featureIndex] };

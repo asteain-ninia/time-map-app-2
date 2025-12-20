@@ -1,4 +1,6 @@
 // src/presentation/view-models/EditingViewModel.js
+import { Point as DomainPoint } from '../../domain/entities/Point.js';
+import { Line as DomainLine } from '../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { Property } from '../../domain/value-objects/Property.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
@@ -10,6 +12,8 @@ import { DeleteFeatureCommand } from '../../application/services/history/command
 import { DeleteVerticesCommand } from '../../application/services/history/commands/DeleteVerticesCommand.js';
 import { MoveVerticesCommand } from '../../application/services/history/commands/MoveVerticesCommand.js';
 import { UpdatePropertiesCommand } from '../../application/services/history/commands/UpdatePropertiesCommand.js';
+import { ShareVerticesCommand } from '../../application/services/history/commands/ShareVerticesCommand.js';
+import { UnlinkSharedVertexCommand } from '../../application/services/history/commands/UnlinkSharedVertexCommand.js';
 
 
 /**
@@ -422,7 +426,7 @@ export class EditingViewModel {
    * 頂点ドラッグの終了
    * @returns {Promise<void>}
    */
-  async endVerticesDrag() {
+  async endVerticesDrag(options = {}) {
     if (this._draggingVerticesInfo.size === 0) { return; }
 
     const isChainedFromVertexAddition = 
@@ -504,8 +508,11 @@ export class EditingViewModel {
                 this._historyService._stackManager.pushUndo(command);
                 this._historyService._notifyHistoryChanged();
 
-                if (moveResult && moveResult.updatedVertices) {
-                     moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
+                const shareResult = await this._applyVertexSharingAfterDrag(dragInfoCopy, options);
+                if (shareResult.shared) {
+                    this._eventBus.publish('WorldUpdated');
+                } else if (moveResult && moveResult.updatedVertices) {
+                    moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
                 }
             } catch (error) {
                 console.error('複数頂点の移動確定に失敗しました', error);
@@ -631,6 +638,47 @@ export class EditingViewModel {
     }
   }
 
+  async unlinkSharedVertex(vertexId, featureId) {
+    if (!vertexId || !featureId) {
+      throw new Error('共有解除に必要な情報が不足しています。');
+    }
+
+    const worldRepository = this._editFeatureUseCase._worldRepository;
+    const worldBefore = await worldRepository.getWorld();
+    const featureBefore = worldBefore.features.find(f => f.id === featureId);
+    if (!featureBefore) {
+      throw new Error(`地物が見つかりません: ${featureId}`);
+    }
+
+    const ownerIds = this._collectVertexOwnerIds(worldBefore.features, vertexId);
+    if (!ownerIds.has(featureId)) {
+      throw new Error('指定された地物は共有頂点の所有者ではありません。');
+    }
+    if (ownerIds.size <= 1) {
+      throw new Error('共有頂点ではないため解除できません。');
+    }
+
+    const result = await this._editFeatureUseCase.unlinkSharedVertex(vertexId, featureId);
+    const newVertex = result?.newVertex;
+    if (!newVertex) {
+      throw new Error('共有解除の結果が取得できませんでした。');
+    }
+
+    const payload = {
+      vertexId,
+      featureId,
+      newVertexId: newVertex.id,
+      newVertexData: this._historyService._serializer.serialize(new Vertex(newVertex.id, newVertex.x, newVertex.y)),
+      featureBeforeData: this._historyService._serializer.serialize(featureBefore)
+    };
+    const command = new UnlinkSharedVertexCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
+    this._historyService._stackManager.pushUndo(command);
+    this._historyService._notifyHistoryChanged();
+
+    this._eventBus.publish('WorldUpdated');
+    return result;
+  }
+
   /**
    * 地物プロパティを更新
    * @param {string} featureId - 更新する地物のID
@@ -672,6 +720,294 @@ export class EditingViewModel {
         this._eventBus.publish('WorldUpdated');
         throw error;
     }
+  }
+
+  getSharePreviewVertexIds(options = {}) {
+    if (!this._draggingVerticesInfo || this._draggingVerticesInfo.size === 0) {
+      return new Set();
+    }
+    const world = options?.world;
+    if (!world || !Array.isArray(world.vertices)) {
+      return new Set();
+    }
+
+    const candidates = this._findShareCandidates(this._draggingVerticesInfo, world, { ...options, useDragPositions: true });
+    if (candidates.length === 0) {
+      return new Set();
+    }
+
+    const draggedIds = new Set(this._draggingVerticesInfo.keys());
+    const previewIds = new Set();
+    candidates.forEach(candidate => {
+      if (draggedIds.has(candidate.vertexId1)) {
+        previewIds.add(candidate.vertexId1);
+      }
+      if (draggedIds.has(candidate.vertexId2)) {
+        previewIds.add(candidate.vertexId2);
+      }
+    });
+
+    return previewIds;
+  }
+
+  _findShareCandidates(dragInfo, world, options) {
+    if (!dragInfo || dragInfo.size === 0) {
+      return [];
+    }
+    const snapWorldDistance = Number.isFinite(options?.snapWorldDistance) ? options.snapWorldDistance : null;
+    if (!snapWorldDistance || snapWorldDistance <= 0) {
+      return [];
+    }
+    if (!world || !Array.isArray(world.vertices)) {
+      return [];
+    }
+
+    const featuresForSharing = this._resolveFeaturesForSharing(world, options);
+    const ownerMap = this._buildVertexOwnerMap(featuresForSharing);
+    const visibleVertexIds = new Set(ownerMap.keys());
+    if (visibleVertexIds.size === 0) {
+      return [];
+    }
+
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+    const draggedIds = new Set(dragInfo.keys());
+    const snapDistanceSq = snapWorldDistance * snapWorldDistance;
+    const worldWidth = Number.isFinite(options?.worldWidth) ? options.worldWidth : null;
+    const candidates = [];
+    const visitedPairs = new Set();
+    const useDragPositions = options?.useDragPositions === true;
+
+    const getCurrentPosition = (vertexId) => {
+      if (useDragPositions) {
+        const dragEntry = dragInfo.get(vertexId);
+        if (dragEntry && dragEntry.currentPosition) {
+          return dragEntry.currentPosition;
+        }
+      }
+      return verticesMap.get(vertexId);
+    };
+
+    const getOriginalPosition = (vertexId) => {
+      const dragEntry = dragInfo.get(vertexId);
+      if (dragEntry && dragEntry.originalPosition) {
+        return dragEntry.originalPosition;
+      }
+      return verticesMap.get(vertexId);
+    };
+
+    for (const draggedId of draggedIds) {
+      if (!visibleVertexIds.has(draggedId)) {
+        continue;
+      }
+      const draggedVertex = getCurrentPosition(draggedId);
+      if (!draggedVertex) {
+        continue;
+      }
+
+      for (const otherId of visibleVertexIds) {
+        if (otherId === draggedId) continue;
+        const pairKey = draggedId < otherId ? `${draggedId}|${otherId}` : `${otherId}|${draggedId}`;
+        if (visitedPairs.has(pairKey)) continue;
+        visitedPairs.add(pairKey);
+
+        const ownersA = ownerMap.get(draggedId);
+        const ownersB = ownerMap.get(otherId);
+        if (ownersA && ownersB && this._hasOwnerIntersection(ownersA, ownersB)) {
+          continue;
+        }
+
+        const otherVertex = getCurrentPosition(otherId);
+        if (!otherVertex) continue;
+
+        const distanceSq = this._calculateDistanceSqWithWrap(draggedVertex, otherVertex, worldWidth);
+        if (distanceSq > snapDistanceSq) continue;
+
+        const originalPosA = getOriginalPosition(draggedId);
+        const originalPosB = getOriginalPosition(otherId);
+        if (!originalPosA || !originalPosB) {
+          continue;
+        }
+        const originalDistanceSq = this._calculateDistanceSqWithWrap(originalPosA, originalPosB, worldWidth);
+        if (originalDistanceSq <= snapDistanceSq) continue;
+
+        candidates.push({ vertexId1: draggedId, vertexId2: otherId, distanceSq });
+      }
+    }
+
+    return candidates;
+  }
+
+  async _applyVertexSharingAfterDrag(dragInfo, options) {
+    const snapWorldDistance = Number.isFinite(options?.snapWorldDistance) ? options.snapWorldDistance : null;
+    if (!snapWorldDistance || snapWorldDistance <= 0) {
+      return { shared: false };
+    }
+
+    const worldRepository = this._editFeatureUseCase._worldRepository;
+    const world = await worldRepository.getWorld();
+    if (!world || !Array.isArray(world.vertices)) {
+      return { shared: false };
+    }
+
+    const candidates = this._findShareCandidates(dragInfo, world, { ...options, snapWorldDistance, useDragPositions: false });
+
+    if (candidates.length === 0) {
+      return { shared: false };
+    }
+
+    candidates.sort((a, b) => a.distanceSq - b.distanceSq);
+    const mergedIds = new Set();
+    let shared = false;
+
+    for (const candidate of candidates) {
+      if (mergedIds.has(candidate.vertexId1) || mergedIds.has(candidate.vertexId2)) {
+        continue;
+      }
+      try {
+        const shareResult = await this._shareVerticesWithHistory(candidate.vertexId1, candidate.vertexId2);
+        if (shareResult?.removedVertexId) {
+          shared = true;
+          mergedIds.add(candidate.vertexId1);
+          mergedIds.add(candidate.vertexId2);
+          mergedIds.add(shareResult.removedVertexId);
+        }
+      } catch (error) {
+        console.warn('頂点共有化に失敗しました', error);
+      }
+    }
+
+    return { shared };
+  }
+
+  async _shareVerticesWithHistory(vertexId1, vertexId2) {
+    if (!vertexId1 || !vertexId2 || vertexId1 === vertexId2) {
+      return null;
+    }
+
+    const worldRepository = this._editFeatureUseCase._worldRepository;
+    const worldBefore = await worldRepository.getWorld();
+    const affectedBefore = this._collectAffectedFeaturesForVertices(worldBefore.features, new Set([vertexId1, vertexId2]));
+
+    const shareResult = await this._editFeatureUseCase.shareVertices(vertexId1, vertexId2);
+    if (!shareResult || !shareResult.removedVertex) {
+      return null;
+    }
+
+    const removedVertex = shareResult.removedVertex;
+    const payload = {
+      vertexId1,
+      vertexId2,
+      removedVertexData: this._historyService._serializer.serialize(new Vertex(removedVertex.id, removedVertex.x, removedVertex.y)),
+      affectedFeaturesBefore: affectedBefore.map(feature => this._historyService._serializer.serialize(feature))
+    };
+    const command = new ShareVerticesCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
+    this._historyService._stackManager.pushUndo(command);
+    this._historyService._notifyHistoryChanged();
+
+    return { removedVertexId: removedVertex.id };
+  }
+
+  _resolveFeaturesForSharing(world, options) {
+    if (!world || !Array.isArray(world.features)) {
+      return [];
+    }
+    const visibleFeatures = Array.isArray(options?.visibleFeatures) ? options.visibleFeatures : null;
+    if (!visibleFeatures) {
+      return world.features;
+    }
+    const visibleIds = new Set(visibleFeatures.map(feature => feature.id));
+    return world.features.filter(feature => visibleIds.has(feature.id));
+  }
+
+  _buildVertexOwnerMap(features) {
+    const ownerMap = new Map();
+    if (!features) {
+      return ownerMap;
+    }
+
+    features.forEach(feature => {
+      const vertexIds = this._collectFeatureVertexIds(feature);
+      vertexIds.forEach(vertexId => {
+        if (!ownerMap.has(vertexId)) {
+          ownerMap.set(vertexId, new Set());
+        }
+        ownerMap.get(vertexId).add(feature.id);
+      });
+    });
+
+    return ownerMap;
+  }
+
+  _collectAffectedFeaturesForVertices(features, vertexIdSet) {
+    if (!features || !vertexIdSet || vertexIdSet.size === 0) {
+      return [];
+    }
+    const affected = [];
+    features.forEach(feature => {
+      const vertexIds = this._collectFeatureVertexIds(feature);
+      for (const id of vertexIds) {
+        if (vertexIdSet.has(id)) {
+          affected.push(feature);
+          break;
+        }
+      }
+    });
+    return affected;
+  }
+
+  _collectVertexOwnerIds(features, vertexId) {
+    const owners = new Set();
+    if (!features || !vertexId) {
+      return owners;
+    }
+    features.forEach(feature => {
+      const vertexIds = this._collectFeatureVertexIds(feature);
+      if (vertexIds.has(vertexId)) {
+        owners.add(feature.id);
+      }
+    });
+    return owners;
+  }
+
+  _collectFeatureVertexIds(feature) {
+    const ids = new Set();
+    if (!feature) {
+      return ids;
+    }
+    if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
+      feature.rings.forEach(ring => {
+        if (Array.isArray(ring.vertexIds)) ring.vertexIds.forEach(id => ids.add(id));
+      });
+    } else if (feature instanceof DomainLine && Array.isArray(feature.vertexIds)) {
+      feature.vertexIds.forEach(id => ids.add(id));
+    } else if (feature instanceof DomainPoint && Array.isArray(feature.vertexIds)) {
+      feature.vertexIds.forEach(id => ids.add(id));
+    }
+    return ids;
+  }
+
+  _hasOwnerIntersection(ownersA, ownersB) {
+    for (const ownerId of ownersA) {
+      if (ownersB.has(ownerId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  _calculateDistanceSqWithWrap(pointA, pointB, worldWidth) {
+    if (!pointA || !pointB) {
+      return Infinity;
+    }
+    const dy = pointA.y - pointB.y;
+    const dx = Math.abs(pointA.x - pointB.x);
+    let dxMin = dx;
+    if (Number.isFinite(worldWidth) && worldWidth > 0) {
+      const dxPlus = Math.abs(pointA.x - (pointB.x + worldWidth));
+      const dxMinus = Math.abs(pointA.x - (pointB.x - worldWidth));
+      dxMin = Math.min(dx, dxPlus, dxMinus);
+    }
+    return (dxMin * dxMin) + (dy * dy);
   }
 
   /**

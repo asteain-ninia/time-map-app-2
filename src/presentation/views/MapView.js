@@ -221,6 +221,26 @@ export class MapView {
     this._clickToleranceSq = worldDistance * worldDistance;
   }
 
+  _getSharedVertexSnapPixels() {
+    if (!this._configManager || typeof this._configManager.get !== 'function') {
+      return 50;
+    }
+    const snapPixels = this._configManager.get('ui.sharedVertexSnapPixels', 50);
+    return Number.isFinite(snapPixels) ? snapPixels : 50;
+  }
+
+  getSharedVertexSnapDistanceWorld() {
+    const viewport = this._viewportManager.getViewport();
+    const snapPixels = this._getSharedVertexSnapPixels();
+    if (!Number.isFinite(snapPixels) || snapPixels <= 0) {
+      return null;
+    }
+    if (!viewport || !Number.isFinite(viewport.zoom) || viewport.zoom <= 0) {
+      return null;
+    }
+    return snapPixels / viewport.zoom;
+  }
+
   /**
    * マップを描画
    * @private
@@ -324,6 +344,7 @@ export class MapView {
   _buildContextMenuItems() {
     const items = [];
     const selectedVertexIds = Array.from(this._viewModel.getSelectedVertexIds());
+    const vertexOwnerIds = this._viewModel.getVertexSelectionOwnerIds();
     const contextFeature = this._viewModel.getSelectionContextFeature();
     const currentTime = this._viewModel.getCurrentTime();
 
@@ -342,6 +363,36 @@ export class MapView {
             alert(`頂点の削除に失敗しました: ${error.message}`);
           }
         }
+      });
+    }
+
+    if (selectedVertexIds.length === 1 && vertexOwnerIds.size > 1) {
+      const targetVertexId = selectedVertexIds[0];
+      const ownerIdList = Array.from(vertexOwnerIds)
+        .filter(ownerId => ownerId !== null && ownerId !== undefined)
+        .sort();
+
+      ownerIdList.forEach(ownerId => {
+        const ownerFeature = this._viewModel.getWorld()?.features.find(f => f.id === ownerId);
+        const ownerProperty = ownerFeature && typeof ownerFeature.getPropertyAt === 'function'
+          ? ownerFeature.getPropertyAt(currentTime)
+          : (ownerFeature?.properties?.[0] ?? null);
+        const ownerName = ownerProperty?.name || ownerFeature?.id || ownerId;
+
+        items.push({
+          label: `共有解除: ${ownerName}`,
+          action: async () => {
+            if (!window.confirm(`地物「${ownerName}」の共有頂点を解除しますか？`)) {
+              return;
+            }
+            try {
+              await this._editingViewModel.unlinkSharedVertex(targetVertexId, ownerId);
+            } catch (error) {
+              console.error('共有解除に失敗しました (ContextMenu)', error);
+              alert(`共有解除に失敗しました: ${error.message}`);
+            }
+          }
+        });
       });
     }
 
