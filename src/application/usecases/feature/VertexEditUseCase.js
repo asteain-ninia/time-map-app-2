@@ -357,9 +357,11 @@ export class VertexEditUseCase {
    * 頂点を共有化
    * @param {string} vertexId1 - 頂点1のID
    * @param {string} vertexId2 - 頂点2のID
+   * @param {Object} [options]
+   * @param {string} [options.preferredKeptVertexId] - 優先して残す頂点ID
    * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures }
    */
-  async shareVertices(vertexId1, vertexId2) {
+  async shareVertices(vertexId1, vertexId2, options = {}) {
     const world = await this._worldRepository.getWorld();
     if (vertexId1 === vertexId2) {
         throw new Error('Cannot share the same vertex.');
@@ -368,7 +370,11 @@ export class VertexEditUseCase {
     const vertex2 = world.vertices.find(v => v.id === vertexId2);
     if (!vertex1 || !vertex2) throw new Error('One or both vertices not found');
 
-    const keptVertexId = this._getOlderVertexId(vertexId1, vertexId2);
+    const preferredKeptVertexId = options?.preferredKeptVertexId;
+    const hasPreferredKeptVertex = preferredKeptVertexId === vertexId1 || preferredKeptVertexId === vertexId2;
+    const keptVertexId = hasPreferredKeptVertex
+      ? preferredKeptVertexId
+      : this._getOlderVertexId(vertexId1, vertexId2);
     const removedVertexId = keptVertexId === vertexId1 ? vertexId2 : vertexId1;
     const keptVertex = keptVertexId === vertexId1 ? vertex1 : vertex2;
     const removedVertex = keptVertexId === vertexId1 ? vertex2 : vertex1;

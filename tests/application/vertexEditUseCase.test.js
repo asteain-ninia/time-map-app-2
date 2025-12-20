@@ -230,13 +230,41 @@ describe("VertexEditUseCase", () => {
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the preferred vertex when sharing", async () => {
+    world.vertices = [
+      { id: "v-old", x: 0, y: 0 },
+      { id: "v-new", x: 5, y: 5 },
+      { id: "v-tail", x: 2, y: 0 }
+    ];
+    world.features = [
+      makeLine("line-1", ["v-old", "v-tail"]),
+      makeLine("line-2", ["v-new", "v-tail"])
+    ];
+    getOlderVertexId.mockImplementation(() => "v-old");
+
+    const result = await useCase.shareVertices("v-old", "v-new", {
+      preferredKeptVertexId: "v-new"
+    });
+
+    expect(result.keptVertex).toEqual({ id: "v-new", x: 5, y: 5 });
+    expect(result.removedVertex).toEqual({ id: "v-old", x: 0, y: 0 });
+    const lineAfter = world.features.find((f) => f.id === "line-1");
+    expect(lineAfter.vertexIds).toEqual(["v-new", "v-tail"]);
+    const lineNew = world.features.find((f) => f.id === "line-2");
+    expect(lineNew.vertexIds).toEqual(["v-new", "v-tail"]);
+    expect(world.vertices.map((v) => v.id)).not.toContain("v-old");
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
   it("duplicates a shared vertex for the specified feature", async () => {
     world.vertices = [
       { id: "v-other", x: 0, y: 0 },
+      { id: "v-other-2", x: 2, y: 0 },
       { id: "v-shared", x: 1, y: 1 }
     ];
     world.features = [
-      makeLine("line-1", ["v-other", "v-shared"])
+      makeLine("line-1", ["v-other", "v-shared"]),
+      makeLine("line-2", ["v-other-2", "v-shared"])
     ];
     generateId.mockReturnValueOnce("v-new");
 
@@ -245,7 +273,9 @@ describe("VertexEditUseCase", () => {
     expect(result.newVertex).toEqual({ id: "v-new", x: 1, y: 1 });
     const updatedLine = world.features.find((f) => f.id === "line-1");
     expect(updatedLine.vertexIds).toEqual(["v-other", "v-new"]);
-    expect(world.vertices.map((v) => v.id)).toEqual(["v-other", "v-shared", "v-new"]);
+    const otherLine = world.features.find((f) => f.id === "line-2");
+    expect(otherLine.vertexIds).toEqual(["v-other-2", "v-shared"]);
+    expect(world.vertices.map((v) => v.id)).toEqual(["v-other", "v-other-2", "v-shared", "v-new"]);
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
 

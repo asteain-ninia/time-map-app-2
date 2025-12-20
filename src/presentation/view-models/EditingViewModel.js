@@ -864,7 +864,12 @@ export class EditingViewModel {
         continue;
       }
       try {
-        const shareResult = await this._shareVerticesWithHistory(candidate.vertexId1, candidate.vertexId2);
+        const isFirstDragged = dragInfo.has(candidate.vertexId1);
+        const isSecondDragged = dragInfo.has(candidate.vertexId2);
+        const preferredKeptVertexId = isFirstDragged !== isSecondDragged
+          ? (isFirstDragged ? candidate.vertexId2 : candidate.vertexId1)
+          : null;
+        const shareResult = await this._shareVerticesWithHistory(candidate.vertexId1, candidate.vertexId2, { preferredKeptVertexId });
         if (shareResult?.removedVertexId) {
           shared = true;
           mergedIds.add(candidate.vertexId1);
@@ -879,7 +884,7 @@ export class EditingViewModel {
     return { shared };
   }
 
-  async _shareVerticesWithHistory(vertexId1, vertexId2) {
+  async _shareVerticesWithHistory(vertexId1, vertexId2, options = {}) {
     if (!vertexId1 || !vertexId2 || vertexId1 === vertexId2) {
       return null;
     }
@@ -888,7 +893,7 @@ export class EditingViewModel {
     const worldBefore = await worldRepository.getWorld();
     const affectedBefore = this._collectAffectedFeaturesForVertices(worldBefore.features, new Set([vertexId1, vertexId2]));
 
-    const shareResult = await this._editFeatureUseCase.shareVertices(vertexId1, vertexId2);
+    const shareResult = await this._editFeatureUseCase.shareVertices(vertexId1, vertexId2, options);
     if (!shareResult || !shareResult.removedVertex) {
       return null;
     }
@@ -897,6 +902,7 @@ export class EditingViewModel {
     const payload = {
       vertexId1,
       vertexId2,
+      keptVertexId: shareResult.keptVertex ? shareResult.keptVertex.id : null,
       removedVertexData: this._historyService._serializer.serialize(new Vertex(removedVertex.id, removedVertex.x, removedVertex.y)),
       affectedFeaturesBefore: affectedBefore.map(feature => this._historyService._serializer.serialize(feature))
     };

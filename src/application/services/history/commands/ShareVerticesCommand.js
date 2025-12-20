@@ -15,6 +15,7 @@ export class ShareVerticesCommand {
    * @param {Object} payload - 操作に必要なデータ
    * @param {string} payload.vertexId1 - 共有化する頂点ID
    * @param {string} payload.vertexId2 - 共有化する頂点ID
+   * @param {string | null} [payload.keptVertexId] - 共有化で残した頂点ID
    * @param {Object} payload.removedVertexData - 共有化で削除された頂点のデータ（プレーンオブジェクト）
    * @param {Object[]} payload.affectedFeaturesBefore - 影響を受けた地物の操作前の状態（プレーンオブジェクト）
    * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
@@ -33,8 +34,11 @@ export class ShareVerticesCommand {
    * @returns {Promise<Object>} イベント発行のための情報
    */
   async execute() {
-    const { vertexId1, vertexId2 } = this._payload;
-    const shareResult = await this._editFeatureUseCase.shareVertices(vertexId1, vertexId2);
+    const { vertexId1, vertexId2, keptVertexId } = this._payload;
+    const options = keptVertexId === vertexId1 || keptVertexId === vertexId2
+      ? { preferredKeptVertexId: keptVertexId }
+      : {};
+    const shareResult = await this._editFeatureUseCase.shareVertices(vertexId1, vertexId2, options);
     return { updatedFeatures: shareResult?.affectedFeatures || [] };
   }
 
