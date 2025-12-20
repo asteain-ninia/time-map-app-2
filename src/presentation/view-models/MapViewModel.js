@@ -3,8 +3,27 @@
 import { Point as DomainPoint } from '../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
-import { Vertex } from '../../domain/entities/Vertex.js'; // Vertex をインポート
 import { UpdateProjectSettingsUseCase } from '../../application/usecases/UpdateProjectSettingsUseCase.js'; // 型チェック用
+import {
+  applyDefaultPropertyTimeRange,
+  getDefaultProjectSettings,
+  getDefaultPropertyTimeRange,
+  getEquatorLength,
+  getGridSettings,
+  getProjectSettings,
+  getTimeSliderRange,
+  updateProjectSettings
+} from './MapViewModelProjectSettings.js';
+import {
+  calculateDistance,
+  calculateGreatCirclePath,
+  calculatePolygonArea
+} from './MapViewModelGeometry.js';
+import {
+  getActiveFeature,
+  getSelectedFeatures,
+  getSelectedVertices
+} from './MapViewModelSelectionGetters.js';
 
 /**
  * マップビューのデータと状態管理
@@ -823,18 +842,7 @@ export class MapViewModel {
    * @returns {Object} 距離情報 { linear, greatCircle }
    */
   calculateDistance(point1, point2, equatorLength) {
-    const linearDistance = this._geometryService.calculateLinearDistanceInKm(
-      point1.x, point1.y, point2.x, point2.y, equatorLength
-    );
-
-    const greatCircleDistance = this._geometryService.calculateGreatCircleDistance(
-      point1.x, point1.y, point2.x, point2.y
-    );
-
-    return {
-      linear: linearDistance,
-      greatCircle: greatCircleDistance
-    };
+    return calculateDistance(this, point1, point2, equatorLength);
   }
 
   /**
@@ -845,13 +853,7 @@ export class MapViewModel {
    * @returns {{x:number,y:number}[]} 点列
    */
   calculateGreatCirclePath(point1, point2, segments = 32) {
-    return this._geometryService.calculateGreatCirclePath(
-      point1.x,
-      point1.y,
-      point2.x,
-      point2.y,
-      segments
-    );
+    return calculateGreatCirclePath(this, point1, point2, segments);
   }
 
   /**
@@ -861,19 +863,7 @@ export class MapViewModel {
    * @returns {number} 面積（km²）
    */
   calculatePolygonArea(vertexIds, equatorLength) {
-    if (!this._world || !this._world.vertices || !vertexIds || vertexIds.length < 3) return 0;
-
-    // Vertexインスタンスの配列を生成
-    const vertices = vertexIds
-      .map(id => {
-          const vData = this._world.vertices.find(v => v.id === id);
-          return vData ? new Vertex(vData.id, vData.x, vData.y) : null;
-      })
-      .filter(v => v); // nullを除外
-
-    if (vertices.length < 3) return 0;
-
-    return this._geometryService.calculatePolygonAreaInKm2(vertices, equatorLength);
+    return calculatePolygonArea(this, vertexIds, equatorLength);
   }
 
   /**
@@ -957,34 +947,15 @@ export class MapViewModel {
    * @returns {Object | null} プロジェクト設定オブジェクト、または未ロードの場合はnull
    */
   _applyDefaultPropertyTimeRange() {
-    if (!this._projectSettings) {
-      this._defaultPropertyTimeRange = { start: null, end: null };
-      return;
-    }
-
-    const rawMin = this._projectSettings.sliderMin;
-    const rawMax = this._projectSettings.sliderMax;
-    const hasMin = typeof rawMin === 'number' && Number.isFinite(rawMin);
-    const hasMax = typeof rawMax === 'number' && Number.isFinite(rawMax);
-    const normalizedMin = hasMin ? rawMin : 0;
-    const normalizedMaxCandidate = hasMax ? rawMax : normalizedMin;
-    const normalizedMax = normalizedMaxCandidate >= normalizedMin ? normalizedMaxCandidate : normalizedMin;
-
-    const startTime = this._navigateTimeUseCase.createTimePoint(normalizedMin);
-    const endTime = this._navigateTimeUseCase.createTimePoint(normalizedMax + 1);
-
-    this._defaultPropertyTimeRange = { start: startTime, end: endTime };
+    applyDefaultPropertyTimeRange(this);
   }
 
   getDefaultPropertyTimeRange() {
-    if (!this._defaultPropertyTimeRange.start || !this._defaultPropertyTimeRange.end) {
-      this._applyDefaultPropertyTimeRange();
-    }
-    return { ...this._defaultPropertyTimeRange };
+    return getDefaultPropertyTimeRange(this);
   }
 
   getProjectSettings() {
-      return this._projectSettings ? JSON.parse(JSON.stringify(this._projectSettings)) : null;
+      return getProjectSettings(this);
   }
 
   /**
@@ -992,7 +963,7 @@ export class MapViewModel {
    * @returns {number} 赤道長 (km)
    */
   getEquatorLength() {
-      return this._projectSettings ? this._projectSettings.equatorLength : 40000; // フォールバック値
+      return getEquatorLength(this); // フォールバック値
   }
 
   /**
@@ -1000,14 +971,7 @@ export class MapViewModel {
    * @returns {{interval: number, color: string, opacity: number}} グリッド設定
    */
   getGridSettings() {
-      if (this._projectSettings) {
-          return {
-              interval: this._projectSettings.gridInterval,
-              color: this._projectSettings.gridColor,
-              opacity: this._projectSettings.gridOpacity
-          };
-      }
-      return { interval: 10, color: "#cccccc", opacity: 0.5 }; // フォールバック値
+      return getGridSettings(this); // フォールバック値
   }
 
   /**
@@ -1015,13 +979,7 @@ export class MapViewModel {
    * @returns {{min: number, max: number}} 時間スライダーの最小年・最大年
    */
   getTimeSliderRange() {
-      if (this._projectSettings) {
-          return {
-              min: this._projectSettings.sliderMin,
-              max: this._projectSettings.sliderMax
-          };
-      }
-      return { min: 0, max: 10000 }; // フォールバック値
+      return getTimeSliderRange(this); // フォールバック値
   }
 
 
@@ -1077,37 +1035,20 @@ export class MapViewModel {
    * 選択中の地物オブジェクトを取得（主選択）
    * @returns {Feature | null} 主選択中の地物オブジェクト、またはnull
    */
-  getActiveFeature() {
-    if (!this._world || !this._primaryFeatureId) return null;
-    // _world.features から探す
-    return this._world.features.find(f => f.id === this._primaryFeatureId) || null;
-  }
+  getActiveFeature() { return getActiveFeature(this); }
 
   /**
    * 選択中の地物オブジェクト配列を取得
    * @returns {Array<Feature>}
    */
-  getSelectedFeatures() {
-    if (!this._world || !Array.isArray(this._world.features)) return [];
-    const selectedIds = this._selectedFeatureIds;
-    if (selectedIds.size === 0) return [];
-    return this._world.features.filter(f => selectedIds.has(f.id));
-  }
+  getSelectedFeatures() { return getSelectedFeatures(this); }
 
   /**
    * 選択中の頂点オブジェクトの配列を取得
    * @returns {Array<Vertex>} 選択中の頂点の配列
    */
   getSelectedVertices() {
-    if (!this._world || !this._world.vertices || this._selectedVertexIds.size === 0) return [];
-    const verticesMap = new Map(this._world.vertices.map(v => [v.id, v]));
-    return Array.from(this._selectedVertexIds)
-               .map(id => {
-                   const vData = verticesMap.get(id);
-                   // Vertexインスタンスを生成して返す
-                   return vData ? new Vertex(vData.id, vData.x, vData.y) : null;
-               })
-               .filter(Boolean); // 見つからない頂点は除外
+    return getSelectedVertices(this);
   }
 
   /**
@@ -1186,28 +1127,7 @@ export class MapViewModel {
    * @throws {Error} 更新に失敗した場合
    */
   async updateProjectSettings(newSettings) {
-      try {
-          const updatedSettings = await this._updateProjectSettingsUseCase.execute(newSettings);
-          this._projectSettings = updatedSettings; // ViewModelの内部状態を更新
-          this._applyDefaultPropertyTimeRange();
-
-          // 世界データ全体の metadata.settings も更新されたものとして扱う
-          if (this._world && this._world.metadata) {
-              this._world.metadata.settings = { ...updatedSettings };
-          }
-
-          // イベント発行 (ペイロードに更新後の設定を含める)
-          this._notifyObservers('projectSettingsChanged', this.getProjectSettings());
-          // worldデータも変更されたとみなし、関連するコンポーネントに通知
-          this._notifyObservers('world'); 
-
-          // 設定によってはタイムラインの範囲も変わるため、専用イベントも発行
-          this._eventBus.publish('ProjectSettingsUpdated', { settings: this.getProjectSettings() });
-
-      } catch (error) {
-          console.error("Failed to update project settings in MapViewModel:", error);
-          throw error; // UI側でエラー表示するために再スロー
-      }
+      return updateProjectSettings(this, newSettings);
   }
 
   /**
@@ -1216,18 +1136,6 @@ export class MapViewModel {
    */
   getDefaultProjectSettings() {
       // この値は JSONWorldRepository._createEmptyWorld の settings と一致させる
-      return {
-          equatorLength: 40000,
-          gridInterval: 10,
-          gridColor: "#cccccc",
-          gridOpacity: 0.5,
-          sliderMin: 0,
-          sliderMax: 10000,
-          worldName: "新しい世界", 
-          worldDescription: "",
-          rendering: {
-              minLabelScreenRatio: 0.0005
-          }
-      };
+      return getDefaultProjectSettings();
   }
 }
