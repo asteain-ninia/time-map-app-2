@@ -80,7 +80,7 @@ export class MapViewModel {
   async loadWorld() {
     try {
       // 世界データを取得（リポジトリは外部から注入される）
-      const worldRepository = this._editFeatureUseCase._worldRepository;
+      const worldRepository = this._editFeatureUseCase.getWorldRepository();
       this._world = await worldRepository.getWorld();
 
       // プロジェクト固有設定を保持
@@ -520,7 +520,7 @@ export class MapViewModel {
     // worldRepository から最新の world データを取得して _world を更新
     // ManageLayersUseCase が worldRepository のキャッシュを更新しているため、
     // これにより _world.layers が最新になる。
-    const worldRepository = this._editFeatureUseCase._worldRepository;
+    const worldRepository = this._editFeatureUseCase.getWorldRepository();
     this._world = await worldRepository.getWorld();
 
     // MapViewModel が保持する _features リストも、レイヤー変更（特に削除や可視性変更）

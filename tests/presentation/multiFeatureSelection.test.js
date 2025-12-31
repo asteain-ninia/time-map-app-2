@@ -16,7 +16,7 @@ const createStubNavigateTimeUseCase = () => ({
 
 const createMapViewModel = () => {
   const eventBus = createStubEventBus();
-  const editFeatureUseCase = { _worldRepository: null };
+  const editFeatureUseCase = { getWorldRepository: () => null };
   const navigateTimeUseCase = createStubNavigateTimeUseCase();
   const manageLayersUseCase = {};
   const geometryService = {};

@@ -80,7 +80,7 @@ describe("MapViewModel", () => {
       getWorld: vi.fn(async () => createWorld()),
       saveWorld: vi.fn(async () => {})
     };
-    const editFeatureUseCase = { _worldRepository: worldRepository };
+    const editFeatureUseCase = { getWorldRepository: () => worldRepository };
     const navigateTimeUseCase = {
       getCurrentTime: vi.fn(() => new TimePoint(0)),
       moveToTime: vi.fn((year, month = null, day = null) => new TimePoint(year, month, day)),

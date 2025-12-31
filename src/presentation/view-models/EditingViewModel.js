@@ -590,7 +590,7 @@ export class EditingViewModel {
     if (!vertexIds || vertexIds.length === 0) return;
     
     try {
-        const worldRepository = this._editFeatureUseCase._worldRepository;
+        const worldRepository = this._editFeatureUseCase.getWorldRepository();
         const worldBefore = await worldRepository.getWorld();
 
         const verticesToRestore = vertexIds.map(id => {
@@ -643,7 +643,7 @@ export class EditingViewModel {
       throw new Error('共有解除に必要な情報が不足しています。');
     }
 
-    const worldRepository = this._editFeatureUseCase._worldRepository;
+    const worldRepository = this._editFeatureUseCase.getWorldRepository();
     const worldBefore = await worldRepository.getWorld();
     const featureBefore = worldBefore.features.find(f => f.id === featureId);
     if (!featureBefore) {
@@ -691,7 +691,7 @@ export class EditingViewModel {
     }
 
     try {
-        const worldRepository = this._editFeatureUseCase._worldRepository;
+        const worldRepository = this._editFeatureUseCase.getWorldRepository();
         const world = await worldRepository.getWorld();
         const featureBefore = world.features.find(f => f.id === featureId);
         if (!featureBefore) { throw new Error(`Feature not found: ${featureId}`); }
@@ -843,7 +843,7 @@ export class EditingViewModel {
       return { shared: false };
     }
 
-    const worldRepository = this._editFeatureUseCase._worldRepository;
+    const worldRepository = this._editFeatureUseCase.getWorldRepository();
     const world = await worldRepository.getWorld();
     if (!world || !Array.isArray(world.vertices)) {
       return { shared: false };
@@ -889,7 +889,7 @@ export class EditingViewModel {
       return null;
     }
 
-    const worldRepository = this._editFeatureUseCase._worldRepository;
+    const worldRepository = this._editFeatureUseCase.getWorldRepository();
     const worldBefore = await worldRepository.getWorld();
     const affectedBefore = this._collectAffectedFeaturesForVertices(worldBefore.features, new Set([vertexId1, vertexId2]));
 
@@ -1032,7 +1032,7 @@ export class EditingViewModel {
     }
 
     try {
-        const worldRepository = this._editFeatureUseCase._worldRepository;
+        const worldRepository = this._editFeatureUseCase.getWorldRepository();
         const worldBefore = await worldRepository.getWorld();
         const featureBeforeUpdate = worldBefore.features.find(f => f.id === edgeInfo.featureId);
         if (!featureBeforeUpdate) {

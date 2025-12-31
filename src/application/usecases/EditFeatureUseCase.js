@@ -23,8 +23,13 @@ export class EditFeatureUseCase {
    * @param {LayerService} layerService
    * @param {IPolygonEditService} polygonEditService - ポリゴン編集サービス (リングベース移行後)
    * @param {IdGenerationService} idGenerationService - ID生成サービス
+   * @param {Object} [useCaseOverrides] - テスト用の委譲差し替え
+   * @param {AddFeatureUseCase} [useCaseOverrides.addFeatureUseCase]
+   * @param {UpdateFeatureUseCase} [useCaseOverrides.updateFeatureUseCase]
+   * @param {DeleteFeatureUseCase} [useCaseOverrides.deleteFeatureUseCase]
+   * @param {VertexEditUseCase} [useCaseOverrides.vertexEditUseCase]
    */
-  constructor(worldRepository, geometryService, layerService, polygonEditService, idGenerationService) { // idGenerationService を引数に追加
+  constructor(worldRepository, geometryService, layerService, polygonEditService, idGenerationService, useCaseOverrides = {}) { // idGenerationService を引数に追加
     this._worldRepository = worldRepository;
     this._geometryService = geometryService;
     this._layerService = layerService;
@@ -38,29 +43,44 @@ export class EditFeatureUseCase {
     this._cleanupUnusedVerticesFunc = this._cleanupUnusedVertices.bind(this);
     this._getOlderVertexIdFunc = this._getOlderVertexId.bind(this);
 
+    const {
+      addFeatureUseCase,
+      updateFeatureUseCase,
+      deleteFeatureUseCase,
+      vertexEditUseCase
+    } = useCaseOverrides || {};
+
     // 専門UseCaseのインスタンス化
-    this._addFeatureUseCase = new AddFeatureUseCase(
-        worldRepository, geometryService, layerService,
-        this._generateIdFunc, this._processGeometryFunc, this._getVerticesFromIdsFunc
+    this._addFeatureUseCase = addFeatureUseCase || new AddFeatureUseCase(
+      worldRepository, geometryService, layerService,
+      this._generateIdFunc, this._processGeometryFunc, this._getVerticesFromIdsFunc
     );
-    this._updateFeatureUseCase = new UpdateFeatureUseCase(
-        worldRepository, geometryService, layerService,
-        this._processGeometryFunc, this._getVerticesFromIdsFunc,
-        polygonEditService
+    this._updateFeatureUseCase = updateFeatureUseCase || new UpdateFeatureUseCase(
+      worldRepository, geometryService, layerService,
+      this._processGeometryFunc, this._getVerticesFromIdsFunc,
+      polygonEditService
     );
-    this._deleteFeatureUseCase = new DeleteFeatureUseCase(
-        worldRepository,
-        this._cleanupUnusedVerticesFunc
+    this._deleteFeatureUseCase = deleteFeatureUseCase || new DeleteFeatureUseCase(
+      worldRepository,
+      this._cleanupUnusedVerticesFunc
     );
-    this._vertexEditUseCase = new VertexEditUseCase(
-        worldRepository, geometryService,
-        this._cleanupUnusedVerticesFunc,
-        this._generateIdFunc, this._getOlderVertexIdFunc,
-        layerService
+    this._vertexEditUseCase = vertexEditUseCase || new VertexEditUseCase(
+      worldRepository, geometryService,
+      this._cleanupUnusedVerticesFunc,
+      this._generateIdFunc, this._getOlderVertexIdFunc,
+      layerService
     );
   }
 
   // --- 公開メソッド (委譲) ---
+
+  /**
+   * WorldRepository を取得
+   * @returns {WorldRepository}
+   */
+  getWorldRepository() {
+    return this._worldRepository;
+  }
 
   async addFeature(featureType, properties, geometry, layerId) {
     return this._addFeatureUseCase.execute(featureType, properties, geometry, layerId);

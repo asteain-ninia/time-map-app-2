@@ -45,29 +45,41 @@ describe("EditFeatureUseCase", () => {
   });
 
   const createUseCaseWithStubs = () => {
+    const addFeatureUseCase = { execute: vi.fn().mockResolvedValue({ id: "added" }) };
+    const updateFeatureUseCase = { execute: vi.fn().mockResolvedValue({ id: "feature-1", name: "Updated" }) };
+    const deleteFeatureUseCase = { execute: vi.fn().mockResolvedValue(undefined) };
+    const vertexEditUseCase = { moveVertices: vi.fn().mockResolvedValue({ updated: true }) };
+
     const useCase = new EditFeatureUseCase(
       worldRepository,
       geometryService,
       layerService,
       polygonEditService,
-      idService
+      idService,
+      {
+        addFeatureUseCase,
+        updateFeatureUseCase,
+        deleteFeatureUseCase,
+        vertexEditUseCase
+      }
     );
 
-    useCase._addFeatureUseCase = { execute: vi.fn().mockResolvedValue({ id: "added" }) };
-    useCase._updateFeatureUseCase = { execute: vi.fn().mockResolvedValue({ id: "feature-1", name: "Updated" }) };
-    useCase._deleteFeatureUseCase = { execute: vi.fn().mockResolvedValue(undefined) };
-    useCase._vertexEditUseCase = { moveVertices: vi.fn().mockResolvedValue({ updated: true }) };
-
-    return useCase;
+    return {
+      useCase,
+      addFeatureUseCase,
+      updateFeatureUseCase,
+      deleteFeatureUseCase,
+      vertexEditUseCase
+    };
   };
 
   it("dispatches to AddFeatureUseCase for creation", async () => {
-    const useCase = createUseCaseWithStubs();
+    const { useCase, addFeatureUseCase } = createUseCaseWithStubs();
     const property = createProperty("Point");
 
     const result = await useCase.addFeature("point", [property], { vertexIds: ["v1"] }, "layer-0");
 
-    expect(useCase._addFeatureUseCase.execute).toHaveBeenCalledWith(
+    expect(addFeatureUseCase.execute).toHaveBeenCalledWith(
       "point",
       [property],
       { vertexIds: ["v1"] },
@@ -77,29 +89,29 @@ describe("EditFeatureUseCase", () => {
   });
 
   it("forwards updates to UpdateFeatureUseCase", async () => {
-    const useCase = createUseCaseWithStubs();
+    const { useCase, updateFeatureUseCase } = createUseCaseWithStubs();
 
     const result = await useCase.updateFeature("feature-1", { name: "Updated" });
 
-    expect(useCase._updateFeatureUseCase.execute).toHaveBeenCalledWith("feature-1", { name: "Updated" });
+    expect(updateFeatureUseCase.execute).toHaveBeenCalledWith("feature-1", { name: "Updated" });
     expect(result).toEqual({ id: "feature-1", name: "Updated" });
   });
 
   it("forwards deletions to DeleteFeatureUseCase", async () => {
-    const useCase = createUseCaseWithStubs();
+    const { useCase, deleteFeatureUseCase } = createUseCaseWithStubs();
 
     await useCase.deleteFeature("feature-1");
 
-    expect(useCase._deleteFeatureUseCase.execute).toHaveBeenCalledWith("feature-1");
+    expect(deleteFeatureUseCase.execute).toHaveBeenCalledWith("feature-1");
   });
 
   it("routes vertex movement through VertexEditUseCase", async () => {
-    const useCase = createUseCaseWithStubs();
+    const { useCase, vertexEditUseCase } = createUseCaseWithStubs();
     const payload = [{ id: "v1", x: 1, y: 2 }];
 
     const result = await useCase.moveVertices(payload);
 
-    expect(useCase._vertexEditUseCase.moveVertices).toHaveBeenCalledWith(payload);
+    expect(vertexEditUseCase.moveVertices).toHaveBeenCalledWith(payload);
     expect(result).toEqual({ updated: true });
   });
 });
