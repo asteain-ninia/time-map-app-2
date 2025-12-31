@@ -24,6 +24,16 @@ import {
   getSelectedFeatures,
   getSelectedVertices
 } from './MapViewModelSelectionGetters.js';
+import {
+  applyVertexSelectionContext as applyVertexSelectionContextState,
+  analyzeVertexSelection as analyzeVertexSelectionState,
+  clearSelection as clearSelectionState,
+  findOwningFeatureIdsForVertex as findOwningFeatureIdsForVertexState,
+  hoverFeature as hoverFeatureState,
+  hoverVertex as hoverVertexState,
+  selectFeature as selectFeatureState,
+  selectVertex as selectVertexState
+} from './MapViewModelSelection.js';
 
 /**
  * マップビューのデータと状態管理
@@ -539,60 +549,8 @@ export class MapViewModel {
    * @param {boolean} [addToSelection=false] - 既存選択に追加/トグルするか
    */
   selectFeature(featureId, addToSelection = false) {
-    if (!this._world) return;
-
-    const feature = this._features.find(f => f.id === featureId);
-    if (!feature) {
-        if (!addToSelection && (this._selectedFeatureIds.size > 0 || this._selectedVertexIds.size > 0 || this._vertexContextFeatureId !== null)) {
-            this.clearSelection();
-        }
-        return;
-    }
-
-    let selectionChanged = false;
-    const nextSelected = addToSelection ? new Set(this._selectedFeatureIds) : new Set();
-
-    if (addToSelection) {
-        if (nextSelected.has(feature.id)) {
-            nextSelected.delete(feature.id);
-            selectionChanged = true;
-        } else {
-            nextSelected.add(feature.id);
-            selectionChanged = true;
-        }
-    } else {
-        if (nextSelected.size !== 1 || !nextSelected.has(feature.id) || this._primaryFeatureId !== feature.id) {
-            nextSelected.clear();
-            nextSelected.add(feature.id);
-            selectionChanged = true;
-        }
-    }
-
-    if (!selectionChanged && this._selectedVertexIds.size === 0 && this._vertexContextFeatureId === null) {
-        return;
-    }
-
-    const previousPrimary = this._primaryFeatureId;
-    this._selectedFeatureIds = nextSelected;
-    if (this._selectedFeatureIds.size > 0) {
-        this._primaryFeatureId = nextSelected.has(feature.id) ? feature.id : Array.from(nextSelected).pop();
-    } else {
-        this._primaryFeatureId = null;
-    }
-
     // 地物選択時は頂点選択をクリア
-    const hadVertices = this._selectedVertexIds.size > 0;
-    this._selectedVertexIds.clear();
-    this._vertexContextFeatureId = null;
-    this._selectedVertexOwnerIds.clear();
-
-    if (selectionChanged || hadVertices || previousPrimary !== this._primaryFeatureId) {
-        this._notifyObservers('activeFeature');
-        if (hadVertices) {
-            this._notifyObservers('selectedVertices');
-        }
-        this._notifyObservers('vertexContextFeature');
-    }
+    selectFeatureState(this, featureId, addToSelection);
   }
 
   /**
@@ -601,77 +559,14 @@ export class MapViewModel {
    * @param {boolean} [addToSelection=false] - 選択に追加するかどうか
    */
   selectVertex(vertexId, addToSelection = false) {
-    if (!this._world || !this._world.vertices) return; // vertices の存在チェック追加
-
-    const vertex = this._world.vertices.find(v => v.id === vertexId);
-    if (!vertex) {
-         if (!addToSelection) { // 単一選択モードで存在しない頂点をクリックしたらクリア
-             if (this._selectedVertexIds.size > 0 || this._selectedFeatureIds.size > 0 || this._vertexContextFeatureId !== null) {
-                 this.clearSelection();
-             }
-         }
-         return;
-    }
-
+    // vertices の存在チェック追加
+    // 単一選択モードで存在しない頂点をクリックしたらクリア
     // 頂点が現在表示中の地物に属しているか確認 (リングベース対応)
-    const isVertexVisible = this._features.some(f => {
-         if (f instanceof DomainPolygon) {
-             return f.rings?.some(ring => ring.vertexIds.includes(vertexId));
-         } else if (f instanceof DomainLine || f instanceof DomainPoint) {
-             return f.vertexIds?.includes(vertexId);
-         }
-         return false;
-    });
-    if (!isVertexVisible) {
-        console.warn(`Vertex ${vertexId} is not part of any currently visible feature. Selection denied.`);
-        if (!addToSelection) {
-            this.clearSelection();
-        }
-        return;
-    }
-
-    let vertexSelectionChanged = false;
-    const newSelectedVertexIds = addToSelection ? new Set(this._selectedVertexIds) : new Set();
-
-    if (addToSelection) {
-      if (newSelectedVertexIds.has(vertexId)) {
-        newSelectedVertexIds.delete(vertexId); // 解除
-        vertexSelectionChanged = true;
-      } else {
-        newSelectedVertexIds.add(vertexId);
-        vertexSelectionChanged = true;
-      }
-    } else { // 単一選択
-      if (!newSelectedVertexIds.has(vertexId) || newSelectedVertexIds.size !== 1) {
-        newSelectedVertexIds.clear();
-        newSelectedVertexIds.add(vertexId);
-        vertexSelectionChanged = true;
-      }
-      // 既に単一選択されている場合は何もしない
-    }
-
+    // 解除
+    // 単一選択
+    // 既に単一選択されている場合は何もしない
     // 状態変更があった場合のみ通知
-    if (vertexSelectionChanged || this._selectedFeatureIds.size > 0 || this._vertexContextFeatureId !== null) {
-        const hadFeatures = this._selectedFeatureIds.size > 0;
-
-        this._selectedVertexIds = newSelectedVertexIds;
-
-        if (this._selectedVertexIds.size > 0) {
-            this._selectedFeatureIds.clear();
-            this._primaryFeatureId = null;
-        }
-
-        const contextChanged = this._applyVertexSelectionContext();
-
-        this._notifyObservers('selectedVertices');
-
-        if (hadFeatures) {
-            this._notifyObservers('activeFeature');
-        }
-        if (contextChanged) {
-            this._notifyObservers('vertexContextFeature');
-        }
-    }
+    selectVertexState(this, vertexId, addToSelection);
   }
 
   /**
@@ -680,13 +575,7 @@ export class MapViewModel {
    * @private
    */
   _applyVertexSelectionContext() {
-    const analysis = this._analyzeVertexSelection(this._selectedVertexIds);
-    const previousContextId = this._vertexContextFeatureId;
-
-    this._vertexContextFeatureId = analysis.uniqueOwnerId;
-    this._selectedVertexOwnerIds = new Set(analysis.ownerIds);
-
-    return previousContextId !== this._vertexContextFeatureId;
+    return applyVertexSelectionContextState(this);
   }
 
   /**
@@ -696,23 +585,7 @@ export class MapViewModel {
    * @private
    */
   _analyzeVertexSelection(vertexIds) {
-    if (!vertexIds || vertexIds.size === 0) {
-      return { uniqueOwnerId: null, ownerIds: new Set() };
-    }
-
-    const ownerIds = new Set();
-
-    vertexIds.forEach(vertexId => {
-      const owners = this._findOwningFeatureIdsForVertex(vertexId);
-      owners.forEach(ownerId => ownerIds.add(ownerId));
-    });
-
-    let uniqueOwnerId = null;
-    if (ownerIds.size === 1) {
-      uniqueOwnerId = ownerIds.values().next().value;
-    }
-
-    return { uniqueOwnerId, ownerIds };
+    return analyzeVertexSelectionState(this, vertexIds);
   }
 
   /**
@@ -722,48 +595,14 @@ export class MapViewModel {
    * @private
    */
   _findOwningFeatureIdsForVertex(vertexId) {
-    const ownerIds = [];
-    if (!vertexId) return ownerIds;
-
-    for (const feature of this._features) {
-      if (!feature) continue;
-      if (feature instanceof DomainPolygon) {
-        if (feature.rings?.some(ring => ring.vertexIds.includes(vertexId))) {
-          ownerIds.push(feature.id);
-        }
-      } else if (feature instanceof DomainLine || feature instanceof DomainPoint) {
-        if (Array.isArray(feature.vertexIds) && feature.vertexIds.includes(vertexId)) {
-          ownerIds.push(feature.id);
-        }
-      }
-    }
-
-    return ownerIds;
+    return findOwningFeatureIdsForVertexState(this, vertexId);
   }
 
   /**
    * 選択を解除
    */
   clearSelection() {
-    const changedFeature = this._selectedFeatureIds.size > 0;
-    const changedVertices = this._selectedVertexIds.size > 0;
-    const changedHighlight = this._vertexContextFeatureId !== null;
-
-    this._selectedFeatureIds.clear();
-    this._primaryFeatureId = null;
-    this._selectedVertexIds.clear();
-    this._vertexContextFeatureId = null;
-    this._selectedVertexOwnerIds.clear();
-
-    if (changedFeature) {
-        this._notifyObservers('activeFeature');
-    }
-    if (changedVertices) {
-        this._notifyObservers('selectedVertices');
-    }
-    if (changedHighlight) {
-        this._notifyObservers('vertexContextFeature');
-    }
+    clearSelectionState(this);
   }
 
   /**
@@ -771,13 +610,7 @@ export class MapViewModel {
    * @param {string | null} featureId - ホバーする地物のID、または解除する場合はnull
    */
   hoverFeature(featureId) {
-    if (!this._world) return;
-
-    const feature = featureId ? this._features.find(f => f.id === featureId) : null;
-    if (this._hoveredFeature !== feature) {
-      this._hoveredFeature = feature || null;
-      this._notifyObservers('hoveredFeature');
-    }
+    hoverFeatureState(this, featureId);
   }
 
   /**
@@ -785,14 +618,8 @@ export class MapViewModel {
    * @param {string | null} vertexId - ホバーする頂点のID、または解除する場合はnull
    */
   hoverVertex(vertexId) {
-    if (!this._world || !this._world.vertices) return;
-
-    const vertex = vertexId ? this._world.vertices.find(v => v.id === vertexId) : null;
-    if (this._hoveredVertex !== vertex) {
-      // プレーンオブジェクトを保存
-      this._hoveredVertex = vertex ? { id: vertex.id, x: vertex.x, y: vertex.y } : null;
-      this._notifyObservers('hoveredVertex');
-    }
+    // プレーンオブジェクトを保存
+    hoverVertexState(this, vertexId);
   }
 
   /**
