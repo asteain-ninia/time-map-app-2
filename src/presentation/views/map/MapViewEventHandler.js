@@ -162,7 +162,19 @@ export class MapViewEventHandler {
           } else {
             console.log('[EventHandler] No close edge found for add-vertex-on-edge.');
           }
-        } else { // 選択、移動など
+        } else if (tool === 'move') {
+            const clickedFeature = this._interactionLogic.findClosestFeature(worldPoint);
+            if (clickedFeature) {
+                this._viewModel.selectFeature(clickedFeature.id, false);
+                const verticesToDrag = this._collectVerticesForFeature(clickedFeature);
+                if (verticesToDrag.size > 0) {
+                    this._editingViewModel.startVerticesDrag(verticesToDrag);
+                    this._mapOverlay.style.cursor = 'grabbing';
+                }
+            } else if (!addToSelection) {
+                this._viewModel.clearSelection();
+            }
+        } else { // 選択、頂点移動など
             const clickedVertex = this._interactionLogic.findClosestVertex(worldPoint);
             if (clickedVertex) {
                 // 頂点選択処理
@@ -698,6 +710,39 @@ export class MapViewEventHandler {
       ? this._viewModel.getFeatures()
       : [];
     return { snapWorldDistance, worldWidth, visibleFeatures };
+  }
+
+  _collectVerticesForFeature(feature) {
+    const world = this._viewModel.getWorld();
+    if (!world || !Array.isArray(world.vertices) || !feature) {
+      return new Map();
+    }
+
+    const vertexIds = new Set();
+    const isPolygon = feature instanceof DomainPolygon || feature.constructor?.name === 'Polygon';
+    const isLine = feature instanceof DomainLine || feature.constructor?.name === 'Line';
+    const isPoint = feature instanceof DomainPoint || feature.constructor?.name === 'Point';
+
+    if (isPolygon && Array.isArray(feature.rings)) {
+      feature.rings.forEach(ring => {
+        if (Array.isArray(ring.vertexIds)) {
+          ring.vertexIds.forEach(id => vertexIds.add(id));
+        }
+      });
+    } else if ((isLine || isPoint) && Array.isArray(feature.vertexIds)) {
+      feature.vertexIds.forEach(id => vertexIds.add(id));
+    }
+
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+    const verticesToDrag = new Map();
+    vertexIds.forEach(id => {
+      const vertexData = verticesMap.get(id);
+      if (vertexData) {
+        verticesToDrag.set(id, { x: vertexData.x, y: vertexData.y });
+      }
+    });
+
+    return verticesToDrag;
   }
 
   /** 穴/飛び地追加モードでのクリック処理 */
