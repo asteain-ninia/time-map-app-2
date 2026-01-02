@@ -101,7 +101,7 @@ export class MapViewEventHandler {
     this._mapView.hideContextMenu();
     const targetElement = event.target;
     // ダイアログ上のイベントは無視
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
 
     // 中ボタンクリックで視点移動を開始
     if (event.button === 1) {
@@ -144,6 +144,8 @@ export class MapViewEventHandler {
         if (tool === 'add-hole') {
           // 穴/飛び地追加モードのクリック処理
           this._handleAddHoleOrEnclaveClick(worldPoint);
+        } else if (tool === 'split') {
+          this._handleSplitToolClick(worldPoint);
         } else if (tool === 'add-vertex-on-edge') {
           const closestEdgeInfo = this._interactionLogic.findClosestEdge(worldPoint);
           if (closestEdgeInfo) {
@@ -219,7 +221,7 @@ export class MapViewEventHandler {
   /** マウス移動 */
   handleMouseMove(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
 
     const pageX = event.clientX;
     const pageY = event.clientY;
@@ -255,7 +257,7 @@ export class MapViewEventHandler {
         if (mode === 'view') {
           // 表示モードならビューポートをドラッグ
           this._viewportManager.drag(pageX, pageY);
-        } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
+        } else if (mode === 'edit' && tool !== 'add-hole' && tool !== 'split' && isDraggingVertices) {
             // 編集モードで頂点ドラッグ中の場合
             const totalDxScreen = pageX - this._dragStartScreenPosition.x;
             const totalDyScreen = pageY - this._dragStartScreenPosition.y;
@@ -278,7 +280,7 @@ export class MapViewEventHandler {
   /** マウスアップ */
   handleMouseUp(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
 
     // 中ボタンのドラッグ終了
     if (event.button === 1) {
@@ -304,7 +306,7 @@ export class MapViewEventHandler {
       if (mode === 'view') {
         this._viewportManager.endDrag();
         this._mapOverlay.style.cursor = 'grab';
-      } else if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
+      } else if (mode === 'edit' && tool !== 'add-hole' && tool !== 'split' && isDraggingVertices) {
         this._editingViewModel.endVerticesDrag(this._getSharedVertexSnapOptions());
         this._updateCursor(this._svgToWorld(this._getSVGPoint(event.clientX, event.clientY)));
       }
@@ -312,7 +314,7 @@ export class MapViewEventHandler {
     // クリック（ドラッグなし）処理
     else if (this._isMouseDown && !this._isDragging) {
         // クリックでも頂点ドラッグ状態はリセットする必要がある
-        if (mode === 'edit' && tool !== 'add-hole' && isDraggingVertices) {
+        if (mode === 'edit' && tool !== 'add-hole' && tool !== 'split' && isDraggingVertices) {
             // 移動がなくてもendVerticesDragを呼び出して状態をリセット
             this._editingViewModel.endVerticesDrag(this._getSharedVertexSnapOptions());
         } else if (mode === 'view') {
@@ -355,7 +357,7 @@ export class MapViewEventHandler {
       if (mode === 'view' && this._isDragging) {
         this._viewportManager.endDrag();
         this._mapOverlay.style.cursor = 'grab';
-      } else if (mode === 'edit' && tool !== 'add-hole' && this._isDragging && isDraggingVertices) {
+      } else if (mode === 'edit' && tool !== 'add-hole' && tool !== 'split' && this._isDragging && isDraggingVertices) {
         this._editingViewModel.endVerticesDrag(this._getSharedVertexSnapOptions());
       }
 
@@ -373,7 +375,7 @@ export class MapViewEventHandler {
   /** ホイール */
   handleWheel(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
     event.preventDefault(); // デフォルトのスクロール動作をキャンセル
     const delta = -event.deltaY; // ホイールの方向（上方向が正）
     const zoomFactor = delta > 0 ? 0.1 : -0.1; // 10%ずつズーム
@@ -389,7 +391,7 @@ export class MapViewEventHandler {
   /** ダブルクリック */
   handleDoubleClick(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
 
     const pageX = event.clientX;
     const pageY = event.clientY;
@@ -406,6 +408,8 @@ export class MapViewEventHandler {
        // 最後の点を追加してから確定処理へ
        this.handleAddPoint(worldPoint);
        this.handleConfirmClick(); // MapViewの確定処理を呼び出す
+    } else if (mode === 'edit' && tool === 'split') {
+      this.handleConfirmClick();
     } else if (mode === 'view') {
       // 表示モードでのダブルクリックはビューポートリセット（または中心移動など）
       this._viewportManager.updateViewport({ x: worldPoint.x, y: worldPoint.y, zoom: 1 });
@@ -415,7 +419,7 @@ export class MapViewEventHandler {
   /** コンテキストメニュー */
   handleContextMenu(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
     event.preventDefault(); // デフォルトのコンテキストメニューを抑制
     this._mapView.hideContextMenu();
 
@@ -428,7 +432,7 @@ export class MapViewEventHandler {
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
 
-    if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
+    if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole') || (mode === 'edit' && tool === 'split')) {
       this.handleCancelClick();
       return;
     }
@@ -449,7 +453,27 @@ export class MapViewEventHandler {
       return;
     }
     const targetElement = event.target;
+    const conflictDialog = targetElement.closest('.conflict-resolution-dialog');
     const isInInputDialog = targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form');
+    if (conflictDialog) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            const confirmButton = conflictDialog.querySelector('button[data-action="confirm"]');
+            if (confirmButton) confirmButton.click();
+            return;
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            const cancelButton = conflictDialog.querySelector('button[data-action="cancel"]');
+            if (cancelButton) {
+              cancelButton.click();
+            }
+            return;
+        } else {
+            return;
+        }
+    }
     // 入力ダイアログが表示されている場合のEnter/Esc処理
     if (isInInputDialog) {
         if (event.key === 'Enter') {
@@ -500,10 +524,10 @@ export class MapViewEventHandler {
            // 頂点ドラッグ中にEsc -> ドラッグキャンセル
            this._editingViewModel._resetDraggingState(); // ViewModelにリセットを依頼
            console.log("Vertex drag cancelled by ESC.");
-       } else if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole')) {
-           // 地物/穴/飛び地追加中にEsc -> キャンセル
+       } else if ((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole') || (mode === 'edit' && tool === 'split')) {
+           // 地物/穴/飛び地/分割追加中にEsc -> キャンセル
          this.handleCancelClick(); // MapViewのキャンセル処理を呼び出す
-         console.log("Add/Hole/Enclave operation cancelled by ESC.");
+         console.log("Add/Hole/Enclave/Split operation cancelled by ESC.");
        } else if (hasSelection) {
            // 選択状態がある場合はEscで選択解除
          this._viewModel.clearSelection();
@@ -519,14 +543,14 @@ export class MapViewEventHandler {
        }
     } else if (event.key === 'Enter') {
         // 地物/穴/飛び地追加モードで点が十分にあれば確定
-        if (((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole' && subMode)) && this._editingViewModel.getAddingPoints().length > 0) {
+        if (((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole' && subMode) || (mode === 'edit' && tool === 'split')) && this._editingViewModel.getAddingPoints().length > 0) {
             const minPoints = (mode === 'add')
                              ? (tool === 'point' ? 1 : (tool === 'line' ? 2 : 3))
-                             : 3; // 穴/飛び地は3点
+                             : (tool === 'split' ? 2 : 3); // 分割は2点、穴/飛び地は3点
             if (this._editingViewModel.getAddingPoints().length >= minPoints) {
                 event.preventDefault();
                 this.handleConfirmClick(); // MapViewの確定処理を呼び出す
-                console.log("Add/Hole/Enclave operation confirmed by Enter.");
+                console.log("Add/Hole/Enclave/Split operation confirmed by Enter.");
             }
         }
     } else if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) {
@@ -656,6 +680,10 @@ export class MapViewEventHandler {
                           return (feature instanceof DomainPolygon) ? 'pointer' : 'default';
                       }
                   case 'split':
+                      if (!this._editingViewModel.getTargetPolygon()) {
+                          const feature = this._interactionLogic.findClosestFeature(worldPoint);
+                          return (feature instanceof DomainPolygon) ? 'pointer' : 'default';
+                      }
                       return 'crosshair';
                   default:
                       return 'default';
@@ -743,6 +771,42 @@ export class MapViewEventHandler {
     });
 
     return verticesToDrag;
+  }
+
+  /** 分割ツールでのクリック処理 */
+  _handleSplitToolClick(worldPoint) {
+    const targetPolygon = this._editingViewModel.getTargetPolygon();
+    const world = this._viewModel.getWorld();
+    if (!world || !world.vertices) return;
+
+    if (!targetPolygon) {
+      const clickedFeature = this._interactionLogic.findClosestFeature(worldPoint);
+      if (clickedFeature instanceof DomainPolygon) {
+        this._editingViewModel.startSplit(clickedFeature);
+        this._viewModel.selectFeature(clickedFeature.id);
+      } else {
+        alert("分割する面情報を選択してください。");
+      }
+      return;
+    }
+
+    const verticesMap = new Map(world.vertices.map(v => [v.id, { id: v.id, x: v.x, y: v.y }]));
+    const isOnBoundary = this._interactionLogic.isPointNearPolygonBoundary(worldPoint, targetPolygon, verticesMap);
+    if (isOnBoundary) {
+      alert("境界線上には点を置けません。");
+      return;
+    }
+
+    const existingPoints = this._editingViewModel.getAddingPoints();
+    if (existingPoints.length === 0) {
+      const locationInfo = this._interactionLogic.locatePointInPolygon(worldPoint, targetPolygon, verticesMap);
+      if (locationInfo.type !== 'outside') {
+        alert("分断線の開始点は面の外側に置いてください。");
+        return;
+      }
+    }
+
+    this.handleAddPoint(worldPoint);
   }
 
   /** 穴/飛び地追加モードでのクリック処理 */

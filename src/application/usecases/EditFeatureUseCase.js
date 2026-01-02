@@ -8,6 +8,7 @@ import { AddFeatureUseCase } from './feature/AddFeatureUseCase';
 import { UpdateFeatureUseCase } from './feature/UpdateFeatureUseCase';
 import { DeleteFeatureUseCase } from './feature/DeleteFeatureUseCase';
 import { VertexEditUseCase } from './feature/VertexEditUseCase';
+import { SplitPolygonUseCase } from './feature/SplitPolygonUseCase';
 // import { IPolygonEditService } from '../services/IPolygonEditService'; // リングベース移行後
 import { IdGenerationService } from '../services/IdGenerationService'; // IdGenerationService をインポート
 
@@ -47,7 +48,8 @@ export class EditFeatureUseCase {
       addFeatureUseCase,
       updateFeatureUseCase,
       deleteFeatureUseCase,
-      vertexEditUseCase
+      vertexEditUseCase,
+      splitPolygonUseCase
     } = useCaseOverrides || {};
 
     // 専門UseCaseのインスタンス化
@@ -69,6 +71,12 @@ export class EditFeatureUseCase {
       this._cleanupUnusedVerticesFunc,
       this._generateIdFunc, this._getOlderVertexIdFunc,
       layerService
+    );
+    this._splitPolygonUseCase = splitPolygonUseCase || new SplitPolygonUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      this._generateIdFunc
     );
   }
 
@@ -131,10 +139,8 @@ export class EditFeatureUseCase {
 
   // --- ポリゴン固有操作 (リングベース移行後は PolygonEditService へ委譲) ---
 
-  async splitPolygon(polygonId, divisionData) {
-    // TODO: リングベース移行後、PolygonEditService に委譲
-    console.warn("splitPolygon is not fully implemented after refactoring.");
-    throw new Error("splitPolygon not implemented yet after refactoring.");
+  async splitPolygon(polygonId, splitPlan, inheritSideIndex, newProperty) {
+    return this._splitPolygonUseCase.execute(polygonId, splitPlan, inheritSideIndex, newProperty);
   }
 
   async changePolygonParent(polygonId, newParentId) {

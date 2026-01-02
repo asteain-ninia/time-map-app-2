@@ -2,12 +2,14 @@
 import { Property } from '../../domain/value-objects/Property.js';
 import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
+import { buildPolygonSplitPlan } from '../../domain/services/PolygonSplitService.js';
 
 // 分割したクラスをインポート
 import { MapViewInteractionLogic } from './map/MapViewInteractionLogic.js';
 import { MapViewRendererHelper } from './map/MapViewRendererHelper.js';
 import { MapViewEventHandler } from './map/MapViewEventHandler.js';
 import { MapContextMenu } from './map/MapContextMenu.js';
+import { ConflictResolutionDialog } from './map/ConflictResolutionDialog.js';
 
 /**
  * メインマップ表示 (ファサードクラス)
@@ -35,6 +37,8 @@ export class MapView {
     this._mapElement = null;
     this._mapOverlay = null;
     this._actionButtonsContainer = null;
+    this._confirmButton = null;
+    this._cancelButton = null;
     this._resizeObserver = null;
 
     // 状態
@@ -72,6 +76,7 @@ export class MapView {
         this._interactionLogic
     );
     this._contextMenu = new MapContextMenu();
+    this._conflictDialog = new ConflictResolutionDialog();
 
     // 初期化
     this._initialize();
@@ -161,6 +166,7 @@ export class MapView {
           ? (data.length === 1 ? data[0] : this._viewModel.getActiveFeature())
           : data;
         this._syncAddHoleToolTarget(primaryFeature);
+        this._syncSplitToolTarget(primaryFeature);
     }
   }
 
@@ -200,6 +206,7 @@ export class MapView {
         type === 'addingState'
     ) {
         this._syncAddHoleToolTarget();
+        this._syncSplitToolTarget();
     }
   }
 
@@ -460,14 +467,18 @@ export class MapView {
       const confirmButton = document.createElement('button');
       confirmButton.textContent = '確定 (Enter)';
       confirmButton.style.marginRight = '10px';
+      confirmButton.dataset.action = 'confirm';
       confirmButton.onclick = this._handleConfirmClick.bind(this); // 確定処理をバインド
 
       const cancelButton = document.createElement('button');
       cancelButton.textContent = 'キャンセル (Esc)';
+      cancelButton.dataset.action = 'cancel';
       cancelButton.onclick = this._handleCancelClick.bind(this); // キャンセル処理をバインド
 
       this._actionButtonsContainer.appendChild(confirmButton);
       this._actionButtonsContainer.appendChild(cancelButton);
+      this._confirmButton = confirmButton;
+      this._cancelButton = cancelButton;
   }
 
   /** アクションボタンの表示/非表示を更新 */
@@ -477,6 +488,7 @@ export class MapView {
       const tool = this._editingViewModel.getTool();
       const subMode = this._editingViewModel.getAddingSubMode();
       let show = false;
+      let confirmEnabled = true;
 
       // 地物追加モードの場合
       if (mode === 'add' && tool) {
@@ -491,9 +503,18 @@ export class MapView {
               show = true;
           }
       }
+      else if (mode === 'edit' && tool === 'split') {
+          if (points.length > 0) {
+              show = true;
+          }
+          confirmEnabled = this._canConfirmSplit();
+      }
 
       // コンテナの表示スタイルを更新
       this._actionButtonsContainer.style.display = show ? 'block' : 'none';
+      if (this._confirmButton) {
+        this._confirmButton.disabled = !show || !confirmEnabled;
+      }
   }
 
   /** 確定ボタンクリック処理 */
@@ -520,12 +541,27 @@ export class MapView {
            } else {
                alert('穴または飛び地を作成するには、少なくとも3つの頂点が必要です。');
            }
+      } else if (mode === 'edit' && tool === 'split') {
+          try {
+              const splitPlan = this._buildSplitPlan();
+              this._editingViewModel.setSplitPlan(splitPlan);
+              this._showSplitInheritanceDialog(splitPlan);
+          } catch (error) {
+              alert(error.message);
+          }
       }
       // 他のモード/ツールでは確定ボタンは表示されないはず
   }
 
   /** キャンセルボタンクリック処理 */
   _handleCancelClick() {
+      const tool = this._editingViewModel.getTool();
+      const points = this._editingViewModel.getAddingPoints();
+      if (tool === 'split' && points.length > 0) {
+          if (!window.confirm('分割をキャンセルしますか？')) {
+              return;
+          }
+      }
       // ViewModelの状態クリアを依頼
       this._editingViewModel._clearAddingState();
 
@@ -536,11 +572,104 @@ export class MapView {
       }
 
       // 穴追加ツールだった場合は選択ツールに戻す
-      if (this._editingViewModel.getTool() === 'add-hole') {
+      if (tool === 'add-hole' || tool === 'split') {
           this._editingViewModel.setTool('select');
       }
 
       // this._render(); // ViewModelの変更通知経由で再描画されるはず
+  }
+
+  _canConfirmSplit() {
+      if (this._editingViewModel.getMode() !== 'edit' || this._editingViewModel.getTool() !== 'split') {
+          return false;
+      }
+      const points = this._editingViewModel.getAddingPoints();
+      if (!Array.isArray(points) || points.length < 2) {
+          return false;
+      }
+      try {
+          this._buildSplitPlan();
+          return true;
+      } catch (error) {
+          return false;
+      }
+  }
+
+  _buildSplitPlan() {
+      const targetPolygon = this._editingViewModel.getTargetPolygon();
+      if (!targetPolygon) {
+          throw new Error('分割対象の面情報を選択してください。');
+      }
+      if (!(targetPolygon instanceof DomainPolygon)) {
+          throw new Error('分割対象が面情報ではありません。');
+      }
+      if (targetPolygon.childIds && targetPolygon.childIds.length > 0) {
+          throw new Error('下位領域を持つ面情報は分割できません。');
+      }
+      if (!Array.isArray(targetPolygon.rings) || targetPolygon.rings.length !== 1) {
+          throw new Error('外周リングが1つの面情報のみ分割できます。');
+      }
+      const ring = targetPolygon.rings[0];
+      if (!ring || ring.ringType !== 'territory') {
+          throw new Error('外周リングの情報が不正です。');
+      }
+      const points = this._editingViewModel.getAddingPoints();
+      if (!Array.isArray(points) || points.length < 2) {
+          throw new Error('分断線は2点以上必要です。');
+      }
+      const world = this._viewModel.getWorld();
+      if (!world || !world.vertices) {
+          throw new Error('ワールドデータが読み込まれていません。');
+      }
+      const geometryService = this._viewModel._geometryService;
+      if (!geometryService) {
+          throw new Error('幾何計算サービスが初期化されていません。');
+      }
+      const verticesMap = new Map(world.vertices.map(v => [v.id, { x: v.x, y: v.y }]));
+      return buildPolygonSplitPlan({
+          ringVertexIds: ring.vertexIds,
+          verticesMap,
+          cutLinePoints: points,
+          geometryService,
+          toleranceSq: this._clickToleranceSq
+      });
+  }
+
+  _showSplitInheritanceDialog(splitPlan) {
+      const geometryService = this._viewModel._geometryService;
+      const ringA = splitPlan.ringA.map(point => ({ x: point.x, y: point.y }));
+      const ringB = splitPlan.ringB.map(point => ({ x: point.x, y: point.y }));
+      const areaA = geometryService.calculatePolygonArea(ringA);
+      const areaB = geometryService.calculatePolygonArea(ringB);
+      const smallerIndex = areaA <= areaB ? 0 : 1;
+
+      this._conflictDialog.showSplitSelection(this._mapElement, {
+        ringA,
+        ringB,
+        smallerIndex
+      }).then(selectedIndex => {
+          this._showPropertyInputDialog({
+              onConfirm: (properties) => {
+                  this._confirmSplitWithProperties(selectedIndex, properties);
+              },
+              onCancel: () => {
+                  this._editingViewModel._clearAddingState();
+              }
+          });
+      }).catch(() => {
+          this._editingViewModel._clearAddingState();
+      });
+  }
+
+  async _confirmSplitWithProperties(inheritSideIndex, properties) {
+      try {
+          const domainProperty = this._createDomainProperty(properties);
+          await this._editingViewModel.confirmSplit(inheritSideIndex, domainProperty);
+          console.log('分割が確定しました。');
+      } catch (error) {
+          console.error('分割確定に失敗:', error);
+          alert(`エラー: ${error.message}`);
+      }
   }
 
   /**
@@ -563,6 +692,26 @@ export class MapView {
       }
   }
 
+  /**
+   * 分割ツールのターゲットと現在の地物選択を同期
+   * @param {Feature|null} [activeFeatureOverride]
+   * @private
+   */
+  _syncSplitToolTarget(activeFeatureOverride) {
+      if (this._editingViewModel.getTool() !== 'split') {
+          return;
+      }
+      const candidate = arguments.length > 0 ? activeFeatureOverride : this._viewModel.getActiveFeature();
+      if (candidate && candidate instanceof DomainPolygon) {
+          const currentTarget = this._editingViewModel.getTargetPolygon();
+          if (!currentTarget || currentTarget.id !== candidate.id) {
+              this._editingViewModel.startSplit(candidate);
+          }
+      } else {
+          this._editingViewModel.cancelSplitPreparation();
+      }
+  }
+
   /** 測定点を追加 (EventHandlerから呼ばれる) */
   _handleAddMeasurePoint(worldPoint) {
       if (!this._isMeasuringDistance) return; // 測定モードでなければ何もしない
@@ -571,7 +720,7 @@ export class MapView {
   }
 
   /** プロパティ入力ダイアログ表示 */
-  _showPropertyInputDialog() {
+  _showPropertyInputDialog(options = {}) {
     // 既存ダイアログがあれば削除
     const existingDialog = this._mapElement.querySelector('.property-input-dialog');
     if (existingDialog) {
@@ -686,6 +835,7 @@ export class MapView {
     nameInput.focus(); // 名前入力にフォーカス
 
     // 確定ボタンのクリック処理
+    const { onConfirm, onCancel } = options;
     confirmButton.onclick = () => {
         const startYearStr = startInput.value;
         const endYearStr = endInput.value;
@@ -705,43 +855,55 @@ export class MapView {
           : null);
 
         const currentLayerId = this._viewModel.getWorld()?.layers[0]?.id || 'layer-base';
-        this._confirmAddFeatureWithProperties({
+        const payload = {
             ...properties,
             rangeFallback: rangeForFallback
-        }, currentLayerId);
+        };
+        if (typeof onConfirm === 'function') {
+            onConfirm(payload, currentLayerId);
+        } else {
+            this._confirmAddFeatureWithProperties(payload, currentLayerId);
+        }
         dialog.remove();
     };
     // キャンセルボタンのクリック処理
     cancelButton.onclick = () => {
         dialog.remove(); // ダイアログを閉じる
-        this._handleCancelClick(); // キャンセル処理を呼び出す
+        if (typeof onCancel === 'function') {
+            onCancel();
+        } else {
+            this._handleCancelClick(); // キャンセル処理を呼び出す
+        }
     };
   }
 
   /** 入力プロパティで地物追加確定 */
+  _createDomainProperty(properties) {
+    const rangeForFallback = properties.rangeFallback || (typeof this._viewModel.getDefaultPropertyTimeRange === 'function'
+      ? this._viewModel.getDefaultPropertyTimeRange()
+      : null);
+    const correctTimePoint = this._viewModel.getCurrentTime();
+    const startTp = properties.startYear !== null
+      ? new TimePoint(properties.startYear)
+      : (rangeForFallback?.start || correctTimePoint);
+    const endTp = properties.endYear !== null
+      ? new TimePoint(properties.endYear + 1)
+      : (rangeForFallback?.end || null);
+    const propertyTimePoint = startTp || correctTimePoint;
+    const { name, description } = properties;
+    return new Property(
+        propertyTimePoint,
+        name,
+        description,
+        {},
+        startTp,
+        endTp
+    );
+  }
+
   async _confirmAddFeatureWithProperties(properties, layerId) {
     try {
-        // ViewModelから現在の時間点を取得
-        const rangeForFallback = properties.rangeFallback || (typeof this._viewModel.getDefaultPropertyTimeRange === 'function'
-          ? this._viewModel.getDefaultPropertyTimeRange()
-          : null);
-        const correctTimePoint = this._viewModel.getCurrentTime();
-        const startTp = properties.startYear !== null
-          ? new TimePoint(properties.startYear)
-          : (rangeForFallback?.start || correctTimePoint);
-        const endTp = properties.endYear !== null
-          ? new TimePoint(properties.endYear + 1)
-          : (rangeForFallback?.end || null);
-        const propertyTimePoint = startTp || correctTimePoint;
-        const { name, description } = properties;
-        const domainProperty = new Property(
-            propertyTimePoint,
-            name,
-            description,
-            {},
-            startTp,
-            endTp
-        );
+        const domainProperty = this._createDomainProperty(properties);
         // EditingViewModelに地物追加確定を依頼
         await this._editingViewModel.confirmAddFeature([domainProperty], layerId);
         console.log('地物の追加が確定しました。');

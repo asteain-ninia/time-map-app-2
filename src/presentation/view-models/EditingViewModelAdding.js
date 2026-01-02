@@ -84,8 +84,9 @@ function getTargetRingIdForHole() {
 function addPoint(point) {
   const isAddingFeature = this._mode === 'add' && this._tool;
   const isAddingHoleOrEnclave = this._mode === 'edit' && this._tool === 'add-hole' && this._targetPolygon;
+  const isAddingSplitLine = this._mode === 'edit' && this._tool === 'split' && this._targetPolygon;
 
-  if (isAddingFeature || isAddingHoleOrEnclave) {
+  if (isAddingFeature || isAddingHoleOrEnclave || isAddingSplitLine) {
     if (this._draggingVerticesInfo.size > 0) return;
     this._addingPoints.push(point);
     this._notifyObservers('addingPoints');
@@ -100,8 +101,9 @@ function addPoint(point) {
 function removeLastPoint() {
   const isAddingFeature = this._mode === 'add' && this._tool;
   const isAddingHoleOrEnclave = this._mode === 'edit' && this._tool === 'add-hole';
+  const isAddingSplitLine = this._mode === 'edit' && this._tool === 'split';
 
-  if ((isAddingFeature || isAddingHoleOrEnclave) && this._addingPoints.length > 0) {
+  if ((isAddingFeature || isAddingHoleOrEnclave || isAddingSplitLine) && this._addingPoints.length > 0) {
     this._addingPoints.pop();
     if (this._addingPoints.length === 0) {
       if (this._addingSubMode !== null) { this.setAddingSubMode(null); }
@@ -122,6 +124,7 @@ function _clearAddingState() {
   if (this._addingSubMode !== null) { this._addingSubMode = null; changed = true; }
   if (this._targetRingIdForHole !== null) { this._targetRingIdForHole = null; changed = true; }
   if (this._pendingVertexAdditionInfo !== null) { this._pendingVertexAdditionInfo = null; changed = true; }
+  if (this._splitPlan !== null) { this._splitPlan = null; changed = true; }
   if (changed) { this._notifyObservers('addingState'); }
   this.clearTemporaryElements(); // プレビューもクリア
 }

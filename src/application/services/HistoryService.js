@@ -15,6 +15,7 @@ import { AddRingCommand } from './history/commands/AddRingCommand.js';
 import { AddVertexToEdgeCommand } from './history/commands/AddVertexToEdgeCommand.js';
 import { ShareVerticesCommand } from './history/commands/ShareVerticesCommand.js';
 import { UnlinkSharedVertexCommand } from './history/commands/UnlinkSharedVertexCommand.js';
+import { SplitPolygonCommand } from './history/commands/SplitPolygonCommand.js';
 
 export class HistoryService {
   _stackManager;
@@ -242,6 +243,8 @@ export class HistoryService {
         return new ShareVerticesCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
       case 'unlinkSharedVertex':
         return new UnlinkSharedVertexCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
+      case 'splitPolygon':
+        return new SplitPolygonCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
       default:
         return null;
     }

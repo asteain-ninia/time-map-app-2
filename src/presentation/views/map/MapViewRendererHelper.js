@@ -63,6 +63,26 @@ export class MapViewRendererHelper {
     const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo(); // Map<string, {originalPosition, currentPosition}>
     const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // {id, x, y} のマップ
 
+    const mode = this._editingViewModel.getMode();
+    const tool = this._editingViewModel.getTool();
+    const splitTargetPolygon = this._editingViewModel.getTargetPolygon();
+    if (mode === 'edit' && tool === 'split' && splitTargetPolygon) {
+      const viewBoxWidth = viewport.width / viewport.zoom;
+      const viewBoxHeight = viewport.height / viewport.zoom;
+      const left = viewport.x - viewBoxWidth / 2;
+      const right = viewport.x + viewBoxWidth / 2;
+      const bottom = viewport.y - viewBoxHeight / 2;
+      const top = viewport.y + viewBoxHeight / 2;
+      const overlayLoop = [
+        { x: left, y: bottom },
+        { x: right, y: bottom },
+        { x: right, y: top },
+        { x: left, y: top }
+      ];
+      const overlayElem = this._renderer.drawPolygonLoops([overlayLoop], editingStyles.splitOverlay, viewport);
+      if (overlayElem) this._selectionElements.push(overlayElem);
+    }
+
     const worldWidth = this._renderer.getWorldWidth();
     const finalOffsets = [0, -worldWidth, worldWidth];
 
@@ -367,7 +387,8 @@ export class MapViewRendererHelper {
     const mode = this._editingViewModel.getMode();
     const tool = this._editingViewModel.getTool();
     const subMode = this._editingViewModel.getAddingSubMode();
-    if (!((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole' && this._editingViewModel.getTargetPolygon()))) {
+    const isSplit = mode === 'edit' && tool === 'split' && this._editingViewModel.getTargetPolygon();
+    if (!((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole' && this._editingViewModel.getTargetPolygon()) || isSplit)) {
         return;
     }
     const addingPoints = this._editingViewModel.getAddingPoints();
@@ -384,6 +405,8 @@ export class MapViewRendererHelper {
         lineStyle = subMode === 'hole' ? editingStyles.linePreviewHole
                   : subMode === 'enclave' ? editingStyles.linePreviewEnclave
                   : editingStyles.linePreviewPending; // サブモード未決定時
+    } else if (mode === 'edit' && tool === 'split') {
+        lineStyle = editingStyles.linePreviewSplit;
     }
     
     // 追加中のプレビューは、通常ワールドの端をまたいで作成することは想定しづらいため、
@@ -396,7 +419,7 @@ export class MapViewRendererHelper {
             const elem = this._renderer.drawPoint(addingPoints[0].x, addingPoints[0].y, editingStyles.addingToolPoint, viewport);
             if (elem) this._addingElements.push(elem);
         }
-    } else if (tool === 'line' || tool === 'polygon' || tool === 'add-hole') {
+    } else if (tool === 'line' || tool === 'polygon' || tool === 'add-hole' || tool === 'split') {
         // 線または閉じた形状のプレビュー
         if (addingPoints.length >= 2) {
             const isClosedShape = (tool === 'polygon') || (mode === 'edit' && tool === 'add-hole');

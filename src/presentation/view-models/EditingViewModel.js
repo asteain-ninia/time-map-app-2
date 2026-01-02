@@ -2,6 +2,7 @@
 import { addingMethods } from './EditingViewModelAdding.js';
 import { draggingMethods } from './EditingViewModelDragging.js';
 import { operationMethods } from './EditingViewModelOperations.js';
+import { splitMethods } from './EditingViewModelSplit.js';
 // HistoryService はDIで渡されるのでimport不要
 
 
@@ -30,6 +31,7 @@ export class EditingViewModel {
     this._temporaryElements = [];
     this._draggingVerticesInfo = new Map();
     this._pendingVertexAdditionInfo = null; // 線上点追加からドラッグ操作への連携用
+    this._splitPlan = null;
 
     // アンドゥ・リドゥ関連のプロパティは削除: _undoStack, _redoStack, _maxHistorySize
 
@@ -239,3 +241,4 @@ export class EditingViewModel {
 Object.assign(EditingViewModel.prototype, addingMethods);
 Object.assign(EditingViewModel.prototype, draggingMethods);
 Object.assign(EditingViewModel.prototype, operationMethods);
+Object.assign(EditingViewModel.prototype, splitMethods);
