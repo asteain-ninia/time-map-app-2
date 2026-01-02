@@ -148,7 +148,7 @@ export function buildPolygonSplitPlan({
   }
 
   if (intersections.length !== 2) {
-    throw new Error('分断線は境界を2回だけ横切る必要があります。');
+    throw new Error('分断線は境界を2回だけ横切る必要があります。分割ツールは二分割のみに対応しています。');
   }
 
   const intersectionRefs = intersections.map((intersection, index) => ({
