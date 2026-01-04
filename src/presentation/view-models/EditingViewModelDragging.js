@@ -5,7 +5,7 @@ import { Vertex } from '../../domain/entities/Vertex.js';
 import { AddVertexToEdgeCommand } from '../../application/services/history/commands/AddVertexToEdgeCommand.js';
 import { MoveVerticesCommand } from '../../application/services/history/commands/MoveVerticesCommand.js';
 import { ShareVerticesCommand } from '../../application/services/history/commands/ShareVerticesCommand.js';
-import { applyVertexSliding } from '../../application/services/VertexSlideService.js';
+import { applyVertexSliding, createVertexSlidingContext } from '../../application/services/VertexSlideService.js';
 
 /**
  * 複数の頂点のドラッグを開始
@@ -44,12 +44,16 @@ function updateVerticesDrag(deltaX, deltaY, options = {}) {
 
   let resolvedPositions = desiredPositions;
   if (options.world && options.geometryService) {
+    if (!this._vertexSlideContext || this._vertexSlideContext.world !== options.world) {
+      this._vertexSlideContext = createVertexSlidingContext(options.world);
+    }
     resolvedPositions = applyVertexSliding({
       world: options.world,
       geometryService: options.geometryService,
       movedVertexIds: new Set(desiredPositions.keys()),
       desiredPositions,
-      originalPositions
+      originalPositions,
+      context: this._vertexSlideContext
     });
   }
 
@@ -190,6 +194,7 @@ function _resetDraggingState() {
     this._draggingVerticesInfo.clear();
     this._notifyObservers('draggingVertices');
   }
+  this._vertexSlideContext = null;
 }
 
 function getSharePreviewVertexIds(options = {}) {

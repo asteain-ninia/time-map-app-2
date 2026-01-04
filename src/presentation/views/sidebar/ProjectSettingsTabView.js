@@ -182,6 +182,14 @@ export class ProjectSettingsTabView {
         'ドラッグ時に共有頂点化する距離の基準です。'
       ));
 
+      const renderFpsRaw = this._configManager.get('ui.renderFps', 60);
+      const renderFps = Number.isFinite(renderFpsRaw) ? renderFpsRaw : 60;
+      appForm.appendChild(createRow(
+        '描画更新頻度 (FPS):',
+        createNumberInput('renderFps', renderFps, 1, 60, 1),
+        '地図描画の最大更新頻度です。低くすると描画負荷を抑えられます。'
+      ));
+
       const appButtonContainer = document.createElement('div');
       appButtonContainer.style.marginTop = '20px';
       appButtonContainer.style.textAlign = 'right';
@@ -281,13 +289,19 @@ export class ProjectSettingsTabView {
     }
     const formData = new FormData(formElement);
     const snapPixels = parseFloat(formData.get('sharedVertexSnapPixels'));
+    const renderFps = parseInt(formData.get('renderFps'), 10);
 
     if (isNaN(snapPixels) || snapPixels <= 0) {
       alert('共有頂点スナップ距離は正の数値で入力してください。');
       return;
     }
+    if (isNaN(renderFps) || renderFps < 1 || renderFps > 60) {
+      alert('描画更新頻度は1から60の範囲で入力してください。');
+      return;
+    }
 
     this._configManager.set('ui.sharedVertexSnapPixels', snapPixels);
+    this._configManager.set('ui.renderFps', renderFps);
     alert('アプリ設定を保存しました。');
   }
 
@@ -298,8 +312,11 @@ export class ProjectSettingsTabView {
     }
 
     const defaultSnapPixels = 50;
+    const defaultRenderFps = 60;
     formElement.sharedVertexSnapPixels.value = defaultSnapPixels;
+    formElement.renderFps.value = defaultRenderFps;
     this._configManager.set('ui.sharedVertexSnapPixels', defaultSnapPixels);
+    this._configManager.set('ui.renderFps', defaultRenderFps);
     alert('アプリ設定をデフォルト値にリセットしました。');
   }
 

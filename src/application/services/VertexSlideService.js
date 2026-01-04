@@ -34,6 +34,58 @@ function buildOriginalPositionMap(vertices, overrides) {
   return buildVertexMap(vertices);
 }
 
+function buildPolygonsByLayer(polygons) {
+  const map = new Map();
+  if (!Array.isArray(polygons)) {
+    return map;
+  }
+  polygons.forEach(polygon => {
+    const layerId = polygon?.layerId;
+    if (!map.has(layerId)) {
+      map.set(layerId, []);
+    }
+    map.get(layerId).push(polygon);
+  });
+  return map;
+}
+
+function buildEdgesByPolygon(polygons, vertexMap) {
+  const edgesByPolygonId = new Map();
+  if (!Array.isArray(polygons)) {
+    return edgesByPolygonId;
+  }
+  polygons.forEach(polygon => {
+    edgesByPolygonId.set(polygon.id, collectRingEdges(polygon, vertexMap));
+  });
+  return edgesByPolygonId;
+}
+
+function isSameIdSet(left, right) {
+  if (!left || !right) return false;
+  if (left.size !== right.size) return false;
+  for (const id of left) {
+    if (!right.has(id)) return false;
+  }
+  return true;
+}
+
+export function createVertexSlidingContext(world) {
+  if (!world || !Array.isArray(world.features) || !Array.isArray(world.vertices)) {
+    return null;
+  }
+  const polygons = collectPolygons(world);
+  const vertexMap = buildVertexMap(world.vertices);
+  return {
+    world,
+    polygons,
+    vertexMap,
+    vertexPolygonIndex: buildVertexPolygonIndex(polygons),
+    polygonsByLayer: buildPolygonsByLayer(polygons),
+    edgesByPolygonId: buildEdgesByPolygon(polygons, vertexMap),
+    movedVertexIds: null
+  };
+}
+
 function collectPolygons(world) {
   if (!world || !Array.isArray(world.features)) {
     return [];
@@ -283,26 +335,27 @@ function findBlockingEdgesForPolygon({
   vertexId,
   owningPolygon,
   otherPolygon,
+  otherEdges,
   original,
   desired,
   vertexMap,
   geometryService
 }) {
-  const otherEdges = collectRingEdges(otherPolygon, vertexMap);
-  if (otherEdges.length === 0) {
+  const edges = Array.isArray(otherEdges) ? otherEdges : collectRingEdges(otherPolygon, vertexMap);
+  if (edges.length === 0) {
     return [];
   }
 
   const location = classifyPointInPolygon(desired, otherPolygon, vertexMap, geometryService);
   if (location.type === 'inside_outer') {
-    return otherEdges;
+    return edges;
   }
 
   const adjacentHits = collectAdjacentSegmentIntersections(
     vertexId,
     owningPolygon,
     desired,
-    otherEdges,
+    edges,
     vertexMap,
     geometryService
   );
@@ -310,7 +363,7 @@ function findBlockingEdgesForPolygon({
     return adjacentHits;
   }
 
-  const pathHits = collectEdgesIntersectingSegment(original, desired, otherEdges, geometryService);
+  const pathHits = collectEdgesIntersectingSegment(original, desired, edges, geometryService);
   if (pathHits.length > 0) {
     return pathHits;
   }
@@ -328,7 +381,8 @@ export function applyVertexSliding({
   geometryService,
   movedVertexIds,
   desiredPositions,
-  originalPositions
+  originalPositions,
+  context
 }) {
   if (!world || !geometryService || !(desiredPositions instanceof Map)) {
     return desiredPositions || new Map();
@@ -342,20 +396,38 @@ export function applyVertexSliding({
     return desiredPositions;
   }
 
-  const polygons = collectPolygons(world);
+  const useContext = context && context.world === world;
+  const polygons = useContext ? context.polygons : collectPolygons(world);
   if (polygons.length === 0) {
     return desiredPositions;
   }
 
-  const vertexMap = buildVertexMap(world.vertices, desiredPositions);
+  const vertexPolygonIndex = useContext ? context.vertexPolygonIndex : buildVertexPolygonIndex(polygons);
+  const polygonsByLayer = useContext ? context.polygonsByLayer : buildPolygonsByLayer(polygons);
+  const edgesByPolygonId = useContext ? context.edgesByPolygonId : null;
+  let vertexMap = null;
+  if (useContext && context.vertexMap instanceof Map) {
+    if (!isSameIdSet(context.movedVertexIds, movedIds)) {
+      context.vertexMap = buildVertexMap(world.vertices);
+      context.movedVertexIds = new Set(movedIds);
+    }
+    vertexMap = context.vertexMap;
+    movedIds.forEach(vertexId => {
+      const desired = desiredPositions.get(vertexId);
+      if (!desired) return;
+      vertexMap.set(vertexId, { x: desired.x, y: desired.y });
+    });
+  } else {
+    vertexMap = buildVertexMap(world.vertices, desiredPositions);
+  }
   const originalMap = buildOriginalPositionMap(world.vertices, originalPositions);
-  const vertexPolygonIndex = buildVertexPolygonIndex(polygons);
 
   const movingPolygonIds = new Set();
-  polygons.forEach(polygon => {
-    if (polygonUsesAnyVertex(polygon, movedIds)) {
+  movedIds.forEach(vertexId => {
+    const owningPolygons = vertexPolygonIndex.get(vertexId) || [];
+    owningPolygons.forEach(polygon => {
       movingPolygonIds.add(polygon.id);
-    }
+    });
   });
 
   const adjustedPositions = new Map(desiredPositions);
@@ -379,17 +451,16 @@ export function applyVertexSliding({
 
     for (const owningPolygon of owningPolygons) {
       const layerId = owningPolygon.layerId;
-      const candidates = polygons.filter(other => {
-        if (other.id === owningPolygon.id) return false;
-        if (movingPolygonIds.has(other.id)) return false;
-        return other.layerId === layerId;
-      });
-
-      for (const otherPolygon of candidates) {
+      const layerPolygons = polygonsByLayer.get(layerId) || [];
+      for (const otherPolygon of layerPolygons) {
+        if (otherPolygon.id === owningPolygon.id) continue;
+        if (movingPolygonIds.has(otherPolygon.id)) continue;
+        const precomputedEdges = edgesByPolygonId ? edgesByPolygonId.get(otherPolygon.id) : null;
         const blockingEdges = findBlockingEdgesForPolygon({
           vertexId,
           owningPolygon,
           otherPolygon,
+          otherEdges: precomputedEdges,
           original,
           desired,
           vertexMap,

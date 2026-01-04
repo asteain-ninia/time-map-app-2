@@ -36,7 +36,8 @@ export class ConfigManager {
         rightPanelWidth: 300,
         timelineHeight: 100,
         darkMode: false,
-        sharedVertexSnapPixels: 50
+        sharedVertexSnapPixels: 50,
+        renderFps: 60
       },
       
       // カスタムカレンダー設定

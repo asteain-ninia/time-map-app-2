@@ -32,11 +32,17 @@ describe("ConfigManager", () => {
   });
 
   it("loads defaults when no stored config exists", () => {
-    const manager = new ConfigManager("config-test", { ui: { rightPanelWidth: 180 } });
+    const manager = new ConfigManager("config-test");
 
     expect(localStorageStub.getItem).toHaveBeenCalledWith("config-test");
-    expect(manager.get("ui.rightPanelWidth")).toBe(180);
+    expect(manager.get("ui.renderFps")).toBe(60);
     expect(manager.get("autoSave.enabled")).toBe(true);
+  });
+
+  it("applies provided defaults when specified", () => {
+    const manager = new ConfigManager("config-test", { ui: { rightPanelWidth: 180 } });
+
+    expect(manager.get("ui.rightPanelWidth")).toBe(180);
   });
 
   it("merges stored config over defaults", () => {

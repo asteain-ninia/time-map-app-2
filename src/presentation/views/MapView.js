@@ -48,6 +48,9 @@ export class MapView {
     // クリック許容範囲 (ピクセル単位)
     this._clickTolerancePixels = 3;
     this._clickToleranceSq = 0; // ワールド座標での二乗値 (動的に更新)
+    this._renderScheduled = false;
+    this._renderPending = false;
+    this._lastRenderTimestamp = 0;
 
     // サブクラスのインスタンス化
     // InteractionLogic にはクリック許容範囲(二乗)を返す関数とワールド幅取得関数を渡す
@@ -135,7 +138,7 @@ export class MapView {
     // requestAnimationFrameを使用して、DOMの準備ができてから実行
     requestAnimationFrame(() => {
         this._handleResize(); // コンテナサイズに基づいてビューポート等を更新
-        this._render();       // 初回描画
+        this._requestRender();       // 初回描画
     });
   }
 
@@ -157,7 +160,7 @@ export class MapView {
       case 'hoveredVertex': // ホバー頂点が変更された場合
       case 'layers': // レイヤー情報が変更された場合
       case 'projectSettingsChanged': // プロジェクト設定が変更された場合も再描画
-        this._render(); // 再描画をトリガー
+        this._requestRender(); // 再描画をトリガー
         break;
       // 他のタイプのイベントはここでは処理しない
     }
@@ -185,7 +188,7 @@ export class MapView {
         if (this._editingViewModel.getDraggingVerticesInfo().size > 0) {
              this._editingViewModel._resetDraggingState(); // ドラッグ状態リセット
         }
-        this._render(); // 再描画
+        this._requestRender(); // 再描画
         break;
       case 'addingPoints': // 追加中の点変更
       case 'targetPolygon': // 穴/飛び地追加対象ポリゴン変更
@@ -196,7 +199,7 @@ export class MapView {
       case 'history': // アンドゥ/リドゥ状態変更
       case 'addingState': // 追加関連状態一括変更
         this._updateActionButtonsVisibility(); // ボタン表示更新
-        this._render(); // 再描画
+        this._requestRender(); // 再描画
         break;
       // 他のタイプのイベントはここでは処理しない
     }
@@ -217,7 +220,7 @@ export class MapView {
    */
   _onViewportChanged(viewport) {
     this._updateClickTolerance(); // クリック許容範囲を再計算
-    this._render(); // 再描画
+    this._requestRender(); // 再描画
   }
 
   /** クリック許容範囲を更新 */
@@ -246,6 +249,42 @@ export class MapView {
       return null;
     }
     return snapPixels / viewport.zoom;
+  }
+
+  _getRenderFrameIntervalMs() {
+    if (!this._configManager || typeof this._configManager.get !== 'function') {
+      return 0;
+    }
+    const fpsRaw = this._configManager.get('ui.renderFps', 60);
+    const fpsValue = Number.isFinite(fpsRaw) ? fpsRaw : 60;
+    const clampedFps = Math.max(1, Math.min(60, fpsValue));
+    return 1000 / clampedFps;
+  }
+
+  _requestRender() {
+    // 高頻度の描画要求をまとめて、設定FPSの範囲で描画する
+    this._renderPending = true;
+    if (this._renderScheduled) {
+      return;
+    }
+    this._renderScheduled = true;
+
+    const tryRender = (timestamp) => {
+      const minFrameMs = this._getRenderFrameIntervalMs();
+      if (minFrameMs > 0 && this._lastRenderTimestamp > 0 && (timestamp - this._lastRenderTimestamp) < minFrameMs) {
+        requestAnimationFrame(tryRender);
+        return;
+      }
+      this._renderScheduled = false;
+      if (!this._renderPending) {
+        return;
+      }
+      this._renderPending = false;
+      this._lastRenderTimestamp = timestamp;
+      this._render();
+    };
+
+    requestAnimationFrame(tryRender);
   }
 
   /**
@@ -297,7 +336,7 @@ export class MapView {
     if (width > 0 && height > 0) {
         this._renderer.resize(width, height); // レンダラーにサイズ変更を通知
         this._viewportManager.resize(width, height); // ビューポートマネージャーにサイズ変更を通知
-        // resize -> _onViewportChanged -> _render の流れで再描画されるため、ここでの _render() 呼び出しは不要
+        // resize -> _onViewportChanged -> _requestRender の流れで再描画されるため、ここでの _render() 呼び出しは不要
     } else {
         console.warn("MapView: Invalid container dimensions on resize.", { width, height });
     }
@@ -308,7 +347,7 @@ export class MapView {
   /** グリッド表示の切り替え */
   toggleGrid(show) {
     this._renderer.toggleGrid(show); // レンダラーに通知
-    this._render(); // 再描画をトリガー
+    this._requestRender(); // 再描画をトリガー
   }
 
   /** 距離測定モードを設定 */
@@ -323,7 +362,7 @@ export class MapView {
         }
         // カーソル形状を更新
         this._mapOverlay.style.cursor = enabled ? 'crosshair' : 'default';
-        this._render(); // 描画更新
+        this._requestRender(); // 描画更新
     }
   }
 
@@ -456,7 +495,7 @@ export class MapView {
 
   /** 強制的に再描画 */
   refresh() {
-    this._render();
+    this._requestRender();
   }
 
   // --- Private Helper Methods (主にEventHandlerから呼ばれる、または内部で使用) ---
@@ -716,7 +755,7 @@ export class MapView {
   _handleAddMeasurePoint(worldPoint) {
       if (!this._isMeasuringDistance) return; // 測定モードでなければ何もしない
       this._measurePoints.push(worldPoint);
-      this._render(); // 測定点を追加して再描画
+      this._requestRender(); // 測定点を追加して再描画
   }
 
   /** プロパティ入力ダイアログ表示 */
