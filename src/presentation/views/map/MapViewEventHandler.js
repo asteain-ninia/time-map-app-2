@@ -266,7 +266,11 @@ export class MapViewEventHandler {
             const totalDeltaYWorld = totalDyScreen / viewport.zoom; // Y軸の向きに注意
 
             // ViewModelにワールド座標での総移動量を渡す
-            this._editingViewModel.updateVerticesDrag(totalDeltaXWorld, -totalDeltaYWorld);
+            const world = this._viewModel.getWorld();
+            this._editingViewModel.updateVerticesDrag(totalDeltaXWorld, -totalDeltaYWorld, {
+              world,
+              geometryService: this._viewModel._geometryService
+            });
         }
         // 他のモード・ツールでのドラッグは何もしない（追加モードなど）
       }

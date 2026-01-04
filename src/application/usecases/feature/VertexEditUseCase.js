@@ -5,6 +5,7 @@ import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon'; // Polygon をインポート
 import { Vertex } from '../../../domain/entities/Vertex'; // Vertex をインポート
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
+import { applyVertexSliding } from '../../services/VertexSlideService.js';
 
 /**
  * 頂点の編集（移動、共有、削除）を専門に処理するユースケース
@@ -204,8 +205,11 @@ export class VertexEditUseCase {
     const vertexEntry = world.vertices[vertexIndex];
     const originalVertexData = { x: vertexEntry.x, y: vertexEntry.y }; // ロールバック用
 
-    // _handleCollisionForVertexMove はまだ未実装なので、ここでは直接 newPosition を使う
-    const adjustedPosition = this._handleCollisionForVertexMove({ id: vertexId, ...originalVertexData }, newPosition, world);
+    const adjustedPosition = this._handleCollisionForVertexMove(
+      { id: vertexId, ...originalVertexData },
+      newPosition,
+      world
+    );
 
     // world.vertices 内の同じ参照をそのまま更新
     vertexEntry.x = adjustedPosition.x;
@@ -268,8 +272,34 @@ export class VertexEditUseCase {
     const originalVerticesData = new Map(); // { vertexRef, x, y }
     const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
 
-    // 1. 元の座標を保存し、仮の更新を行う
+    const desiredPositions = new Map();
+    const originalPositions = new Map();
     for (const update of vertexUpdates) {
+        const vertex = verticesMap.get(update.vertexId);
+        if (vertex) {
+            originalPositions.set(update.vertexId, { x: vertex.x, y: vertex.y });
+            desiredPositions.set(update.vertexId, update.newPosition);
+        }
+    }
+
+    const adjustedPositions = applyVertexSliding({
+      world,
+      geometryService: this._geometryService,
+      movedVertexIds: new Set(desiredPositions.keys()),
+      desiredPositions,
+      originalPositions
+    });
+
+    const normalizedUpdates = vertexUpdates.map(update => {
+      const adjusted = adjustedPositions.get(update.vertexId);
+      if (!adjusted) {
+        return update;
+      }
+      return { ...update, newPosition: adjusted };
+    });
+
+    // 1. 元の座標を保存し、仮の更新を行う
+    for (const update of normalizedUpdates) {
         const vertex = verticesMap.get(update.vertexId);
         if (vertex) {
             originalVerticesData.set(update.vertexId, { vertexRef: vertex, x: vertex.x, y: vertex.y });
@@ -280,7 +310,7 @@ export class VertexEditUseCase {
 
     let selfIntersectionError = null;
     const allAffectedPolygonIds = new Set();
-    vertexUpdates.forEach(update => {
+    normalizedUpdates.forEach(update => {
         world.features.forEach(f => {
             if (f instanceof Polygon && f.rings?.some(ring => ring.vertexIds.includes(update.vertexId))) {
                 allAffectedPolygonIds.add(f.id);
@@ -333,7 +363,7 @@ export class VertexEditUseCase {
     const finalAffectedFeatureIds = new Set();
     const finalVerticesMap = new Map(world.vertices.map(v => [v.id, v]));
 
-    for (const update of vertexUpdates) {
+    for (const update of normalizedUpdates) {
       const updatedVertex = finalVerticesMap.get(update.vertexId);
       if (updatedVertex) updatedVertices.push(updatedVertex);
 
@@ -695,12 +725,17 @@ export class VertexEditUseCase {
    * @private
    */
   _handleCollisionForVertexMove(vertex, newPosition, world) {
-    const polygons = world.features.filter(f =>
-      (f instanceof Polygon || f.constructor?.name === 'Polygon') &&
-      f.rings?.some(ring => ring.vertexIds.includes(vertex.id))
-    );
-    if (polygons.length === 0) return newPosition;
-    return newPosition;
+    if (!vertex || !world) {
+      return newPosition;
+    }
+    const adjustedPositions = applyVertexSliding({
+      world,
+      geometryService: this._geometryService,
+      movedVertexIds: new Set([vertex.id]),
+      desiredPositions: new Map([[vertex.id, newPosition]]),
+      originalPositions: new Map([[vertex.id, { x: vertex.x, y: vertex.y }]])
+    });
+    return adjustedPositions.get(vertex.id) || newPosition;
   }
 
   _validatePolygonConstraints(polygons, world, vertexIdsInvolved) {

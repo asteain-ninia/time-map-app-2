@@ -5,6 +5,7 @@ import { Vertex } from '../../domain/entities/Vertex.js';
 import { AddVertexToEdgeCommand } from '../../application/services/history/commands/AddVertexToEdgeCommand.js';
 import { MoveVerticesCommand } from '../../application/services/history/commands/MoveVerticesCommand.js';
 import { ShareVerticesCommand } from '../../application/services/history/commands/ShareVerticesCommand.js';
+import { applyVertexSliding } from '../../application/services/VertexSlideService.js';
 
 /**
  * 複数の頂点のドラッグを開始
@@ -26,14 +27,37 @@ function startVerticesDrag(vertices) {
  * @param {number} deltaX - X方向の移動差分 (ワールド座標)
  * @param {number} deltaY - Y方向の移動差分 (ワールド座標)
  */
-function updateVerticesDrag(deltaX, deltaY) {
+function updateVerticesDrag(deltaX, deltaY, options = {}) {
   if (this._draggingVerticesInfo.size === 0) { return; }
   let positionChanged = false;
-  for (const info of this._draggingVerticesInfo.values()) {
-    const newX = info.originalPosition.x + deltaX;
-    const newY = info.originalPosition.y + deltaY;
-    if (info.currentPosition.x !== newX || info.currentPosition.y !== newY) {
-      info.currentPosition = { x: newX, y: newY };
+
+  const desiredPositions = new Map();
+  const originalPositions = new Map();
+  for (const [vertexId, info] of this._draggingVerticesInfo.entries()) {
+    const desired = {
+      x: info.originalPosition.x + deltaX,
+      y: info.originalPosition.y + deltaY
+    };
+    desiredPositions.set(vertexId, desired);
+    originalPositions.set(vertexId, { x: info.originalPosition.x, y: info.originalPosition.y });
+  }
+
+  let resolvedPositions = desiredPositions;
+  if (options.world && options.geometryService) {
+    resolvedPositions = applyVertexSliding({
+      world: options.world,
+      geometryService: options.geometryService,
+      movedVertexIds: new Set(desiredPositions.keys()),
+      desiredPositions,
+      originalPositions
+    });
+  }
+
+  for (const [vertexId, info] of this._draggingVerticesInfo.entries()) {
+    const nextPos = resolvedPositions.get(vertexId) || desiredPositions.get(vertexId);
+    if (!nextPos) continue;
+    if (info.currentPosition.x !== nextPos.x || info.currentPosition.y !== nextPos.y) {
+      info.currentPosition = { x: nextPos.x, y: nextPos.y };
       positionChanged = true;
     }
   }
