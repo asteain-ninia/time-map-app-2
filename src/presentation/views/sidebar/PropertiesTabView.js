@@ -107,10 +107,11 @@ export class PropertiesTabView {
     `;
     this._propertiesContainer.appendChild(idRow);
 
-    // Featureが持つ唯一のPropertyを取得 (現在の単純化モデルに基づく)
-    const currentProperty = (feature.properties && feature.properties.length > 0)
-      ? feature.properties[0]
-      : null;
+    // 現在時間で有効なPropertyを取得
+    const currentTime = this._mapViewModel.getCurrentTime();
+    const currentProperty = typeof feature.getPropertyAt === 'function'
+      ? feature.getPropertyAt(currentTime)
+      : (feature.properties && feature.properties.length > 0 ? feature.properties[0] : null);
 
     if (!currentProperty) {
       const noPropertyMsg = document.createElement('p');
@@ -123,7 +124,7 @@ export class PropertiesTabView {
     const form = document.createElement('form');
     form.addEventListener('submit', e => {
       e.preventDefault();
-      this._handleSaveProperties(feature.id, form, currentProperty);
+      this._handleSaveProperties(feature, form, currentProperty);
     });
 
     // 基本プロパティ (名前, 説明, カテゴリ)
@@ -187,11 +188,13 @@ export class PropertiesTabView {
 
   /**
    * 地物プロパティの保存
-   * @param {string} featureId - 地物ID
+   * @param {Feature} feature - 地物インスタンス
    * @param {HTMLFormElement} formElement - プロパティフォーム
+   * @param {Property} currentProperty - 現在編集対象のプロパティ
    * @private
    */
-  async _handleSaveProperties(featureId, formElement, currentProperty) {
+  async _handleSaveProperties(feature, formElement, currentProperty) {
+    const featureId = feature.id;
     const formData = new FormData(formElement);
     const name = formData.get('name')?.trim() || '名称未設定';
     const description = formData.get('description')?.trim() || '';
@@ -226,14 +229,44 @@ export class PropertiesTabView {
       endTp
     );
 
+    const updatedProperties = this._mergeUpdatedProperty(feature, currentProperty, newPropertyInstance);
+
     try {
-      await this._editingViewModel.updateFeatureProperties(featureId, [newPropertyInstance]);
+      await this._editingViewModel.updateFeatureProperties(featureId, updatedProperties);
       alert('プロパティを保存しました。');
       // update() は SidebarView経由で呼ばれるのでここでは不要
     } catch (error) {
       console.error('プロパティの保存に失敗しました (PropertiesTabView)', error);
       alert(`プロパティの保存に失敗: ${error.message}`);
     }
+  }
+
+  _mergeUpdatedProperty(feature, currentProperty, newPropertyInstance) {
+    const existing = Array.isArray(feature.properties)
+      ? [...feature.properties]
+      : [];
+
+    if (existing.length === 0) {
+      return [newPropertyInstance];
+    }
+
+    let targetIndex = existing.indexOf(currentProperty);
+    if (targetIndex === -1 && currentProperty) {
+      const targetTimePoint = currentProperty.timePoint;
+      if (targetTimePoint && typeof targetTimePoint.equals === 'function') {
+        targetIndex = existing.findIndex(prop =>
+          prop && prop.timePoint && typeof prop.timePoint.equals === 'function' && prop.timePoint.equals(targetTimePoint)
+        );
+      }
+    }
+
+    if (targetIndex === -1) {
+      existing.push(newPropertyInstance);
+    } else {
+      existing[targetIndex] = newPropertyInstance;
+    }
+
+    return existing;
   }
 
   _buildExistenceSection(form, currentProperty) {
@@ -246,7 +279,8 @@ export class PropertiesTabView {
     label.style.marginBottom = '6px';
     section.appendChild(label);
 
-    section.appendChild(this._createTimeInputRow('start', '開始', currentProperty.startTime));
+    const startTime = currentProperty.startTime ?? currentProperty.timePoint;
+    section.appendChild(this._createTimeInputRow('start', '開始', startTime));
     section.appendChild(this._createTimeInputRow('end', '終了', currentProperty.endTime));
 
     form.appendChild(section);

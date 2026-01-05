@@ -142,8 +142,8 @@ async function unlinkSharedVertex(vertexId, featureId) {
  * @returns {Promise<Object>} 更新された地物インスタンス
  */
 async function updateFeatureProperties(featureId, newProperties) {
-  if (!Array.isArray(newProperties) || newProperties.length !== 1 || !(newProperties[0] instanceof Property)) {
-    throw new Error("Invalid newProperties format.");
+  if (!Array.isArray(newProperties) || newProperties.length === 0 || !newProperties.every(prop => prop instanceof Property)) {
+    throw new Error("Invalid newProperties format. Expected a non-empty array of Property instances.");
   }
 
   try {
@@ -152,17 +152,20 @@ async function updateFeatureProperties(featureId, newProperties) {
     const featureBefore = world.features.find(f => f.id === featureId);
     if (!featureBefore) { throw new Error(`Feature not found: ${featureId}`); }
     
-    const oldPropertiesInstances = (featureBefore.properties && featureBefore.properties.length > 0)
-      ? [featureBefore.properties[0]]
+    const oldPropertiesInstances = Array.isArray(featureBefore.properties)
+      ? [...featureBefore.properties]
       : [];
 
     const updateResult = await this._editFeatureUseCase.updateFeature(featureId, { properties: newProperties });
     const updatedFeature = updateResult.feature;
+    const updatedProperties = Array.isArray(updatedFeature.properties)
+      ? updatedFeature.properties
+      : [];
 
     const payload = {
       featureId: featureId,
       oldProperties: oldPropertiesInstances.map(p => this._historyService._serializer.serialize(p)),
-      newProperties: updatedFeature.properties.map(p => this._historyService._serializer.serialize(p))
+      newProperties: updatedProperties.map(p => this._historyService._serializer.serialize(p))
     };
 
     const command = new UpdatePropertiesCommand(payload, this._editFeatureUseCase, this._historyService._serializer, this._historyService._worldRepository);

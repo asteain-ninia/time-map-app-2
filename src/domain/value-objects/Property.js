@@ -3,13 +3,12 @@ import { TimePoint } from './TimePoint.js'; // TimePoint をインポート
 
 /**
  * 時間依存の属性を表す不変オブジェクト
- * (現在の単純化モデルでは、Feature._properties 配列は常に要素数1であり、
- *  このPropertyが地物の単一の状態と存在期間を定義する)
+ * (Feature は複数の Property を保持し、時間点に応じて有効な状態を選択する)
  */
 export class Property {
   /**
    * プロパティオブジェクトを作成
-   * @param {TimePoint} timePoint - このプロパティ定義が有効になる時間。現在の単純化モデルでは、通常 startTime と同じ値、または startTime がない場合はデフォルトの TimePoint(0) が期待される。
+   * @param {TimePoint} timePoint - このプロパティ定義が有効になる時間。通常は startTime と同じ値、または startTime がない場合はデフォルトの TimePoint(0) が期待される。
    * @param {string} name - 名称
    * @param {string} description - 説明
    * @param {Object} [attributes={}] - 追加属性

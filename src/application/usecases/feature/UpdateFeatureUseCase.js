@@ -51,7 +51,7 @@ export class UpdateFeatureUseCase {
    * 既存の地理オブジェクトを更新
    * @param {string} featureId - 更新するオブジェクトのID
    * @param {Object} updates - 更新内容 { properties?: Property[], geometry?: Object, layerId?: string }
-   *                         properties は要素数1の Property インスタンスの配列を期待。
+   *                         properties は Property インスタンスの配列 (1件以上) を期待。
    *                         geometry (Polygonの場合): {
    *                           newRingCoordinates?: { points: {x,y}[], ringType: 'territory' | 'hole', parentId?: string }[],
    *                           existingRingData?: { id: string, vertexIds: string[], ringType: 'territory' | 'hole', parentId?: string }[],
@@ -77,12 +77,11 @@ export class UpdateFeatureUseCase {
 
     // プロパティ更新
     if (updates.properties) {
-      // updates.properties が要素数1の Property インスタンスの配列であることをバリデーション
-      if (!Array.isArray(updates.properties) || updates.properties.length !== 1 || !(updates.properties[0] instanceof Property)) {
-        throw new Error("Invalid properties format for UpdateFeatureUseCase: must be an array containing a single Property instance. Received:" + JSON.stringify(updates.properties));
+      // updates.properties が Property インスタンス配列であることをバリデーション
+      if (!Array.isArray(updates.properties) || updates.properties.length === 0 || !updates.properties.every(prop => prop instanceof Property)) {
+        throw new Error("Invalid properties format for UpdateFeatureUseCase: must be a non-empty array of Property instances. Received:" + JSON.stringify(updates.properties));
       }
       if (updatedFeature && typeof updatedFeature.withProperties === 'function') {
-        // Feature.withProperties がドメイン層で修正され、要素数1の配列を正しく処理することを期待
         updatedFeature = updatedFeature.withProperties(updates.properties);
       } else {
         throw new Error(`Invalid feature object or missing withProperties method for ID: ${featureId}`);

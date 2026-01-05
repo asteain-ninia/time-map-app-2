@@ -11,7 +11,7 @@ export class Point extends Feature {
    * 点情報オブジェクトを作成
    * @param {string} id - 一意のID
    * @param {string[]} vertexIds - 頂点IDの配列（通常は単一要素）
-   * @param {Property[]} properties - 時間依存プロパティの配列 (要素数1を期待)
+   * @param {Property[]} properties - 時間依存プロパティの配列
    * @param {string} layerId - 所属レイヤーID
    */
   constructor(id, vertexIds, properties, layerId) {
@@ -34,7 +34,7 @@ export class Point extends Feature {
   /**
    * 新しい点情報を作成するファクトリーメソッド
    * @param {string} id - 一意のID
-   * @param {Property[]} properties - プロパティの配列 (要素数1を期待)
+   * @param {Property[]} properties - プロパティの配列
    * @param {Object} geometry - 形状情報 { vertexId: string }
    * @param {string} layerId - レイヤーID
    * @returns {Point} 新しい点情報オブジェクト
@@ -50,7 +50,7 @@ export class Point extends Feature {
 
   /**
    * 新しいプロパティの配列で新インスタンスを作成
-   * @param {Property[]} properties - 新しいプロパティの配列 (要素数1を期待)
+   * @param {Property[]} properties - 新しいプロパティの配列
    * @returns {Point} 新しい点情報オブジェクト
    */
   withProperties(properties) {

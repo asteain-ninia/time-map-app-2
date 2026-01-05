@@ -114,7 +114,7 @@ export class Feature {
   }
 
   /**
-   * 時間依存プロパティの配列を取得 (現在の単純化モデルでは要素数1の配列)
+   * 時間依存プロパティの配列を取得
    * @returns {Property[]} プロパティの配列
    */
   get properties() {
