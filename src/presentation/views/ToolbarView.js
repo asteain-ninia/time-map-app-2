@@ -9,11 +9,13 @@ export class ToolbarView {
    * @param {HTMLElement} container - 表示コンテナ
    * @param {EditingViewModel} editingViewModel - 編集ビューモデル
    * @param {MapView} mapView - マップビュー
+   * @param {Function} [onOpenProjectSettings] - 設定画面を開くコールバック
    */
-  constructor(container, editingViewModel, mapView) {
+  constructor(container, editingViewModel, mapView, onOpenProjectSettings) {
     this._container = container;
     this._editingViewModel = editingViewModel;
     this._mapView = mapView; // MapView への参照を保持
+    this._onOpenProjectSettings = onOpenProjectSettings;
 
     // DOM要素
     this._toolbarElement = null;
@@ -160,6 +162,8 @@ export class ToolbarView {
     utilSection.appendChild(saveButton);
     const loadButton = createButton({ label: '読込', icon: '📂' }, () => this._loadWorld());
     utilSection.appendChild(loadButton);
+    const settingsButton = createButton({ label: '設定', icon: '' }, () => this._openProjectSettings());
+    utilSection.appendChild(settingsButton);
     this._toolbarElement.appendChild(utilSection);
 
 
@@ -302,5 +306,13 @@ export class ToolbarView {
 
   _loadWorld() {
     alert('読込機能は次期バージョンで実装予定です。');
+  }
+
+  _openProjectSettings() {
+    if (typeof this._onOpenProjectSettings === 'function') {
+      this._onOpenProjectSettings();
+      return;
+    }
+    alert('設定画面を開けません。');
   }
 }

@@ -3,7 +3,6 @@
 import { LayersTabView } from './sidebar/LayersTabView.js';
 import { FeaturesTabView } from './sidebar/FeaturesTabView.js';
 import { PropertiesTabView } from './sidebar/PropertiesTabView.js';
-import { ProjectSettingsTabView } from './sidebar/ProjectSettingsTabView.js';
 
 /**
  * サイドバー表示 (ファサードクラス)
@@ -32,7 +31,6 @@ export class SidebarView {
     this._layersTabView = null;
     this._featuresTabView = null;
     this._propertiesTabView = null;
-    this._projectSettingsTabView = null;
 
     // 現在のタブID
     this._currentTabId = 'layers'; // 初期タブ
@@ -73,7 +71,6 @@ export class SidebarView {
     this._layersTabView = new LayersTabView(tabContentArea, this._mapViewModel, this._manageLayersUseCase, this._eventBus);
     this._featuresTabView = new FeaturesTabView(tabContentArea, this._mapViewModel, this._eventBus); // EventBusも渡す
     this._propertiesTabView = new PropertiesTabView(tabContentArea, this._mapViewModel, this._editingViewModel);
-    this._projectSettingsTabView = new ProjectSettingsTabView(tabContentArea, this._mapViewModel, this._configManager);
 
     this._container.appendChild(this._sidebarElement);
 
@@ -106,8 +103,7 @@ export class SidebarView {
     const tabsConfig = [
       { id: 'layers', label: 'レイヤー' },
       { id: 'features', label: '地物一覧' },
-      { id: 'properties', label: 'プロパティ' },
-      { id: 'projectSettings', label: '設定' }
+      { id: 'properties', label: 'プロパティ' }
     ];
 
     tabsConfig.forEach(tabConfig => {
@@ -142,7 +138,6 @@ export class SidebarView {
     this._layersTabView.setVisible(false);
     this._featuresTabView.setVisible(false);
     this._propertiesTabView.setVisible(false);
-    this._projectSettingsTabView.setVisible(false);
 
     // 対応するタブビューを表示し、更新する
     let activeTabView = null;
@@ -155,9 +150,6 @@ export class SidebarView {
         break;
       case 'properties':
         activeTabView = this._propertiesTabView;
-        break;
-      case 'projectSettings':
-        activeTabView = this._projectSettingsTabView;
         break;
     }
 
@@ -199,11 +191,6 @@ export class SidebarView {
           this._switchTab('properties');
       }
     }
-    // プロジェクト設定が変更されたら、設定タブがアクティブでなくても内容を（次に表示される際に）更新する必要がある
-    // _switchTab内でupdate()が呼ばれるので、ここで個別タブのupdateを呼ぶ必要は必ずしもない
-    if (type === 'projectSettingsChanged' && this._currentTabId === 'projectSettings') {
-        this._projectSettingsTabView.update();
-    }
     // レイヤー情報が変更されたら、レイヤータブがアクティブでなくても更新
     if (type === 'layers' && this._currentTabId === 'layers') {
         this._layersTabView.update();
@@ -230,13 +217,12 @@ export class SidebarView {
           if (this._currentTabId === 'properties') this._propertiesTabView.update();
           if (this._currentTabId === 'features') this._featuresTabView.update();
           if (this._currentTabId === 'layers') this._layersTabView.update(); // レイヤー変更もアンドゥ対象なら
-          if (this._currentTabId === 'projectSettings') this._projectSettingsTabView.update(); // 設定変更もアンドゥ対象なら
       }
   }
 
   /**
    * 現在アクティブなタブビューインスタンスを取得
-   * @returns {LayersTabView | FeaturesTabView | PropertiesTabView | ProjectSettingsTabView | null}
+   * @returns {LayersTabView | FeaturesTabView | PropertiesTabView | null}
    * @private
    */
   _getActiveTabView() {
@@ -244,7 +230,6 @@ export class SidebarView {
       case 'layers': return this._layersTabView;
       case 'features': return this._featuresTabView;
       case 'properties': return this._propertiesTabView;
-      case 'projectSettings': return this._projectSettingsTabView;
       default: return null;
     }
   }

@@ -5,7 +5,7 @@
 export class ProjectSettingsTabView {
   /**
    * ProjectSettingsTabView を作成
-   * @param {HTMLElement} parentElement - このタブビューの親となるDOM要素
+   * @param {HTMLElement} parentElement - このビューの親となるDOM要素
    * @param {MapViewModel} mapViewModel
    * @param {ConfigManager} configManager
    */
@@ -14,6 +14,8 @@ export class ProjectSettingsTabView {
     this._mapViewModel = mapViewModel;
     this._configManager = configManager;
 
+    this._modalOverlay = null;
+    this._modalWindow = null;
     this._tabContentElement = null;
     this._settingsContainer = null; // 設定フォームを保持するコンテナ
 
@@ -25,25 +27,92 @@ export class ProjectSettingsTabView {
    * @private
    */
   _initializeDOM() {
+    this._modalOverlay = document.createElement('div');
+    this._modalOverlay.className = 'project-settings-modal';
+    this._modalOverlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      box-sizing: border-box;
+      background-color: rgba(0, 0, 0, 0.35);
+      z-index: 1000;
+      overflow: auto;
+    `;
+    this._modalOverlay.tabIndex = -1;
+    this._modalOverlay.addEventListener('click', event => {
+      if (event.target === this._modalOverlay) {
+        this.close();
+      }
+    });
+    this._modalOverlay.addEventListener('keydown', event => {
+      event.stopPropagation();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.close();
+      }
+    });
+
+    this._modalWindow = document.createElement('div');
+    this._modalWindow.className = 'project-settings-window';
+    this._modalWindow.style.cssText = `
+      width: min(720px, 92vw);
+      max-height: 90vh;
+      background-color: #fff;
+      border: 1px solid #ccc;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid #ddd;
+      background-color: #f5f5f5;
+    `;
+
+    const title = document.createElement('div');
+    title.textContent = 'プロジェクト設定';
+    title.style.fontWeight = 'bold';
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = '閉じる';
+    closeButton.dataset.action = 'close';
+    closeButton.addEventListener('click', () => this.close());
+
+    header.appendChild(title);
+    header.appendChild(closeButton);
+    this._modalWindow.appendChild(header);
+
     this._tabContentElement = document.createElement('div');
-    this._tabContentElement.className = 'sidebar-tab-content project-settings-tab-content';
+    this._tabContentElement.className = 'project-settings-content';
     this._tabContentElement.style.cssText = `
-      flex: 1; 
-      overflow-y: auto; 
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
       overflow-x: hidden;
-      padding: 10px; 
-      display: none; /* 初期状態は非表示 */
+      padding: 10px;
     `;
 
     this._settingsContainer = document.createElement('div');
     this._settingsContainer.className = 'project-settings-container';
     this._tabContentElement.appendChild(this._settingsContainer);
 
-    this._parentElement.appendChild(this._tabContentElement);
+    this._modalWindow.appendChild(this._tabContentElement);
+    this._modalOverlay.appendChild(this._modalWindow);
+    this._parentElement.appendChild(this._modalOverlay);
   }
 
   /**
-   * タブの表示を更新 (SidebarViewの_switchTabから呼び出される想定)
+   * 表示内容を更新
    */
   update() {
     this._settingsContainer.innerHTML = ''; // 既存の内容をクリア
@@ -325,14 +394,30 @@ export class ProjectSettingsTabView {
    * @returns {HTMLElement}
    */
   getDOMElement() {
-    return this._tabContentElement;
+    return this._modalOverlay;
   }
 
   /**
-   * タブの表示状態を設定
+   * 表示状態を設定
    * @param {boolean} visible
    */
   setVisible(visible) {
-    this._tabContentElement.style.display = visible ? 'block' : 'none';
+    if (visible) {
+      this.open();
+    } else {
+      this.close();
+    }
+  }
+
+  open() {
+    this.update();
+    this._modalOverlay.style.display = 'flex';
+    this._modalOverlay.focus();
+    document.body.classList.add('project-settings-open');
+  }
+
+  close() {
+    this._modalOverlay.style.display = 'none';
+    document.body.classList.remove('project-settings-open');
   }
 }

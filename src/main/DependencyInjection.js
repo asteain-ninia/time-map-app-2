@@ -35,6 +35,7 @@ import { MapView } from '../presentation/views/MapView';
 import { TimelineView } from '../presentation/views/TimelineView';
 import { ToolbarView } from '../presentation/views/ToolbarView';
 import { SidebarView } from '../presentation/views/SidebarView';
+import { ProjectSettingsTabView } from '../presentation/views/sidebar/ProjectSettingsTabView';
 
 import { MapController } from '../presentation/controllers/MapController';
 import { TimelineController } from '../presentation/controllers/TimelineController';
@@ -144,7 +145,14 @@ export class DependencyInjection {
     this._container.renderer = new SVGRenderer(mapContainer, {}, this._container.layerService);
     this._container.mapView = new MapView(mapContainer, this._container.mapViewModel, this._container.editingViewModel, this._container.viewportManager, this._container.renderer, this._container.configManager);
     this._container.timelineView = new TimelineView(timelineContainer, this._container.timelineViewModel);
-    this._container.toolbarView = new ToolbarView(toolbarContainer, this._container.editingViewModel, this._container.mapView);
+    const modalRoot = mapContainer.ownerDocument?.body || document.body;
+    this._container.projectSettingsView = new ProjectSettingsTabView(modalRoot, this._container.mapViewModel, this._container.configManager);
+    this._container.toolbarView = new ToolbarView(
+      toolbarContainer,
+      this._container.editingViewModel,
+      this._container.mapView,
+      () => this._container.projectSettingsView.open()
+    );
     this._container.sidebarView = new SidebarView(sidebarContainer, this._container.mapViewModel, this._container.manageLayersUseCase, this._container.editingViewModel, this._container.eventBus, this._container.configManager);
     this._container.mapController = new MapController(this._container.mapView, this._container.mapViewModel, this._container.editingViewModel, this._container.viewportManager);
     this._container.timelineController = new TimelineController(this._container.timelineView, this._container.timelineViewModel);
