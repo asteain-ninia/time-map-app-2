@@ -9,6 +9,8 @@ import { Property } from '../../domain/value-objects/Property';
 
 // プロジェクト固有設定のデフォルト値 (JSONWorldRepository._createEmptyWorld と同期)
 const DEFAULT_PROJECT_SETTINGS = {
+  zoomMin: 1,
+  zoomMax: 50,
   equatorLength: 40000,
   gridInterval: 10,
   gridColor: "#cccccc",

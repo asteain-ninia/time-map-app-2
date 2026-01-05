@@ -7,6 +7,8 @@ const createWorld = () => ({
     settings: {
       sliderMin: 0,
       sliderMax: 1000,
+      zoomMin: 1,
+      zoomMax: 50,
       gridInterval: 10,
       gridColor: "#cccccc",
       gridOpacity: 0.5,
@@ -28,6 +30,8 @@ describe("UpdateProjectSettingsUseCase", () => {
 
     const invalidSettings = {
       equatorLength: 0,
+      zoomMin: 1,
+      zoomMax: 50,
       sliderMin: 0,
       sliderMax: 10,
       gridInterval: 1,
@@ -51,7 +55,59 @@ describe("UpdateProjectSettingsUseCase", () => {
 
     const invalidSettings = {
       equatorLength: 40000,
+      zoomMin: 1,
+      zoomMax: 50,
       sliderMin: 50,
+      sliderMax: 10,
+      gridInterval: 1,
+      gridColor: "#ffffff",
+      gridOpacity: 0.5,
+      worldName: "Name",
+      worldDescription: "Desc"
+    };
+
+    await expect(useCase.execute(invalidSettings)).rejects.toThrow();
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid zoom range", async () => {
+    const world = createWorld();
+    const worldRepository = {
+      getWorld: vi.fn(async () => world),
+      saveWorld: vi.fn()
+    };
+    const useCase = new UpdateProjectSettingsUseCase(worldRepository);
+
+    const invalidSettings = {
+      equatorLength: 40000,
+      zoomMin: 2,
+      zoomMax: 1,
+      sliderMin: 0,
+      sliderMax: 10,
+      gridInterval: 1,
+      gridColor: "#ffffff",
+      gridOpacity: 0.5,
+      worldName: "Name",
+      worldDescription: "Desc"
+    };
+
+    await expect(useCase.execute(invalidSettings)).rejects.toThrow();
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
+  it("rejects zoom values outside allowed bounds", async () => {
+    const world = createWorld();
+    const worldRepository = {
+      getWorld: vi.fn(async () => world),
+      saveWorld: vi.fn()
+    };
+    const useCase = new UpdateProjectSettingsUseCase(worldRepository);
+
+    const invalidSettings = {
+      equatorLength: 40000,
+      zoomMin: 0.05,
+      zoomMax: 100,
+      sliderMin: 0,
       sliderMax: 10,
       gridInterval: 1,
       gridColor: "#ffffff",
@@ -76,6 +132,8 @@ describe("UpdateProjectSettingsUseCase", () => {
 
     const newSettings = {
       equatorLength: 50000,
+      zoomMin: 2,
+      zoomMax: 40,
       sliderMin: 100,
       sliderMax: 200,
       gridInterval: 20,
@@ -90,6 +148,8 @@ describe("UpdateProjectSettingsUseCase", () => {
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
     expect(world.metadata.settings).toEqual({
       equatorLength: 50000,
+      zoomMin: 2,
+      zoomMax: 40,
       sliderMin: 100,
       sliderMax: 200,
       gridInterval: 20,

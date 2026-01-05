@@ -98,7 +98,8 @@ export class JSONWorldRepository extends WorldRepository {
         worldName: "新しい世界",
         worldDescription: "",
         settings: {
-          // zoomMin, zoomMax はアプリ全体設定なので削除
+          zoomMin: 1,
+          zoomMax: 50,
           // gridInterval, autoSaveInterval はプロジェクト固有設定
           gridInterval: 10,
           autoSaveInterval: 300, // autoSaveInterval はアプリ全体設定かもしれないが、一旦プロジェクト固有として残す

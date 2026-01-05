@@ -201,6 +201,8 @@ export class ProjectSettingsTabView {
     projectForm.appendChild(createRow('プロジェクト名:', createTextInput('worldName', currentSettings.worldName)));
     projectForm.appendChild(createRow('プロジェクト説明:', createTextareaInput('worldDescription', currentSettings.worldDescription)));
     projectForm.appendChild(createRow('赤道長 (km):', createNumberInput('equatorLength', currentSettings.equatorLength, 1, undefined, 1), '地図の縮尺基準となります。'));
+    projectForm.appendChild(createRow('ズーム最小倍率:', createNumberInput('zoomMin', currentSettings.zoomMin, 0.1, 10000, 0.1), '0.1〜10000の範囲で設定します。'));
+    projectForm.appendChild(createRow('ズーム最大倍率:', createNumberInput('zoomMax', currentSettings.zoomMax, 0.1, 10000, 0.1)));
     projectForm.appendChild(createRow('タイムライン最小年:', createNumberInput('sliderMin', currentSettings.sliderMin, undefined, undefined, 1)));
     projectForm.appendChild(createRow('タイムライン最大年:', createNumberInput('sliderMax', currentSettings.sliderMax, undefined, undefined, 1)));
     projectForm.appendChild(createRow('グリッド間隔 (度):', createNumberInput('gridInterval', currentSettings.gridInterval, 1, 90, 1)));
@@ -295,6 +297,8 @@ export class ProjectSettingsTabView {
       worldName: formData.get('worldName')?.trim() || '',
       worldDescription: formData.get('worldDescription')?.trim() || '',
       equatorLength: parseFloat(formData.get('equatorLength')),
+      zoomMin: parseFloat(formData.get('zoomMin')),
+      zoomMax: parseFloat(formData.get('zoomMax')),
       sliderMin: parseInt(formData.get('sliderMin'), 10),
       sliderMax: parseInt(formData.get('sliderMax'), 10),
       gridInterval: parseFloat(formData.get('gridInterval')),
@@ -305,6 +309,15 @@ export class ProjectSettingsTabView {
     // UIバリデーション
     if (isNaN(newSettings.equatorLength) || newSettings.equatorLength <= 0) {
       alert("赤道長は正の数値で入力してください。"); return;
+    }
+    if (isNaN(newSettings.zoomMin) || newSettings.zoomMin < 0.1 || newSettings.zoomMin > 10000) {
+      alert("ズーム最小倍率は0.1から10000の範囲で入力してください。"); return;
+    }
+    if (isNaN(newSettings.zoomMax) || newSettings.zoomMax < 0.1 || newSettings.zoomMax > 10000) {
+      alert("ズーム最大倍率は0.1から10000の範囲で入力してください。"); return;
+    }
+    if (newSettings.zoomMin >= newSettings.zoomMax) {
+      alert("ズーム最小倍率はズーム最大倍率より小さくしてください。"); return;
     }
     if (isNaN(newSettings.sliderMin) || isNaN(newSettings.sliderMax) || newSettings.sliderMin >= newSettings.sliderMax) {
       alert("タイムラインの年は、最小年 < 最大年 となるように入力してください。"); return;
@@ -340,6 +353,8 @@ export class ProjectSettingsTabView {
       formElement.worldName.value = defaultSettings.worldName || '';
       formElement.worldDescription.value = defaultSettings.worldDescription || '';
       formElement.equatorLength.value = defaultSettings.equatorLength;
+      formElement.zoomMin.value = defaultSettings.zoomMin;
+      formElement.zoomMax.value = defaultSettings.zoomMax;
       formElement.sliderMin.value = defaultSettings.sliderMin;
       formElement.sliderMax.value = defaultSettings.sliderMax;
       formElement.gridInterval.value = defaultSettings.gridInterval;

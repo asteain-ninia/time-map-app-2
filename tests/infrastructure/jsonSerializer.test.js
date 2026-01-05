@@ -110,6 +110,8 @@ describe("JSONSerializer", () => {
     const world = serializer.deserialize(raw);
     expect(world.metadata.settings.sliderMin).toBe(-100);
     expect(world.metadata.settings.sliderMax).toBe(200);
+    expect(world.metadata.settings.zoomMin).toBe(1);
+    expect(world.metadata.settings.zoomMax).toBe(50);
     expect(world.metadata.settings.equatorLength).toBe(40000);
     expect(world.metadata.settings.gridInterval).toBe(50);
   });

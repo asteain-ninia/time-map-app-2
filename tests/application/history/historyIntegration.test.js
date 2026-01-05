@@ -95,6 +95,8 @@ const createWorld = () => ({
     settings: {
       sliderMin: 0,
       sliderMax: 100,
+      zoomMin: 1,
+      zoomMax: 50,
       gridInterval: 10,
       gridColor: "#cccccc",
       gridOpacity: 0.5,

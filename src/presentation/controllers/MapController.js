@@ -8,12 +8,14 @@ export class MapController {
    * @param {MapViewModel} mapViewModel - マップビューモデル
    * @param {EditingViewModel} editingViewModel - 編集ビューモデル
    * @param {ViewportManager} viewportManager - ビューポートマネージャー
+   * @param {EventBus} eventBus - イベントバス
    */
-  constructor(mapView, mapViewModel, editingViewModel, viewportManager) {
+  constructor(mapView, mapViewModel, editingViewModel, viewportManager, eventBus) {
     this._mapView = mapView;
     this._mapViewModel = mapViewModel;
     this._editingViewModel = editingViewModel;
     this._viewportManager = viewportManager;
+    this._eventBus = eventBus;
     
     // 初期化
     this._initialize();
@@ -25,7 +27,28 @@ export class MapController {
    */
   _initialize() {
     // 初期データのロード
+    this._setupEventListeners();
     this._loadInitialData();
+  }
+
+  _setupEventListeners() {
+    if (!this._eventBus || typeof this._eventBus.subscribe !== 'function') {
+      return;
+    }
+    this._eventBus.subscribe('ProjectSettingsUpdated', this._onProjectSettingsUpdated.bind(this));
+  }
+
+  _onProjectSettingsUpdated(eventData) {
+    const settings = eventData?.settings;
+    if (!settings) {
+      return;
+    }
+    const zoomMin = Number(settings.zoomMin);
+    const zoomMax = Number(settings.zoomMax);
+    if (!Number.isFinite(zoomMin) || !Number.isFinite(zoomMax) || zoomMin <= 0 || zoomMin >= zoomMax) {
+      return;
+    }
+    this._viewportManager.updateViewport({ minZoom: zoomMin, maxZoom: zoomMax });
   }
 
   /**

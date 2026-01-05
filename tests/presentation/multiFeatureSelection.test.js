@@ -34,7 +34,7 @@ const createMapViewModel = () => {
     features: [],
     vertices: [],
     layers: [],
-    metadata: { settings: { sliderMin: 0, sliderMax: 10 } }
+    metadata: { settings: { sliderMin: 0, sliderMax: 10, zoomMin: 1, zoomMax: 50 } }
   };
   return vm;
 };

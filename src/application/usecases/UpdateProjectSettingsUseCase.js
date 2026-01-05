@@ -29,6 +29,15 @@ export class UpdateProjectSettingsUseCase {
         if (typeof newSettings.equatorLength !== 'number' || newSettings.equatorLength <= 0) {
             throw new Error("無効な赤道長です。正の数値を入力してください。");
         }
+        if (!Number.isFinite(newSettings.zoomMin) || newSettings.zoomMin < 0.1 || newSettings.zoomMin > 10000) {
+            throw new Error("無効な最小ズーム倍率です。0.1〜10000の範囲で入力してください。");
+        }
+        if (!Number.isFinite(newSettings.zoomMax) || newSettings.zoomMax < 0.1 || newSettings.zoomMax > 10000) {
+            throw new Error("無効な最大ズーム倍率です。0.1〜10000の範囲で入力してください。");
+        }
+        if (newSettings.zoomMin >= newSettings.zoomMax) {
+            throw new Error("無効なズーム範囲です。最小ズームは最大ズームより小さくしてください。");
+        }
         if (typeof newSettings.sliderMin !== 'number' || typeof newSettings.sliderMax !== 'number' || newSettings.sliderMin >= newSettings.sliderMax) {
             throw new Error("無効なタイムライン範囲です。最小年は最大年より小さく設定してください。");
         }

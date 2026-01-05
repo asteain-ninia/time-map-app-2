@@ -63,6 +63,8 @@ describe("MapViewModel", () => {
         settings: {
           sliderMin: 0,
           sliderMax: 100,
+          zoomMin: 1,
+          zoomMax: 50,
           gridInterval: 10,
           gridColor: "#cccccc",
           gridOpacity: 0.5,
@@ -150,6 +152,8 @@ describe("MapViewModel", () => {
     updateProjectSettingsUseCase.execute.mockResolvedValue({
       sliderMin: 10,
       sliderMax: 200,
+      zoomMin: 2,
+      zoomMax: 40,
       gridInterval: 20,
       gridColor: "#000000",
       gridOpacity: 0.3,
@@ -161,6 +165,8 @@ describe("MapViewModel", () => {
     await viewModel.updateProjectSettings({
       sliderMin: 10,
       sliderMax: 200,
+      zoomMin: 2,
+      zoomMax: 40,
       gridInterval: 20,
       gridColor: "#000000",
       gridOpacity: 0.3,
@@ -172,6 +178,8 @@ describe("MapViewModel", () => {
     expect(updateProjectSettingsUseCase.execute).toHaveBeenCalledWith({
       sliderMin: 10,
       sliderMax: 200,
+      zoomMin: 2,
+      zoomMax: 40,
       gridInterval: 20,
       gridColor: "#000000",
       gridOpacity: 0.3,
@@ -182,6 +190,8 @@ describe("MapViewModel", () => {
     expect(viewModel.getProjectSettings()).toEqual({
       sliderMin: 10,
       sliderMax: 200,
+      zoomMin: 2,
+      zoomMax: 40,
       gridInterval: 20,
       gridColor: "#000000",
       gridOpacity: 0.3,
@@ -192,6 +202,8 @@ describe("MapViewModel", () => {
     expect(viewModel.getWorld().metadata.settings).toEqual({
       sliderMin: 10,
       sliderMax: 200,
+      zoomMin: 2,
+      zoomMax: 40,
       gridInterval: 20,
       gridColor: "#000000",
       gridOpacity: 0.3,

@@ -75,6 +75,8 @@ export async function updateProjectSettings(viewModel, newSettings) {
 
 export function getDefaultProjectSettings() {
   return {
+    zoomMin: 1,
+    zoomMax: 50,
     equatorLength: 40000,
     gridInterval: 10,
     gridColor: "#cccccc",
