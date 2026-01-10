@@ -29,6 +29,8 @@ const DEFAULT_LAYER_STYLES = Object.freeze({
   }),
 });
 
+const DEFAULT_BOUNDARY_TOLERANCE_SQ = 1e-9;
+
 function cloneStyle(style) {
   return { ...style };
 }
@@ -86,6 +88,37 @@ function buildRingMapFromPolygon(polygon) {
     }
   }
   return map;
+}
+
+function classifyContainmentByVertices(innerCoords, outerCoords, geometryService, toleranceSq = DEFAULT_BOUNDARY_TOLERANCE_SQ) {
+  if (!innerCoords || innerCoords.length < 3 || !outerCoords || outerCoords.length < 3) {
+    return { inside: false, boundaryOnly: false };
+  }
+
+  let hasStrictInside = false;
+  for (const vertex of innerCoords) {
+    if (!geometryService.isPointInPolygon(vertex, outerCoords, true)) {
+      return { inside: false, boundaryOnly: false };
+    }
+    if (!geometryService.isPointOnPolygonBoundary(vertex, outerCoords, toleranceSq)) {
+      hasStrictInside = true;
+    }
+  }
+
+  return { inside: true, boundaryOnly: !hasStrictInside };
+}
+
+function isRingInsideForExclusivity(innerCoords, outerCoords, geometryService, toleranceSq = DEFAULT_BOUNDARY_TOLERANCE_SQ) {
+  const innerStatus = classifyContainmentByVertices(innerCoords, outerCoords, geometryService, toleranceSq);
+  if (!innerStatus.inside) {
+    return false;
+  }
+  if (!innerStatus.boundaryOnly) {
+    return true;
+  }
+
+  const outerStatus = classifyContainmentByVertices(outerCoords, innerCoords, geometryService, toleranceSq);
+  return outerStatus.inside;
 }
 
 function hasTerritoryAncestorThroughHole(descendantRingId, ancestorRingId, ringMap) {
@@ -307,12 +340,12 @@ export class LayerService {
           return false;
         }
 
-        const firstInsideSecond = geometryService.isRingCompletelyInsideRing(first.coordinates, second.coordinates);
+        const firstInsideSecond = isRingInsideForExclusivity(first.coordinates, second.coordinates, geometryService);
         if (firstInsideSecond && !hasTerritoryAncestorThroughHole(first.ring.id, second.ring.id, ringMap)) {
           return false;
         }
 
-        const secondInsideFirst = geometryService.isRingCompletelyInsideRing(second.coordinates, first.coordinates);
+        const secondInsideFirst = isRingInsideForExclusivity(second.coordinates, first.coordinates, geometryService);
         if (secondInsideFirst && !hasTerritoryAncestorThroughHole(second.ring.id, first.ring.id, ringMap)) {
           return false;
         }
@@ -335,7 +368,7 @@ export class LayerService {
             return false;
           }
 
-          if (geometryService.isRingCompletelyInsideRing(otherCoords, targetCoords)) {
+          if (isRingInsideForExclusivity(otherCoords, targetCoords, geometryService)) {
             const isInsidePermittedHole = targetHoles.some(({ coordinates: holeCoords }) =>
               geometryService.isRingCompletelyInsideRing(otherCoords, holeCoords)
             );
@@ -344,7 +377,7 @@ export class LayerService {
             }
           }
 
-          if (geometryService.isRingCompletelyInsideRing(targetCoords, otherCoords)) {
+          if (isRingInsideForExclusivity(targetCoords, otherCoords, geometryService)) {
             const isInsidePermittedHole = otherHoles.some(({ coordinates: holeCoords }) =>
               geometryService.isRingCompletelyInsideRing(targetCoords, holeCoords)
             );

@@ -153,6 +153,35 @@ describe("LayerService", () => {
     expect(exclusive).toBe(false);
   });
 
+  it("allows split polygons that only share boundaries", () => {
+    const slice = makePolygon({
+      id: "slice",
+      layerId: "layer",
+      rings: [makeRing("ring-slice", ["s1", "s2", "s3"])]
+    });
+    const remainder = makePolygon({
+      id: "remainder",
+      layerId: "layer",
+      rings: [makeRing("ring-remainder", ["s2", "s4", "s5", "s6", "s7", "s1", "s3"])]
+    });
+    const vertices = [
+      makeVertex("s1", 3, 0),
+      makeVertex("s2", 7, 0),
+      makeVertex("s3", 5, 2),
+      makeVertex("s4", 10, 0),
+      makeVertex("s5", 10, 10),
+      makeVertex("s6", 0, 10),
+      makeVertex("s7", 0, 0)
+    ];
+    const geometryService = new GeometryService();
+
+    const sliceExclusive = service.checkExclusivity(slice, [slice, remainder], vertices, geometryService);
+    const remainderExclusive = service.checkExclusivity(remainder, [slice, remainder], vertices, geometryService);
+
+    expect(sliceExclusive).toBe(true);
+    expect(remainderExclusive).toBe(true);
+  });
+
   it("detects overlaps between territory rings of the same polygon", () => {
     const polygon = makePolygon({
       id: "poly",

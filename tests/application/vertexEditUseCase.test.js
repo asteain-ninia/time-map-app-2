@@ -165,7 +165,49 @@ describe("VertexEditUseCase", () => {
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
   });
 
-  it("rejects vertex movement that introduces polygon overlap", async () => {
+  it("slides vertex movement to avoid polygon overlap", async () => {
+    world.vertices = [
+      { id: "a1", x: 0, y: 0 },
+      { id: "a2", x: 4, y: 0 },
+      { id: "a3", x: 4, y: 4 },
+      { id: "a4", x: 0, y: 4 },
+      { id: "b1", x: 6, y: 0 },
+      { id: "b2", x: 8, y: 0 },
+      { id: "b3", x: 8, y: 2 },
+      { id: "b4", x: 6, y: 2 }
+    ];
+    world.features = [
+      makePolygon({
+        id: "poly-a",
+        rings: [makeRing("ring-a", ["a1", "a2", "a3", "a4"])]
+      }),
+      makePolygon({
+        id: "poly-b",
+        rings: [makeRing("ring-b", ["b1", "b2", "b3", "b4"])]
+      })
+    ];
+
+    const result = await useCase.moveVertices([
+      { vertexId: "b1", newPosition: { x: 1, y: 1 } },
+      { vertexId: "b2", newPosition: { x: 3, y: 1 } },
+      { vertexId: "b3", newPosition: { x: 3, y: 3 } },
+      { vertexId: "b4", newPosition: { x: 1, y: 3 } }
+    ]);
+
+    const outerRing = ["a1", "a2", "a3", "a4"]
+      .map((id) => world.vertices.find((v) => v.id === id))
+      .map((v) => ({ x: v.x, y: v.y }));
+    const boundaryToleranceSq = 1e-9;
+
+    result.updatedVertices.forEach((vertex) => {
+      const inside = geometryService.isPointInPolygon(vertex, outerRing, false);
+      const onBoundary = geometryService.isPointOnPolygonBoundary(vertex, outerRing, boundaryToleranceSq);
+      expect(inside && !onBoundary).toBe(false);
+    });
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects overlap when multiple polygons move at once", async () => {
     world.vertices = [
       { id: "a1", x: 0, y: 0 },
       { id: "a2", x: 4, y: 0 },
@@ -189,6 +231,10 @@ describe("VertexEditUseCase", () => {
 
     await expect(
       useCase.moveVertices([
+        { vertexId: "a1", newPosition: { x: 0, y: 0 } },
+        { vertexId: "a2", newPosition: { x: 4, y: 0 } },
+        { vertexId: "a3", newPosition: { x: 4, y: 4 } },
+        { vertexId: "a4", newPosition: { x: 0, y: 4 } },
         { vertexId: "b1", newPosition: { x: 1, y: 1 } },
         { vertexId: "b2", newPosition: { x: 3, y: 1 } },
         { vertexId: "b3", newPosition: { x: 3, y: 3 } },

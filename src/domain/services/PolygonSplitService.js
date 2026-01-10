@@ -195,7 +195,13 @@ export function buildPolygonSplitPlan({
   const path1 = ringSequence.slice(idx1, idx2 + 1);
   const path2 = ringSequence.slice(idx2).concat(ringSequence.slice(0, idx1 + 1));
 
-  const cutInterior = cutLine.slice(1, -1);
+  const isCutLineForward = firstIndex === idx1 && secondIndex === idx2;
+  const isCutLineBackward = firstIndex === idx2 && secondIndex === idx1;
+  if (!isCutLineForward && !isCutLineBackward) {
+    throw new Error('分断線とリングの順序が一致しません。');
+  }
+  const normalizedCutLine = isCutLineForward ? cutLine : [...cutLine].reverse();
+  const cutInterior = normalizedCutLine.slice(1, -1);
   const ringA = normalizeRing(path1.concat([...cutInterior].reverse()));
   const ringB = normalizeRing(path2.concat(cutInterior));
 
@@ -206,7 +212,7 @@ export function buildPolygonSplitPlan({
   return {
     ringA,
     ringB,
-    cutLine
+    cutLine: normalizedCutLine
   };
 }
 
