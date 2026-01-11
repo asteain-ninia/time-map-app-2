@@ -382,20 +382,23 @@ export class MapViewRendererHelper {
   }
 
   /** 追加中のプレビューを描画 */
-  renderAddingFeaturePreview() {
-    this.clearAddingFeaturePreview();
-    const mode = this._editingViewModel.getMode();
-    const tool = this._editingViewModel.getTool();
-    const subMode = this._editingViewModel.getAddingSubMode();
-    const isSplit = mode === 'edit' && tool === 'split' && this._editingViewModel.getTargetPolygon();
-    if (!((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole' && this._editingViewModel.getTargetPolygon()) || isSplit)) {
-        return;
-    }
-    const addingPoints = this._editingViewModel.getAddingPoints();
-    if (addingPoints.length === 0) return;
-    const viewport = this._viewportManager.getViewport();
+    renderAddingFeaturePreview() {
+      this.clearAddingFeaturePreview();
+      const mode = this._editingViewModel.getMode();
+      const tool = this._editingViewModel.getTool();
+      const subMode = this._editingViewModel.getAddingSubMode();
+      const splitLineMode = typeof this._editingViewModel.getSplitLineMode === 'function'
+        ? this._editingViewModel.getSplitLineMode()
+        : 'open';
+      const isSplit = mode === 'edit' && tool === 'split' && this._editingViewModel.getTargetPolygon();
+      if (!((mode === 'add' && tool) || (mode === 'edit' && tool === 'add-hole' && this._editingViewModel.getTargetPolygon()) || isSplit)) {
+          return;
+      }
+      const addingPoints = this._editingViewModel.getAddingPoints();
+      if (addingPoints.length === 0) return;
+      const viewport = this._viewportManager.getViewport();
 
-    const pointStyle = editingStyles.addingPointPreview;
+      const pointStyle = editingStyles.addingPointPreview;
     let lineStyle = {};
     if (mode === 'add') {
         lineStyle = tool === 'line' ? editingStyles.linePreviewForLine
@@ -405,13 +408,20 @@ export class MapViewRendererHelper {
         lineStyle = subMode === 'hole' ? editingStyles.linePreviewHole
                   : subMode === 'enclave' ? editingStyles.linePreviewEnclave
                   : editingStyles.linePreviewPending; // サブモード未決定時
-    } else if (mode === 'edit' && tool === 'split') {
-        lineStyle = editingStyles.linePreviewSplit;
-    }
-    
-    // 追加中のプレビューは、通常ワールドの端をまたいで作成することは想定しづらいため、
-    // オフセット描画は行わない (常にオフセット0で描画)
-    // もし必要であれば、SVGRenderer と同様のオフセットロジックをここにも追加する
+      } else if (mode === 'edit' && tool === 'split') {
+          lineStyle = editingStyles.linePreviewSplit;
+      }
+      
+      if (isSplit && splitLineMode === 'open' && addingPoints.length >= 1) {
+        const radiusPixels = this._getSplitCircleRadiusPixels();
+        const circleStyle = { ...editingStyles.splitCircle, radius: radiusPixels };
+        const circle = this._renderer.drawPoint(addingPoints[0].x, addingPoints[0].y, circleStyle, viewport);
+        if (circle) this._addingElements.push(circle);
+      }
+
+      // 追加中のプレビューは、通常ワールドの端をまたいで作成することは想定しづらいため、
+      // オフセット描画は行わない (常にオフセット0で描画)
+      // もし必要であれば、SVGRenderer と同様のオフセットロジックをここにも追加する
     // 現状はオフセットなしで描画
 
     if (tool === 'point') {
@@ -422,11 +432,13 @@ export class MapViewRendererHelper {
     } else if (tool === 'line' || tool === 'polygon' || tool === 'add-hole' || tool === 'split') {
         // 線または閉じた形状のプレビュー
         if (addingPoints.length >= 2) {
-            const isClosedShape = (tool === 'polygon') || (mode === 'edit' && tool === 'add-hole');
-            // 閉じる形状の場合、3点以上で最初の点に戻る線を描画
-            const pointsToDraw = isClosedShape && addingPoints.length >= 3
-                                 ? [...addingPoints, addingPoints[0]]
-                                 : addingPoints;
+          const isClosedShape = (tool === 'polygon')
+            || (mode === 'edit' && tool === 'add-hole')
+            || (mode === 'edit' && tool === 'split' && splitLineMode === 'circle');
+          // 閉じる形状の場合、3点以上で最初の点に戻る線を描画
+          const pointsToDraw = isClosedShape && addingPoints.length >= 3
+                                   ? [...addingPoints, addingPoints[0]]
+                                   : addingPoints;
             if (Object.keys(lineStyle).length > 0) {
                  const elem = this._renderer.drawLine(pointsToDraw, lineStyle, viewport);
                  if (elem) this._addingElements.push(elem);
@@ -628,18 +640,28 @@ export class MapViewRendererHelper {
     return shared;
   }
 
-  _getSharedVertexSnapDistanceWorld(viewport) {
-    const snapPixels = this._configManager && typeof this._configManager.get === 'function'
-      ? this._configManager.get('ui.sharedVertexSnapPixels', 50)
-      : 50;
+    _getSharedVertexSnapDistanceWorld(viewport) {
+      const snapPixels = this._configManager && typeof this._configManager.get === 'function'
+        ? this._configManager.get('ui.sharedVertexSnapPixels', 50)
+        : 50;
     if (!Number.isFinite(snapPixels) || snapPixels <= 0) {
       return null;
     }
     if (!viewport || !Number.isFinite(viewport.zoom) || viewport.zoom <= 0) {
       return null;
     }
-    return snapPixels / viewport.zoom;
-  }
+      return snapPixels / viewport.zoom;
+    }
+
+    _getSplitCircleRadiusPixels() {
+      const radiusPixels = this._configManager && typeof this._configManager.get === 'function'
+        ? this._configManager.get('ui.splitCircleRadiusPixels', 40)
+        : 40;
+      if (!Number.isFinite(radiusPixels) || radiusPixels <= 0) {
+        return 40;
+      }
+      return radiusPixels;
+    }
 
   _unwrapLongitudeSequence(points) {
     if (!Array.isArray(points) || points.length === 0) {

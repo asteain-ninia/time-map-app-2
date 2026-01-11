@@ -37,7 +37,8 @@ export class ConfigManager {
         timelineHeight: 100,
         darkMode: false,
         sharedVertexSnapPixels: 50,
-        renderFps: 60
+        renderFps: 60,
+        splitCircleRadiusPixels: 40
       },
       
       // カスタムカレンダー設定

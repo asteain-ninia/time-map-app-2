@@ -14,7 +14,7 @@ export class SplitPolygonUseCase {
     if (!polygonId) {
       throw new Error('分割対象のポリゴンIDが指定されていません。');
     }
-    if (!splitPlan || !Array.isArray(splitPlan.ringA) || !Array.isArray(splitPlan.ringB)) {
+    if (!splitPlan || !Array.isArray(splitPlan.polygons) || splitPlan.polygons.length !== 2) {
       throw new Error('分割結果の情報が不足しています。');
     }
     if (!(newProperty instanceof Property)) {
@@ -35,21 +35,10 @@ export class SplitPolygonUseCase {
     const originalPolygon = world.features[polygonIndex];
     this._assertSplittablePolygon(originalPolygon);
 
-    const ringToUpdate = originalPolygon.rings[0];
-    const ringPointsToKeep = inheritIndex === 0 ? splitPlan.ringA : splitPlan.ringB;
-    const ringPointsToCreate = inheritIndex === 0 ? splitPlan.ringB : splitPlan.ringA;
-
-    this._validateRingPoints(ringPointsToKeep);
-    this._validateRingPoints(ringPointsToCreate);
-
-    const ringKeepCoords = ringPointsToKeep.map(point => ({ x: point.x, y: point.y }));
-    const ringCreateCoords = ringPointsToCreate.map(point => ({ x: point.x, y: point.y }));
-    if (this._geometryService.isPolygonSelfIntersecting(ringKeepCoords)) {
-      throw new Error('分割結果の面が自己交差しています。');
-    }
-    if (this._geometryService.isPolygonSelfIntersecting(ringCreateCoords)) {
-      throw new Error('分割結果の面が自己交差しています。');
-    }
+    const polygonPlanToKeep = splitPlan.polygons[inheritIndex];
+    const polygonPlanToCreate = splitPlan.polygons[inheritIndex === 0 ? 1 : 0];
+    const ringsToKeepPlan = this._normalizeRingPlan(polygonPlanToKeep);
+    const ringsToCreatePlan = this._normalizeRingPlan(polygonPlanToCreate);
 
     const newVertexIdsByKey = new Map();
     const addedVerticesData = [];
@@ -71,25 +60,25 @@ export class SplitPolygonUseCase {
       addedVerticesData.push({ id: vertexId, x: point.x, y: point.y });
       return vertexId;
     };
+    const updatedRings = this._buildRingsFromPlan(ringsToKeepPlan, resolveVertexId);
+    const newRings = this._buildRingsFromPlan(ringsToCreatePlan, resolveVertexId);
 
-    const updatedRingVertexIds = ringPointsToKeep.map(resolveVertexId);
-    const newRingVertexIds = ringPointsToCreate.map(resolveVertexId);
-
-    const updatedPolygon = originalPolygon.withUpdatedRingVertices(ringToUpdate.id, updatedRingVertexIds);
+    const updatedPolygon = new Polygon(
+      originalPolygon.id,
+      originalPolygon.properties,
+      originalPolygon.layerId,
+      originalPolygon.parentId,
+      originalPolygon.childIds,
+      updatedRings
+    );
     const newPolygonId = this._generateId('polygon');
-    const newRing = {
-      id: this._generateId('ring'),
-      vertexIds: [...newRingVertexIds],
-      ringType: 'territory',
-      parentId: null
-    };
     const newPolygon = new Polygon(
       newPolygonId,
       [newProperty],
       originalPolygon.layerId,
       originalPolygon.parentId,
       [],
-      [newRing]
+      newRings
     );
 
     const originalFeaturesSnapshot = world.features.slice();
@@ -121,23 +110,61 @@ export class SplitPolygonUseCase {
     if (polygon.childIds && polygon.childIds.length > 0) {
       throw new Error('下位領域を持つ面情報は分割できません。');
     }
-    if (!Array.isArray(polygon.rings) || polygon.rings.length !== 1) {
-      throw new Error('外周リングが1つの面情報のみ分割できます。');
-    }
-    const ring = polygon.rings[0];
-    if (!ring || ring.ringType !== 'territory') {
-      throw new Error('外周リングの情報が不正です。');
+    if (!Array.isArray(polygon.rings) || polygon.rings.length === 0) {
+      throw new Error('形状を持つ面情報のみ分割できます。');
     }
   }
 
-  _validateRingPoints(points) {
-    if (!Array.isArray(points) || points.length < 3) {
+  _normalizeRingPlan(polygonPlan) {
+    if (!polygonPlan || !Array.isArray(polygonPlan.rings) || polygonPlan.rings.length === 0) {
       throw new Error('分割結果の面が成立しません。');
     }
-    points.forEach(point => {
-      if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') {
-        throw new Error('分割点の座標が不正です。');
+    polygonPlan.rings.forEach((ring, index) => {
+      if (!ring || !Array.isArray(ring.points) || ring.points.length < 3) {
+        throw new Error('分割結果のリングが不正です。');
+      }
+      if (ring.ringType !== 'territory' && ring.ringType !== 'hole') {
+        throw new Error('分割結果のリング種別が不正です。');
+      }
+      if (ring.parentIndex !== null && ring.parentIndex !== undefined) {
+        if (!Number.isInteger(ring.parentIndex) || ring.parentIndex < 0 || ring.parentIndex >= polygonPlan.rings.length) {
+          throw new Error('分割結果の親リング指定が不正です。');
+        }
+        if (ring.parentIndex === index) {
+          throw new Error('分割結果の親リング指定が不正です。');
+        }
+      }
+      ring.points.forEach(point => {
+        if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') {
+          throw new Error('分割点の座標が不正です。');
+        }
+      });
+      const coords = ring.points.map(point => ({ x: point.x, y: point.y }));
+      if (this._geometryService.isPolygonSelfIntersecting(coords)) {
+        throw new Error('分割結果の面が自己交差しています。');
       }
     });
+    return polygonPlan.rings;
+  }
+
+  _buildRingsFromPlan(ringsPlan, resolveVertexId) {
+    const ringsWithIndices = ringsPlan.map((ring) => ({
+      id: this._generateId('ring'),
+      vertexIds: ring.points.map(resolveVertexId),
+      ringType: ring.ringType,
+      parentIndex: ring.parentIndex ?? null
+    }));
+
+    const idByIndex = new Map();
+    ringsWithIndices.forEach((ring, index) => {
+      idByIndex.set(index, ring.id);
+    });
+
+    return ringsWithIndices.map((ring) => ({
+      id: ring.id,
+      vertexIds: ring.vertexIds,
+      ringType: ring.ringType,
+      parentId: ring.parentIndex !== null ? idByIndex.get(ring.parentIndex) : null
+    }));
   }
 }

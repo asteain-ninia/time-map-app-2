@@ -251,6 +251,26 @@ export class MapView {
     return snapPixels / viewport.zoom;
   }
 
+  _getSplitCircleRadiusPixels() {
+    if (!this._configManager || typeof this._configManager.get !== 'function') {
+      return 40;
+    }
+    const radiusPixels = this._configManager.get('ui.splitCircleRadiusPixels', 40);
+    return Number.isFinite(radiusPixels) ? radiusPixels : 40;
+  }
+
+  getSplitCircleRadiusWorld() {
+    const viewport = this._viewportManager.getViewport();
+    const radiusPixels = this._getSplitCircleRadiusPixels();
+    if (!Number.isFinite(radiusPixels) || radiusPixels <= 0) {
+      return null;
+    }
+    if (!viewport || !Number.isFinite(viewport.zoom) || viewport.zoom <= 0) {
+      return null;
+    }
+    return radiusPixels / viewport.zoom;
+  }
+
   _getRenderFrameIntervalMs() {
     if (!this._configManager || typeof this._configManager.get !== 'function') {
       return 0;
@@ -645,12 +665,8 @@ export class MapView {
       if (targetPolygon.childIds && targetPolygon.childIds.length > 0) {
           throw new Error('下位領域を持つ面情報は分割できません。');
       }
-      if (!Array.isArray(targetPolygon.rings) || targetPolygon.rings.length !== 1) {
-          throw new Error('外周リングが1つの面情報のみ分割できます。');
-      }
-      const ring = targetPolygon.rings[0];
-      if (!ring || ring.ringType !== 'territory') {
-          throw new Error('外周リングの情報が不正です。');
+      if (!Array.isArray(targetPolygon.rings) || targetPolygon.rings.length === 0) {
+          throw new Error('形状を持つ面情報のみ分割できます。');
       }
       const points = this._editingViewModel.getAddingPoints();
       if (!Array.isArray(points) || points.length < 2) {
@@ -665,26 +681,51 @@ export class MapView {
           throw new Error('幾何計算サービスが初期化されていません。');
       }
       const verticesMap = new Map(world.vertices.map(v => [v.id, { x: v.x, y: v.y }]));
+      const isClosed = typeof this._editingViewModel.getSplitLineMode === 'function'
+        ? this._editingViewModel.getSplitLineMode() === 'circle'
+        : false;
       return buildPolygonSplitPlan({
-          ringVertexIds: ring.vertexIds,
+          rings: targetPolygon.rings,
           verticesMap,
           cutLinePoints: points,
           geometryService,
-          toleranceSq: this._clickToleranceSq
+          toleranceSq: this._clickToleranceSq,
+          isClosed
       });
   }
 
   _showSplitInheritanceDialog(splitPlan) {
       const geometryService = this._viewModel._geometryService;
-      const ringA = splitPlan.ringA.map(point => ({ x: point.x, y: point.y }));
-      const ringB = splitPlan.ringB.map(point => ({ x: point.x, y: point.y }));
-      const areaA = geometryService.calculatePolygonArea(ringA);
-      const areaB = geometryService.calculatePolygonArea(ringB);
+      const polygons = Array.isArray(splitPlan?.polygons) ? splitPlan.polygons : [];
+      if (polygons.length !== 2) {
+        throw new Error('分割結果の情報が不足しています。');
+      }
+
+      const polygonA = {
+        rings: polygons[0].rings.map(ring => ({
+          ringType: ring.ringType,
+          points: ring.points.map(point => ({ x: point.x, y: point.y }))
+        }))
+      };
+      const polygonB = {
+        rings: polygons[1].rings.map(ring => ({
+          ringType: ring.ringType,
+          points: ring.points.map(point => ({ x: point.x, y: point.y }))
+        }))
+      };
+
+      const calculatePolygonArea = (polygon) => polygon.rings.reduce((total, ring) => {
+        const ringArea = geometryService.calculatePolygonArea(ring.points);
+        return total + (ring.ringType === 'territory' ? ringArea : -ringArea);
+      }, 0);
+
+      const areaA = calculatePolygonArea(polygonA);
+      const areaB = calculatePolygonArea(polygonB);
       const smallerIndex = areaA <= areaB ? 0 : 1;
 
       this._conflictDialog.showSplitSelection(this._mapElement, {
-        ringA,
-        ringB,
+        polygonA,
+        polygonB,
         smallerIndex
       }).then(selectedIndex => {
           this._showPropertyInputDialog({

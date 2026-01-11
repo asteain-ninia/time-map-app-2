@@ -50,6 +50,7 @@ export const editingStyles = {
   linePreviewForLine: { stroke: '#0000ff', strokeWidth: 4, strokeDasharray: '5,5' },
   linePreviewForPolygon: { stroke: '#00ff00', strokeWidth: 4, strokeDasharray: '5,5' },
   linePreviewSplit: { stroke: '#ff0055', strokeWidth: 4, strokeDasharray: '6,4' },
+  splitCircle: { radius: 40, fill: 'none', stroke: 'rgba(255, 0, 85, 0.8)', strokeWidth: 2 },
   linePreviewHole: { stroke: '#ff00ff', strokeWidth: 4, strokeDasharray: '5,5' },
   linePreviewEnclave: { stroke: '#ff8800', strokeWidth: 4, strokeDasharray: '5,5' },
   linePreviewPending: { stroke: '#aaaaaa', strokeWidth: 4, strokeDasharray: '5,5' },

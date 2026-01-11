@@ -10,6 +10,13 @@ function buildPath(points) {
   return path;
 }
 
+function buildCompoundPath(rings) {
+  if (!Array.isArray(rings)) {
+    return '';
+  }
+  return rings.map(ring => buildPath(ring.points)).filter(Boolean).join(' ');
+}
+
 function getBoundingBox(points) {
   let minX = Infinity;
   let minY = Infinity;
@@ -28,12 +35,20 @@ function getBoundingBox(points) {
   return { minX, minY, maxX, maxY };
 }
 
+function getBoundingBoxFromRings(rings) {
+  if (!Array.isArray(rings)) {
+    return null;
+  }
+  const points = rings.flatMap(ring => ring?.points || []);
+  return getBoundingBox(points);
+}
+
 export class ConflictResolutionDialog {
   constructor() {
     this._activeDialog = null;
   }
 
-  showSplitSelection(container, { ringA, ringB, smallerIndex }) {
+  showSplitSelection(container, { polygonA, polygonB, smallerIndex }) {
     if (!container) {
       return Promise.reject(new Error('Dialog container is missing.'));
     }
@@ -85,8 +100,8 @@ export class ConflictResolutionDialog {
       svg.setAttribute('height', '100%');
       svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
-      const smallerRing = smallerIndex === 1 ? ringB : ringA;
-      const bbox = getBoundingBox(smallerRing) || { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+      const smallerPolygon = smallerIndex === 1 ? polygonB : polygonA;
+      const bbox = getBoundingBoxFromRings(smallerPolygon?.rings) || { minX: 0, minY: 0, maxX: 1, maxY: 1 };
       const width = Math.max(1, bbox.maxX - bbox.minX);
       const height = Math.max(1, bbox.maxY - bbox.minY);
       const marginX = width * 0.15;
@@ -98,9 +113,13 @@ export class ConflictResolutionDialog {
       svg.setAttribute('viewBox', `${viewBoxMinX} ${viewBoxMinY} ${viewBoxWidth} ${viewBoxHeight}`);
 
       const pathA = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      pathA.setAttribute('d', buildPath(ringA));
+      pathA.setAttribute('d', buildCompoundPath(polygonA?.rings));
+      pathA.setAttribute('fill-rule', 'evenodd');
+      pathA.setAttribute('clip-rule', 'evenodd');
       const pathB = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      pathB.setAttribute('d', buildPath(ringB));
+      pathB.setAttribute('d', buildCompoundPath(polygonB?.rings));
+      pathB.setAttribute('fill-rule', 'evenodd');
+      pathB.setAttribute('clip-rule', 'evenodd');
 
       const baseStyle = {
         fill: 'rgba(0, 140, 255, 0.25)',

@@ -779,20 +779,27 @@ export class MapViewEventHandler {
 
   /** 分割ツールでのクリック処理 */
   _handleSplitToolClick(worldPoint) {
-    const targetPolygon = this._editingViewModel.getTargetPolygon();
-    const world = this._viewModel.getWorld();
-    if (!world || !world.vertices) return;
+      const targetPolygon = this._editingViewModel.getTargetPolygon();
+      const world = this._viewModel.getWorld();
+      if (!world || !world.vertices) return;
 
-    if (!targetPolygon) {
-      const clickedFeature = this._interactionLogic.findClosestFeature(worldPoint);
-      if (clickedFeature instanceof DomainPolygon) {
-        this._editingViewModel.startSplit(clickedFeature);
-        this._viewModel.selectFeature(clickedFeature.id);
-      } else {
-        alert("分割する面情報を選択してください。");
+      const splitLineMode = typeof this._editingViewModel.getSplitLineMode === 'function'
+        ? this._editingViewModel.getSplitLineMode()
+        : 'open';
+      if (splitLineMode === 'circle') {
+        return;
       }
-      return;
-    }
+
+      if (!targetPolygon) {
+        const clickedFeature = this._interactionLogic.findClosestFeature(worldPoint);
+        if (clickedFeature instanceof DomainPolygon) {
+          this._editingViewModel.startSplit(clickedFeature);
+          this._viewModel.selectFeature(clickedFeature.id);
+        } else {
+          alert("分割する面情報を選択してください。");
+        }
+        return;
+      }
 
     const verticesMap = new Map(world.vertices.map(v => [v.id, { id: v.id, x: v.x, y: v.y }]));
     const isOnBoundary = this._interactionLogic.isPointNearPolygonBoundary(worldPoint, targetPolygon, verticesMap);
@@ -801,20 +808,48 @@ export class MapViewEventHandler {
       return;
     }
 
-    const existingPoints = this._editingViewModel.getAddingPoints();
-    if (existingPoints.length === 0) {
-      const locationInfo = this._interactionLogic.locatePointInPolygon(worldPoint, targetPolygon, verticesMap);
-      if (locationInfo.type !== 'outside') {
-        alert("分断線の開始点は面の外側に置いてください。");
-        return;
+      const existingPoints = this._editingViewModel.getAddingPoints();
+      if (existingPoints.length >= 1) {
+        const radiusWorld = typeof this._mapView.getSplitCircleRadiusWorld === 'function'
+          ? this._mapView.getSplitCircleRadiusWorld()
+          : null;
+        if (Number.isFinite(radiusWorld) && radiusWorld > 0) {
+          const center = existingPoints[0];
+          const dx = worldPoint.x - center.x;
+          const dy = worldPoint.y - center.y;
+          const distanceSq = dx * dx + dy * dy;
+          if (distanceSq <= radiusWorld * radiusWorld) {
+            const circlePoints = this._buildSplitCirclePoints(center, radiusWorld);
+            if (circlePoints.length >= 3) {
+              if (typeof this._editingViewModel.setSplitLineMode === 'function') {
+                this._editingViewModel.setSplitLineMode('circle');
+              }
+              if (typeof this._editingViewModel.setAddingPoints === 'function') {
+                this._editingViewModel.setAddingPoints(circlePoints);
+              }
+              return;
+            }
+          }
+        }
       }
+
+      if (existingPoints.length === 0) {
+        if (typeof this._editingViewModel.setSplitLineMode === 'function') {
+          this._editingViewModel.setSplitLineMode('open');
+        }
+      } else if (existingPoints.length === 1) {
+        const startLocation = this._interactionLogic.locatePointInPolygon(existingPoints[0], targetPolygon, verticesMap);
+        if (startLocation.type === 'inside_outer') {
+          alert("分断線の開始点は面の外側に置いてください。");
+          return;
+        }
+      }
+
+      this.handleAddPoint(worldPoint);
     }
 
-    this.handleAddPoint(worldPoint);
-  }
-
   /** 穴/飛び地追加モードでのクリック処理 */
-  _handleAddHoleOrEnclaveClick(worldPoint) {
+    _handleAddHoleOrEnclaveClick(worldPoint) {
     const targetPolygon = this._editingViewModel.getTargetPolygon();
     const currentSubMode = this._editingViewModel.getAddingSubMode();
 
@@ -888,5 +923,18 @@ export class MapViewEventHandler {
            // alert("ここには頂点を追加できません。");
       }
     }
+  }
+
+  _buildSplitCirclePoints(center, radiusWorld) {
+    const segments = 48;
+    const points = [];
+    for (let i = 0; i < segments; i++) {
+      const angle = (Math.PI * 2 * i) / segments;
+      points.push({
+        x: center.x + Math.cos(angle) * radiusWorld,
+        y: center.y + Math.sin(angle) * radiusWorld
+      });
+    }
+    return points;
   }
 }

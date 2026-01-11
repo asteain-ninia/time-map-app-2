@@ -6,6 +6,17 @@ function setSplitPlan(splitPlan) {
   this._splitPlan = splitPlan;
 }
 
+function setSplitLineMode(mode) {
+  if (this._splitLineMode !== mode) {
+    this._splitLineMode = mode;
+    this._notifyObservers('splitLineMode');
+  }
+}
+
+function getSplitLineMode() {
+  return this._splitLineMode;
+}
+
 function startSplit(polygonInstance) {
   if (this._tool !== 'split') {
     console.warn("startSplit called when tool is not 'split'.");
@@ -13,6 +24,7 @@ function startSplit(polygonInstance) {
   }
   this._targetPolygon = polygonInstance;
   this._splitPlan = null;
+  this._splitLineMode = 'open';
   this._clearAddingPoints();
   this._notifyObservers('targetPolygon');
   this._notifyObservers('addingPoints');
@@ -92,6 +104,8 @@ async function confirmSplit(inheritSideIndex, newProperty) {
 
 export const splitMethods = {
   setSplitPlan,
+  setSplitLineMode,
+  getSplitLineMode,
   startSplit,
   cancelSplitPreparation,
   getSplitPlan,

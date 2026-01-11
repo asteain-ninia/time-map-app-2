@@ -33,6 +33,7 @@ export class EditingViewModel {
     this._vertexSlideContext = null;
     this._pendingVertexAdditionInfo = null; // 線上点追加からドラッグ操作への連携用
     this._splitPlan = null;
+    this._splitLineMode = 'open';
 
     // アンドゥ・リドゥ関連のプロパティは削除: _undoStack, _redoStack, _maxHistorySize
 

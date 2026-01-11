@@ -96,6 +96,27 @@ function addPoint(point) {
 }
 
 /**
+ * 追加中の点をまとめて更新（分割の円形入力などに使用）
+ * @param {Array<{x:number,y:number}>} points
+ */
+function setAddingPoints(points) {
+  const isAddingFeature = this._mode === 'add' && this._tool;
+  const isAddingHoleOrEnclave = this._mode === 'edit' && this._tool === 'add-hole' && this._targetPolygon;
+  const isAddingSplitLine = this._mode === 'edit' && this._tool === 'split' && this._targetPolygon;
+
+  if (!(isAddingFeature || isAddingHoleOrEnclave || isAddingSplitLine)) {
+    console.warn("Cannot set points in current mode/tool/target:", this._mode, this._tool, !!this._targetPolygon);
+    return;
+  }
+  if (!Array.isArray(points)) {
+    console.warn("setAddingPoints requires an array of points.");
+    return;
+  }
+  this._addingPoints = points.map(point => ({ x: point.x, y: point.y }));
+  this._notifyObservers('addingPoints');
+}
+
+/**
  * 最後の点を削除（地物追加または穴/飛び地追加モード用）
  */
 function removeLastPoint() {
@@ -125,6 +146,7 @@ function _clearAddingState() {
   if (this._targetRingIdForHole !== null) { this._targetRingIdForHole = null; changed = true; }
   if (this._pendingVertexAdditionInfo !== null) { this._pendingVertexAdditionInfo = null; changed = true; }
   if (this._splitPlan !== null) { this._splitPlan = null; changed = true; }
+  if (this._splitLineMode !== 'open') { this._splitLineMode = 'open'; changed = true; }
   if (changed) { this._notifyObservers('addingState'); }
   this.clearTemporaryElements(); // プレビューもクリア
 }
@@ -293,6 +315,7 @@ export const addingMethods = {
   setTargetRingIdForHole,
   getTargetRingIdForHole,
   addPoint,
+  setAddingPoints,
   removeLastPoint,
   _clearAddingState,
   _clearAddingPoints,
