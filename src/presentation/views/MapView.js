@@ -39,6 +39,7 @@ export class MapView {
     this._actionButtonsContainer = null;
     this._confirmButton = null;
     this._cancelButton = null;
+    this._splitGuideElement = null;
     this._resizeObserver = null;
 
     // 状態
@@ -111,6 +112,12 @@ export class MapView {
     this._actionButtonsContainer.style.cssText = 'position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 20; display: none; background-color: rgba(255, 255, 255, 0.8); padding: 5px 10px; border-radius: 5px;';
     this._mapElement.appendChild(this._actionButtonsContainer);
     this._createActionButtons(); // ボタンの生成とイベントリスナー設定
+
+    this._splitGuideElement = document.createElement('div');
+    this._splitGuideElement.className = 'split-guide-message';
+    this._splitGuideElement.style.cssText = 'position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 20; display: none; background-color: rgba(255, 255, 255, 0.85); padding: 6px 10px; border-radius: 4px; font-size: 12px; color: #333; white-space: pre-line; text-align: center;';
+    this._splitGuideElement.textContent = '分割ツール: 分断線の点はどこでも配置できます。\n3点以上でガイド円内をクリックすると閉線に切り替わり、そのまま確定フローに進みます。';
+    this._mapElement.appendChild(this._splitGuideElement);
 
     // クリック許容範囲の初期化
     this._updateClickTolerance();
@@ -194,6 +201,7 @@ export class MapView {
       case 'targetPolygon': // 穴/飛び地追加対象ポリゴン変更
       case 'addingSubMode': // 穴/飛び地追加サブモード変更
       case 'targetRingIdForHole': // 穴追加対象リングID変更
+      case 'splitLineMode': // 分割線のモード変更
       case 'temporaryElements': // 汎用一時要素変更
       case 'draggingVertices': // ドラッグ中頂点情報変更
       case 'history': // アンドゥ/リドゥ状態変更
@@ -573,6 +581,12 @@ export class MapView {
       this._actionButtonsContainer.style.display = show ? 'block' : 'none';
       if (this._confirmButton) {
         this._confirmButton.disabled = !show || !confirmEnabled;
+      }
+
+      const isSplitToolActive = mode === 'edit' && tool === 'split';
+      if (this._splitGuideElement) {
+        this._splitGuideElement.style.display = isSplitToolActive ? 'block' : 'none';
+        this._splitGuideElement.style.bottom = show ? '70px' : '20px';
       }
   }
 

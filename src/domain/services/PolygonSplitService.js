@@ -477,7 +477,7 @@ export function buildPolygonSplitPlan({
   const normalizedCutLine = normalizeLinePoints(cutLinePoints, toleranceSq);
   if (isClosed) {
     if (normalizedCutLine.length < 3) {
-      throw new Error('円形分割は3点以上必要です。');
+      throw new Error('閉じた分割線は3点以上必要です。');
     }
   } else if (normalizedCutLine.length < 2) {
     throw new Error('分断線は2点以上必要です。');
@@ -487,24 +487,6 @@ export function buildPolygonSplitPlan({
     const coords = buildRingCoordinates(ring, verticesMap);
     return coords.map(coord => ({ x: coord[0], y: coord[1] }));
   });
-  if (!isClosed) {
-    const startPoint = normalizedCutLine[0];
-    const endPoint = normalizedCutLine[normalizedCutLine.length - 1];
-
-    if (isPointOnAnyRingBoundary(startPoint, ringPointsList, geometryService, toleranceSq)) {
-      throw new Error('分断線の開始点は境界線上に置けません。');
-    }
-    if (isPointOnAnyRingBoundary(endPoint, ringPointsList, geometryService, toleranceSq)) {
-      throw new Error('分断線の終点は境界線上に置けません。');
-    }
-    if (isPointInsideFilledArea(startPoint, ringPointsList, geometryService)) {
-      throw new Error('分断線の開始点は面の外側に置いてください。');
-    }
-    if (isPointInsideFilledArea(endPoint, ringPointsList, geometryService)) {
-      throw new Error('分断線の終点は面の外側に置いてください。');
-    }
-  }
-
   const subjectMultiPolygon = buildMultiPolygonFromRings(rings, verticesMap);
   const ringBBoxes = ringPointsList.map(getBoundingBox);
   const lineBBox = getBoundingBox(normalizedCutLine);
@@ -523,7 +505,7 @@ export function buildPolygonSplitPlan({
     const insideArea = calculateMultiPolygonArea(inside, geometryService, toleranceSq);
     const outsideArea = calculateMultiPolygonArea(outside, geometryService, toleranceSq);
     if (insideArea <= toleranceSq || outsideArea <= toleranceSq) {
-      throw new Error('円形分割が面を二分割できません。');
+      throw new Error('閉じた分割線が面を二分割できません。');
     }
     parts = [inside, outside];
   } else {

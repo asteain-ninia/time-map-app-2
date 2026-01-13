@@ -96,7 +96,7 @@ function addPoint(point) {
 }
 
 /**
- * 追加中の点をまとめて更新（分割の円形入力などに使用）
+ * 追加中の点をまとめて更新（分割の閉線入力などに使用）
  * @param {Array<{x:number,y:number}>} points
  */
 function setAddingPoints(points) {

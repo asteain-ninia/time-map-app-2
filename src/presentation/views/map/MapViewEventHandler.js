@@ -801,13 +801,6 @@ export class MapViewEventHandler {
         return;
       }
 
-    const verticesMap = new Map(world.vertices.map(v => [v.id, { id: v.id, x: v.x, y: v.y }]));
-    const isOnBoundary = this._interactionLogic.isPointNearPolygonBoundary(worldPoint, targetPolygon, verticesMap);
-    if (isOnBoundary) {
-      alert("境界線上には点を置けません。");
-      return;
-    }
-
       const existingPoints = this._editingViewModel.getAddingPoints();
       if (existingPoints.length >= 1) {
         const radiusWorld = typeof this._mapView.getSplitCircleRadiusWorld === 'function'
@@ -818,17 +811,24 @@ export class MapViewEventHandler {
           const dx = worldPoint.x - center.x;
           const dy = worldPoint.y - center.y;
           const distanceSq = dx * dx + dy * dy;
-          if (distanceSq <= radiusWorld * radiusWorld) {
-            const circlePoints = this._buildSplitCirclePoints(center, radiusWorld);
-            if (circlePoints.length >= 3) {
-              if (typeof this._editingViewModel.setSplitLineMode === 'function') {
-                this._editingViewModel.setSplitLineMode('circle');
-              }
-              if (typeof this._editingViewModel.setAddingPoints === 'function') {
-                this._editingViewModel.setAddingPoints(circlePoints);
-              }
-              return;
+          if (distanceSq <= radiusWorld * radiusWorld && existingPoints.length >= 3) {
+            if (typeof this._editingViewModel.clearSplitPlan === 'function') {
+              this._editingViewModel.clearSplitPlan();
             }
+            if (typeof this._editingViewModel.setSplitLineMode === 'function') {
+              this._editingViewModel.setSplitLineMode('circle');
+            }
+            if (typeof this._mapView.refresh === 'function') {
+              this._mapView.refresh();
+            }
+            this.handleConfirmClick();
+            const splitPlan = typeof this._editingViewModel.getSplitPlan === 'function'
+              ? this._editingViewModel.getSplitPlan()
+              : null;
+            if (!splitPlan && typeof this._editingViewModel.setSplitLineMode === 'function') {
+              this._editingViewModel.setSplitLineMode('open');
+            }
+            return;
           }
         }
       }
@@ -836,12 +836,6 @@ export class MapViewEventHandler {
       if (existingPoints.length === 0) {
         if (typeof this._editingViewModel.setSplitLineMode === 'function') {
           this._editingViewModel.setSplitLineMode('open');
-        }
-      } else if (existingPoints.length === 1) {
-        const startLocation = this._interactionLogic.locatePointInPolygon(existingPoints[0], targetPolygon, verticesMap);
-        if (startLocation.type === 'inside_outer') {
-          alert("分断線の開始点は面の外側に置いてください。");
-          return;
         }
       }
 
@@ -925,16 +919,4 @@ export class MapViewEventHandler {
     }
   }
 
-  _buildSplitCirclePoints(center, radiusWorld) {
-    const segments = 48;
-    const points = [];
-    for (let i = 0; i < segments; i++) {
-      const angle = (Math.PI * 2 * i) / segments;
-      points.push({
-        x: center.x + Math.cos(angle) * radiusWorld,
-        y: center.y + Math.sin(angle) * radiusWorld
-      });
-    }
-    return points;
-  }
 }

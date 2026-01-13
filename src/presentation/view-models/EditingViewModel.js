@@ -225,6 +225,7 @@ export class EditingViewModel {
       case 'targetPolygon': return this._targetPolygon;
       case 'addingSubMode': return this._addingSubMode;
       case 'targetRingIdForHole': return this._targetRingIdForHole;
+      case 'splitLineMode': return this._splitLineMode;
       case 'temporaryElements': return this._temporaryElements;
       case 'draggingVertices': return this._draggingVerticesInfo;
       case 'history': return { canUndo: this.canUndo(), canRedo: this.canRedo() };
