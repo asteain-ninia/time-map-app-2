@@ -100,6 +100,33 @@ describe("PolygonSplitService", () => {
     expect(totalArea).toBeCloseTo(84, 6);
   });
 
+  it("rejects self-intersecting split lines", () => {
+    const verticesMap = buildVerticesMap([
+      ["v1", 0, 0],
+      ["v2", 10, 0],
+      ["v3", 10, 10],
+      ["v4", 0, 10]
+    ]);
+
+    const rings = [
+      { id: "r-outer", ringType: "territory", parentId: null, vertexIds: ["v1", "v2", "v3", "v4"] }
+    ];
+
+    const cutLinePoints = [
+      { x: -1, y: 2 },
+      { x: 11, y: 8 },
+      { x: -1, y: 8 },
+      { x: 11, y: 2 }
+    ];
+
+    expect(() => buildPolygonSplitPlan({
+      rings,
+      verticesMap,
+      cutLinePoints,
+      geometryService
+    })).toThrow(/自己交差/);
+  });
+
   it("splits a polygon by a closed split line into inside/outside", () => {
     const verticesMap = buildVerticesMap([
       ["v1", 0, 0],

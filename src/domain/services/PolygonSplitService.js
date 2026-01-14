@@ -198,6 +198,49 @@ function buildSegmentIntersectionInclusive(p1, p2, q1, q2, epsilon) {
   };
 }
 
+function segmentsColinearOverlap(a1, a2, b1, b2, epsilon) {
+  const abx = a2.x - a1.x;
+  const aby = a2.y - a1.y;
+  const cross1 = abx * (b1.y - a1.y) - aby * (b1.x - a1.x);
+  const cross2 = abx * (b2.y - a1.y) - aby * (b2.x - a1.x);
+  if (Math.abs(cross1) > epsilon || Math.abs(cross2) > epsilon) {
+    return false;
+  }
+  const minAx = Math.min(a1.x, a2.x);
+  const maxAx = Math.max(a1.x, a2.x);
+  const minBx = Math.min(b1.x, b2.x);
+  const maxBx = Math.max(b1.x, b2.x);
+  const minAy = Math.min(a1.y, a2.y);
+  const maxAy = Math.max(a1.y, a2.y);
+  const minBy = Math.min(b1.y, b2.y);
+  const maxBy = Math.max(b1.y, b2.y);
+  const overlapX = Math.max(minAx, minBx) <= Math.min(maxAx, maxBx) + epsilon;
+  const overlapY = Math.max(minAy, minBy) <= Math.min(maxAy, maxBy) + epsilon;
+  return overlapX && overlapY;
+}
+
+function hasLineSelfIntersection(points, epsilon) {
+  if (!Array.isArray(points) || points.length < 4) {
+    return false;
+  }
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    for (let j = i + 2; j < points.length - 1; j++) {
+      const q1 = points[j];
+      const q2 = points[j + 1];
+      const hit = buildSegmentIntersectionInclusive(p1, p2, q1, q2, epsilon);
+      if (hit) {
+        return true;
+      }
+      if (segmentsColinearOverlap(p1, p2, q1, q2, epsilon)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function buildRectangleRing(bbox, padding) {
   return [
     { x: bbox.minX - padding, y: bbox.minY - padding },
@@ -481,6 +524,9 @@ export function buildPolygonSplitPlan({
     }
   } else if (normalizedCutLine.length < 2) {
     throw new Error('分断線は2点以上必要です。');
+  }
+  if (!isClosed && hasLineSelfIntersection(normalizedCutLine, epsilon)) {
+    throw new Error('分断線が自己交差しています。');
   }
 
   const ringPointsList = rings.map(ring => {
