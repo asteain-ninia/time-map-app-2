@@ -4,6 +4,7 @@ import { Point as DomainPoint } from '../../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../../domain/entities/Polygon.js';
 import { Vertex } from '../../../domain/entities/Vertex.js';
+import { SpatialIndex } from './SpatialIndex.js';
 
 /**
  * MapView におけるインタラクションロジック（近接判定、選択など）を担当
@@ -22,6 +23,16 @@ export class MapViewInteractionLogic {
     this._geometryService = geometryService;
     this._getClickToleranceSq = getClickToleranceSq;
     this._getWorldWidthFunc = getWorldWidthFunc; // 保存
+
+    this._spatialIndex = null;
+    this._indexInvalidated = true;
+    this._indexState = { world: null, features: null, worldWidth: null, cellSize: null };
+    this._verticesMap = null;
+    this._fallbackFeatures = [];
+  }
+
+  invalidateIndex() {
+    this._indexInvalidated = true;
   }
 
   /**
@@ -30,6 +41,37 @@ export class MapViewInteractionLogic {
    * @returns {Vertex | null} 最も近い頂点オブジェクト、またはnull
    */
   findClosestVertex(worldPoint) {
+    const index = this._ensureSpatialIndex();
+    if (!index) {
+      return this._findClosestVertexByScan(worldPoint);
+    }
+
+    const clickToleranceSq = this._getClickToleranceSq();
+    const radius = Math.sqrt(clickToleranceSq);
+    const candidates = index.queryVertices(worldPoint, radius);
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    let closestVertexData = null;
+    let minDistanceSq = clickToleranceSq;
+
+    for (const candidate of candidates) {
+      const distanceSq = this._geometryService.calculateDistanceSq(
+        worldPoint.x, worldPoint.y, candidate.x, candidate.y
+      );
+      if (distanceSq < minDistanceSq) {
+        minDistanceSq = distanceSq;
+        closestVertexData = candidate;
+      }
+    }
+
+    return closestVertexData
+      ? new Vertex(closestVertexData.id, closestVertexData.baseX, closestVertexData.baseY)
+      : null;
+  }
+
+  _findClosestVertexByScan(worldPoint) {
     const world = this._viewModel.getWorld();
     const features = this._viewModel.getFeatures(); // 表示中の地物を取得
     if (!world || !world.vertices || features.length === 0) {
@@ -83,6 +125,41 @@ export class MapViewInteractionLogic {
    *          情報は { featureId, ringId?, segmentStartVertexId, segmentEndVertexId, projectionPoint }
    */
   findClosestEdge(worldPoint) {
+    const index = this._ensureSpatialIndex();
+    if (!index) {
+      return this._findClosestEdgeByScan(worldPoint);
+    }
+
+    const clickToleranceSq = this._getClickToleranceSq();
+    const radius = Math.sqrt(clickToleranceSq);
+    const candidates = index.queryEdges(worldPoint, radius);
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    let minDistanceSq = clickToleranceSq;
+    let closestEdgeInfo = null;
+
+    for (const edge of candidates) {
+      const distSq = this._geometryService.distancePointSegmentSq(worldPoint, edge.start, edge.end);
+      if (distSq < minDistanceSq) {
+        minDistanceSq = distSq;
+        const projection = this._geometryService.projectPointToEdge(worldPoint, edge.start, edge.end);
+        const projectionOriginalX = projection.x - edge.offsetX;
+        closestEdgeInfo = {
+          featureId: edge.featureId,
+          ringId: edge.ringId,
+          segmentStartVertexId: edge.segmentStartVertexId,
+          segmentEndVertexId: edge.segmentEndVertexId,
+          projectionPoint: { x: projectionOriginalX, y: projection.y }
+        };
+      }
+    }
+
+    return closestEdgeInfo;
+  }
+
+  _findClosestEdgeByScan(worldPoint) {
     const features = this._viewModel.getFeatures(); // 表示中の地物のみ
     const world = this._viewModel.getWorld();
     if (!features || features.length === 0 || !world || !world.vertices) {
@@ -175,9 +252,29 @@ export class MapViewInteractionLogic {
    * @returns {Feature | null} 最も適切な地物オブジェクト、またはnull
    */
   findClosestFeature(worldPoint) {
-      const features = this._viewModel.getFeatures();
       const world = this._viewModel.getWorld();
+      const features = this._viewModel.getFeatures();
       if (!features || features.length === 0 || !world || !world.vertices) {
+          return null;
+      }
+
+      const index = this._ensureSpatialIndex();
+      let candidateFeatures = features;
+      let verticesMap = null;
+
+      if (index) {
+        const clickToleranceSq = this._getClickToleranceSq();
+        const radius = Math.sqrt(clickToleranceSq);
+        const indexedCandidates = index.queryFeatures(worldPoint, radius);
+        candidateFeatures = this._mergeFeatureCandidates(indexedCandidates, this._fallbackFeatures);
+        verticesMap = this._verticesMap;
+      }
+
+      if (!verticesMap) {
+        verticesMap = new Map(world.vertices.map(v => [v.id, {id:v.id, x:v.x, y:v.y}]));
+      }
+
+      if (!candidateFeatures || candidateFeatures.length === 0) {
           return null;
       }
 
@@ -189,10 +286,9 @@ export class MapViewInteractionLogic {
       const worldWidth = this._getWorldWidthFunc();
       const offsets = [0, -worldWidth, worldWidth];
 
-      const verticesMap = new Map(world.vertices.map(v => [v.id, {id:v.id, x:v.x, y:v.y}]));
       const getVerticesByIds = (ids) => ids?.map(id => verticesMap.get(id)).filter(v => v && typeof v.x === 'number' && typeof v.y === 'number') || [];
 
-      for (const feature of features) {
+      for (const feature of candidateFeatures) {
            if (!feature || typeof feature !== 'object') continue;
 
            if (feature instanceof DomainPoint) {
@@ -531,9 +627,9 @@ export class MapViewInteractionLogic {
    }
 
    /**
-    * 点がポリゴンのどの部分にあるか判定する (公開メソッド、内部でリングベース判定を呼ぶ)
-    * @param {object} point - ワールド座標 {x, y}
-    * @param {DomainPolygon} polygon - 対象ポリゴン
+   * 点がポリゴンのどの部分にあるか判定する (公開メソッド、内部でリングベース判定を呼ぶ)
+   * @param {object} point - ワールド座標 {x, y}
+   * @param {DomainPolygon} polygon - 対象ポリゴン
     * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
     * @returns {{type: 'outside' | 'inside_outer' | 'inside_hole', ringId: string | null, nestingLevel: number}}
     */
@@ -541,4 +637,223 @@ export class MapViewInteractionLogic {
        return this.locatePointInPolygon(point, polygon, verticesMap);
    }
 
+  _ensureSpatialIndex() {
+    const world = this._viewModel.getWorld();
+    const features = this._viewModel.getFeatures();
+    if (!world || !world.vertices || !features || features.length === 0) {
+      this._spatialIndex = null;
+      this._verticesMap = null;
+      this._fallbackFeatures = [];
+      return null;
+    }
+
+    const worldWidth = this._getWorldWidthFunc();
+    const cellSize = this._computeCellSize(this._getClickToleranceSq());
+    const shouldRebuild = this._indexInvalidated
+      || !this._spatialIndex
+      || this._indexState.world !== world
+      || this._indexState.features !== features
+      || this._indexState.worldWidth !== worldWidth
+      || this._indexState.cellSize !== cellSize;
+
+    if (!shouldRebuild) {
+      return this._spatialIndex;
+    }
+
+    const { index, verticesMap, fallbackFeatures } = this._buildSpatialIndex(world, features, worldWidth, cellSize);
+    this._spatialIndex = index;
+    this._verticesMap = verticesMap;
+    this._fallbackFeatures = fallbackFeatures;
+    this._indexState = { world, features, worldWidth, cellSize };
+    this._indexInvalidated = false;
+    return this._spatialIndex;
+  }
+
+  _computeCellSize(clickToleranceSq) {
+    const radius = Math.sqrt(clickToleranceSq);
+    if (!Number.isFinite(radius) || radius <= 0) {
+      return 1;
+    }
+    const size = radius * 4;
+    return Number.isFinite(size) && size > 0 ? size : 1;
+  }
+
+  _buildSpatialIndex(world, features, worldWidth, cellSize) {
+    const index = new SpatialIndex(cellSize);
+    const verticesMap = new Map();
+    world.vertices.forEach(vertex => {
+      if (!vertex || typeof vertex.id !== 'string') {
+        return;
+      }
+      verticesMap.set(vertex.id, { id: vertex.id, x: vertex.x, y: vertex.y });
+    });
+
+    const offsets = getWorldOffsets(worldWidth);
+    const visibleVertexIds = new Set();
+    const fallbackFeatures = [];
+
+    features.forEach(feature => {
+      const vertexIds = collectFeatureVertexIds(feature);
+      vertexIds.forEach(id => visibleVertexIds.add(id));
+
+      const boundsInfo = computeBoundsFromVertexIds(vertexIds, verticesMap);
+      if (!boundsInfo.bounds || boundsInfo.missing) {
+        fallbackFeatures.push(feature);
+      } else {
+        offsets.forEach(offsetX => {
+          const offsetBounds = {
+            minX: boundsInfo.bounds.minX + offsetX,
+            maxX: boundsInfo.bounds.maxX + offsetX,
+            minY: boundsInfo.bounds.minY,
+            maxY: boundsInfo.bounds.maxY
+          };
+          index.addFeature(feature, offsetBounds);
+        });
+      }
+
+      if (feature instanceof DomainLine) {
+        const ids = Array.isArray(feature.vertexIds) ? feature.vertexIds : [];
+        for (let i = 0; i < ids.length - 1; i++) {
+          const startId = ids[i];
+          const endId = ids[i + 1];
+          const start = verticesMap.get(startId);
+          const end = verticesMap.get(endId);
+          if (!start || !end) continue;
+          offsets.forEach(offsetX => {
+            const startOffset = { x: start.x + offsetX, y: start.y };
+            const endOffset = { x: end.x + offsetX, y: end.y };
+            const entry = {
+              featureId: feature.id,
+              ringId: null,
+              segmentStartVertexId: startId,
+              segmentEndVertexId: endId,
+              offsetX,
+              start: startOffset,
+              end: endOffset
+            };
+            index.addEdge(entry, buildSegmentBounds(startOffset, endOffset));
+          });
+        }
+      } else if (feature instanceof DomainPolygon) {
+        if (!Array.isArray(feature.rings)) return;
+        feature.rings.forEach(ring => {
+          const ids = Array.isArray(ring.vertexIds) ? ring.vertexIds : [];
+          if (ids.length < 2) return;
+          for (let i = 0; i < ids.length; i++) {
+            const startId = ids[i];
+            const endId = ids[(i + 1) % ids.length];
+            const start = verticesMap.get(startId);
+            const end = verticesMap.get(endId);
+            if (!start || !end) continue;
+            offsets.forEach(offsetX => {
+              const startOffset = { x: start.x + offsetX, y: start.y };
+              const endOffset = { x: end.x + offsetX, y: end.y };
+              const entry = {
+                featureId: feature.id,
+                ringId: ring.id,
+                segmentStartVertexId: startId,
+                segmentEndVertexId: endId,
+                offsetX,
+                start: startOffset,
+                end: endOffset
+              };
+              index.addEdge(entry, buildSegmentBounds(startOffset, endOffset));
+            });
+          }
+        });
+      }
+    });
+
+    visibleVertexIds.forEach(vertexId => {
+      const vertex = verticesMap.get(vertexId);
+      if (!vertex) return;
+      offsets.forEach(offsetX => {
+        index.addVertex({
+          id: vertexId,
+          x: vertex.x + offsetX,
+          y: vertex.y,
+          baseX: vertex.x,
+          baseY: vertex.y,
+          offsetX
+        });
+      });
+    });
+
+    return { index, verticesMap, fallbackFeatures };
+  }
+
+  _mergeFeatureCandidates(primary, fallback) {
+    const primaryList = Array.isArray(primary) ? primary : [];
+    const fallbackList = Array.isArray(fallback) ? fallback : [];
+    if (fallbackList.length === 0) {
+      return primaryList;
+    }
+    const merged = new Set(primaryList);
+    fallbackList.forEach(feature => merged.add(feature));
+    return Array.from(merged);
+  }
+}
+
+function getWorldOffsets(worldWidth) {
+  if (Number.isFinite(worldWidth) && worldWidth > 0) {
+    return [0, -worldWidth, worldWidth];
+  }
+  return [0];
+}
+
+function collectFeatureVertexIds(feature) {
+  const ids = new Set();
+  if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
+    feature.rings.forEach(ring => {
+      if (Array.isArray(ring.vertexIds)) {
+        ring.vertexIds.forEach(id => ids.add(id));
+      }
+    });
+  } else if ((feature instanceof DomainLine || feature instanceof DomainPoint) && Array.isArray(feature.vertexIds)) {
+    feature.vertexIds.forEach(id => ids.add(id));
+  }
+  return Array.from(ids);
+}
+
+function computeBoundsFromVertexIds(vertexIds, verticesMap) {
+  if (!vertexIds || vertexIds.length === 0) {
+    return { bounds: null, missing: true };
+  }
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let count = 0;
+  let missing = false;
+
+  vertexIds.forEach(id => {
+    const vertex = verticesMap.get(id);
+    if (!vertex || typeof vertex.x !== 'number' || typeof vertex.y !== 'number') {
+      missing = true;
+      return;
+    }
+    count += 1;
+    minX = Math.min(minX, vertex.x);
+    maxX = Math.max(maxX, vertex.x);
+    minY = Math.min(minY, vertex.y);
+    maxY = Math.max(maxY, vertex.y);
+  });
+
+  if (count === 0) {
+    return { bounds: null, missing: true };
+  }
+
+  return {
+    bounds: { minX, maxX, minY, maxY },
+    missing
+  };
+}
+
+function buildSegmentBounds(start, end) {
+  return {
+    minX: Math.min(start.x, end.x),
+    maxX: Math.max(start.x, end.x),
+    minY: Math.min(start.y, end.y),
+    maxY: Math.max(start.y, end.y)
+  };
 }

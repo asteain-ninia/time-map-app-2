@@ -51,7 +51,11 @@ export class MapView {
     this._clickToleranceSq = 0; // ワールド座標での二乗値 (動的に更新)
     this._renderScheduled = false;
     this._renderPending = false;
+    this._renderPendingMode = 'full';
     this._lastRenderTimestamp = 0;
+    this._lastDragVertexCount = 0;
+    this._lastViewport = null;
+    this._zoomRenderTimeoutId = null;
 
     // サブクラスのインスタンス化
     // InteractionLogic にはクリック許容範囲(二乗)を返す関数とワールド幅取得関数を渡す
@@ -156,18 +160,23 @@ export class MapView {
    * @private
    */
   _onViewModelChanged(type, data) {
+    if (type === 'world' || type === 'features' || type === 'layers') {
+      if (this._interactionLogic && typeof this._interactionLogic.invalidateIndex === 'function') {
+        this._interactionLogic.invalidateIndex();
+      }
+    }
     // 描画が必要な変更の場合、_renderを呼ぶ
     switch (type) {
       case 'world': // worldデータ全体が変更された場合
       case 'features': // 表示地物リストが変更された場合
-      case 'activeFeature': // アクティブ地物が変更された場合
-      case 'selectedVertices': // 選択頂点が変更された場合
-      case 'vertexContextFeature': // 頂点選択コンテキストが変更された場合
-      case 'hoveredFeature': // ホバー地物が変更された場合
-      case 'hoveredVertex': // ホバー頂点が変更された場合
       case 'layers': // レイヤー情報が変更された場合
       case 'projectSettingsChanged': // プロジェクト設定が変更された場合も再描画
         this._requestRender(); // 再描画をトリガー
+        break;
+      case 'activeFeature': // アクティブ地物が変更された場合
+      case 'selectedVertices': // 選択頂点が変更された場合
+      case 'vertexContextFeature': // 頂点選択コンテキストが変更された場合
+        this._requestRender('overlay-full'); // 選択系はオーバーレイのみ更新
         break;
       // 他のタイプのイベントはここでは処理しない
     }
@@ -195,7 +204,7 @@ export class MapView {
         if (this._editingViewModel.getDraggingVerticesInfo().size > 0) {
              this._editingViewModel._resetDraggingState(); // ドラッグ状態リセット
         }
-        this._requestRender(); // 再描画
+        this._requestRender('overlay-full'); // 再描画
         break;
       case 'addingPoints': // 追加中の点変更
       case 'targetPolygon': // 穴/飛び地追加対象ポリゴン変更
@@ -203,12 +212,20 @@ export class MapView {
       case 'targetRingIdForHole': // 穴追加対象リングID変更
       case 'splitLineMode': // 分割線のモード変更
       case 'temporaryElements': // 汎用一時要素変更
-      case 'draggingVertices': // ドラッグ中頂点情報変更
       case 'history': // アンドゥ/リドゥ状態変更
       case 'addingState': // 追加関連状態一括変更
         this._updateActionButtonsVisibility(); // ボタン表示更新
-        this._requestRender(); // 再描画
+        this._requestRender('overlay-full'); // 再描画
         break;
+      case 'draggingVertices': { // ドラッグ中頂点情報変更
+        this._updateActionButtonsVisibility();
+        const draggingCount = this._editingViewModel.getDraggingVerticesInfo().size;
+        const shouldRefreshOverlay = (draggingCount === 0 && this._lastDragVertexCount > 0)
+          || (draggingCount > 0 && this._lastDragVertexCount === 0);
+        this._lastDragVertexCount = draggingCount;
+        this._requestRender(shouldRefreshOverlay ? 'overlay-full' : 'overlay');
+        break;
+      }
       // 他のタイプのイベントはここでは処理しない
     }
     if (
@@ -228,7 +245,25 @@ export class MapView {
    */
   _onViewportChanged(viewport) {
     this._updateClickTolerance(); // クリック許容範囲を再計算
+    const projectSettings = this._viewModel.getProjectSettings();
+    const prev = this._lastViewport;
+    const zoomChanged = !prev || Math.abs(prev.zoom - viewport.zoom) > 1e-6;
+    const canFastUpdate = this._renderer && typeof this._renderer.updateViewport === 'function';
+
+    if (canFastUpdate) {
+      this._renderer.updateViewport(viewport, projectSettings);
+      if (this._rendererHelper && typeof this._rendererHelper.renderSplitOverlayOnly === 'function') {
+        this._rendererHelper.renderSplitOverlayOnly();
+      }
+      if (zoomChanged) {
+        this._scheduleZoomRender();
+      }
+      this._lastViewport = { ...viewport };
+      return;
+    }
+
     this._requestRender(); // 再描画
+    this._lastViewport = { ...viewport };
   }
 
   /** クリック許容範囲を更新 */
@@ -289,9 +324,40 @@ export class MapView {
     return 1000 / clampedFps;
   }
 
-  _requestRender() {
+  _getZoomRenderDelayMs() {
+    return 120;
+  }
+
+  _scheduleZoomRender() {
+    if (this._zoomRenderTimeoutId) {
+      clearTimeout(this._zoomRenderTimeoutId);
+    }
+    const delayMs = this._getZoomRenderDelayMs();
+    if (delayMs <= 0) {
+      this._zoomRenderTimeoutId = null;
+      const viewport = this._viewportManager.getViewport();
+      if (this._renderer && typeof this._renderer.updateZoomScale === 'function') {
+        this._renderer.updateZoomScale(viewport);
+      }
+      return;
+    }
+    this._zoomRenderTimeoutId = setTimeout(() => {
+      this._zoomRenderTimeoutId = null;
+      const viewport = this._viewportManager.getViewport();
+      if (this._renderer && typeof this._renderer.updateZoomScale === 'function') {
+        this._renderer.updateZoomScale(viewport);
+      }
+    }, delayMs);
+  }
+
+  _requestRender(mode = 'full') {
     // 高頻度の描画要求をまとめて、設定FPSの範囲で描画する
     this._renderPending = true;
+    if (mode === 'full') {
+      this._renderPendingMode = 'full';
+    } else if (this._renderPendingMode !== 'full') {
+      this._renderPendingMode = mode;
+    }
     if (this._renderScheduled) {
       return;
     }
@@ -308,8 +374,16 @@ export class MapView {
         return;
       }
       this._renderPending = false;
+      const pendingMode = this._renderPendingMode || 'full';
+      this._renderPendingMode = 'full';
       this._lastRenderTimestamp = timestamp;
-      this._render();
+      if (pendingMode === 'overlay') {
+        this._renderDragOverlay();
+      } else if (pendingMode === 'overlay-full') {
+        this._renderOverlayFull();
+      } else {
+        this._render();
+      }
     };
 
     requestAnimationFrame(tryRender);
@@ -348,6 +422,19 @@ export class MapView {
 
     // 3. UI更新
     this._updateActionButtonsVisibility(); // アクションボタンの表示/非表示
+  }
+
+  _renderDragOverlay() {
+    this._rendererHelper.renderDragPreview();
+  }
+
+  _renderOverlayFull() {
+    this._rendererHelper.clearAllTemporaryDrawings();
+    this._rendererHelper.renderSelection();
+    this._rendererHelper.renderAddingFeaturePreview();
+    this._rendererHelper.renderDragPreview();
+    this._rendererHelper.renderGenericTemporaryElements();
+    this._rendererHelper.renderDistanceMeasurement(this._measurePoints, this._isMeasuringDistance);
   }
 
   /**

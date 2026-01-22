@@ -118,6 +118,120 @@ export class SVGRenderer {
   }
 
   /**
+   * ビューポート関連の描画を更新
+   * @param {Object} viewport - ビューポート情報
+   * @param {Object} projectSettings - プロジェクト設定
+   * @private
+   */
+  _applyViewport(viewport, projectSettings) {
+    if (!viewport) return;
+
+    // SVG要素の viewBox を更新してパン・ズームを反映
+    const viewBoxWidth = viewport.width / viewport.zoom;
+    const viewBoxHeight = viewport.height / viewport.zoom;
+    const viewBoxX = viewport.x - viewBoxWidth / 2;
+    // viewBoxのY座標もY軸下向き正として計算
+    const viewBoxY = -viewport.y - viewBoxHeight / 2; // ワールド座標のYを反転
+
+    this._svg.setAttribute("viewBox", `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
+
+    // 背景を描画 (再生成せず、Transformのみ更新)
+    this._renderBackground(viewport);
+
+    // グリッドを描画 (projectSettingsからグリッド設定を渡す)
+    if (this._options.showGrid && projectSettings && projectSettings.gridInterval) {
+      const gridSettings = {
+        interval: projectSettings.gridInterval,
+        color: projectSettings.gridColor,
+        opacity: projectSettings.gridOpacity
+      };
+      this._renderGrid(viewport, gridSettings);
+    } else {
+      // グリッド非表示または設定がない場合はクリア
+      while (this._gridGroup.firstChild) {
+        this._gridGroup.removeChild(this._gridGroup.firstChild);
+      }
+    }
+  }
+
+  /**
+   * ビューポートのみ更新
+   * @param {Object} viewport - ビューポート情報
+   * @param {Object} projectSettings - プロジェクト設定
+   */
+  updateViewport(viewport, projectSettings) {
+    this._applyViewport(viewport, projectSettings);
+  }
+
+  /**
+   * 既存の描画要素のズーム補正を更新
+   * @param {Object} viewport - ビューポート情報
+   */
+  updateZoomScale(viewport) {
+    if (!viewport || !this._mainGroup) return;
+    const zoom = viewport.zoom;
+    if (!Number.isFinite(zoom) || zoom <= 0) return;
+
+    const targets = this._mainGroup.querySelectorAll(
+      "[data-base-stroke-width],[data-base-radius],[data-base-font-size],[data-anchor-y]"
+    );
+
+    targets.forEach(element => {
+      const tagName = element.tagName ? element.tagName.toLowerCase() : "";
+      const baseStrokeWidth = Number.parseFloat(element.dataset.baseStrokeWidth);
+      const baseRadius = Number.parseFloat(element.dataset.baseRadius);
+      const baseFontSize = Number.parseFloat(element.dataset.baseFontSize);
+
+      if (tagName === "path" && Number.isFinite(baseStrokeWidth)) {
+        element.setAttribute("stroke-width", baseStrokeWidth / zoom);
+        const baseDasharray = element.dataset.baseStrokeDasharray;
+        if (baseDasharray !== undefined) {
+          if (baseDasharray === "") {
+            element.setAttribute("stroke-dasharray", "");
+          } else {
+            const pattern = baseDasharray
+              .split(",")
+              .map(value => {
+                const numberValue = Number.parseFloat(value.trim());
+                if (!Number.isFinite(numberValue)) return value.trim();
+                return String(numberValue / zoom);
+              })
+              .join(",");
+            element.setAttribute("stroke-dasharray", pattern);
+          }
+        }
+      }
+
+      if (tagName === "circle" && Number.isFinite(baseRadius)) {
+        element.setAttribute("r", baseRadius / zoom);
+        if (Number.isFinite(baseStrokeWidth)) {
+          element.setAttribute("stroke-width", baseStrokeWidth / zoom);
+        }
+      }
+
+      if (tagName === "text" && Number.isFinite(baseFontSize)) {
+        const baseFontMin = Number.parseFloat(element.dataset.baseFontMin);
+        const baseFontMax = Number.parseFloat(element.dataset.baseFontMax);
+        let fontSize = baseFontSize / zoom;
+        if (Number.isFinite(baseFontMin) && Number.isFinite(baseFontMax)) {
+          fontSize = Math.max(baseFontMin / zoom, Math.min(baseFontMax / zoom, baseFontSize / zoom));
+        }
+        element.setAttribute("font-size", fontSize);
+
+        const anchorY = Number.parseFloat(element.dataset.anchorY);
+        const baseOffset = Number.parseFloat(element.dataset.baseOffset);
+        if (Number.isFinite(anchorY) && Number.isFinite(baseOffset)) {
+          let offset = baseOffset / zoom;
+          if (Number.isFinite(baseRadius)) {
+            offset = baseRadius / zoom + baseOffset / zoom;
+          }
+          element.setAttribute("y", anchorY - offset);
+        }
+      }
+    });
+  }
+
+  /**
  * 地図を描画
  * @param {Object} world - 世界データ
  * @param {Object} viewport - ビューポート情報 { x, y, zoom, width, height }
@@ -129,37 +243,7 @@ render(world, viewport, currentTime, projectSettings) {
   // console.log('ビューポート情報:', viewport);
   // console.log('プロジェクト設定:', projectSettings);
 
-
-  // SVG要素の viewBox を更新
-  // SVG要素の viewBox を更新して、パン・ズーム機能を実現
-  // viewBoxを使うことで、SVG内の要素の座標変換が自動的に行われる
-  const viewBoxWidth = viewport.width / viewport.zoom;
-  const viewBoxHeight = viewport.height / viewport.zoom;
-  const viewBoxX = viewport.x - viewBoxWidth / 2;
-  // viewBoxのY座標もY軸下向き正として計算
-  const viewBoxY = -viewport.y - viewBoxHeight / 2; // ワールド座標のYを反転
-
-  // viewBox属性を更新
-  this._svg.setAttribute("viewBox", `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
-  // console.log('SVG viewBox 更新:', `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
-
-  // 背景を描画 (再生成せず、Transformのみ更新)
-  this._renderBackground(viewport);
-
-  // グリッドを描画 (projectSettingsからグリッド設定を渡す)
-  if (this._options.showGrid && projectSettings && projectSettings.gridInterval) {
-      const gridSettings = {
-          interval: projectSettings.gridInterval,
-          color: projectSettings.gridColor,
-          opacity: projectSettings.gridOpacity
-      };
-      this._renderGrid(viewport, gridSettings);
-  } else {
-      // グリッド非表示または設定がない場合はクリア
-      while (this._gridGroup.firstChild) {
-        this._gridGroup.removeChild(this._gridGroup.firstChild);
-      }
-  }
+  this._applyViewport(viewport, projectSettings);
 
 
   // 地物を描画
@@ -449,15 +533,19 @@ _renderGrid(viewport, gridSettings) {
         const svgX = this._toScreenX(currentX, viewport); // オフセット適用済みX
         const svgY = -this._toScreenY(vertex.y, viewport); // Y座標反転
 
+        const baseRadius = Number.isFinite(style.radius) ? style.radius : 5;
+        const baseStrokeWidth = Number.isFinite(style.strokeWidth) ? style.strokeWidth : 1;
         // 点を描画
         const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         circle.setAttribute("cx", svgX);
         circle.setAttribute("cy", svgY);
         // 半径を 1/zoom でスケール
-        circle.setAttribute("r", style.radius / viewport.zoom);
+        circle.setAttribute("r", baseRadius / viewport.zoom);
         circle.setAttribute("fill", style.fill);
         circle.setAttribute("stroke", style.stroke);
-        circle.setAttribute("stroke-width", style.strokeWidth / viewport.zoom); // ズームに応じて線幅調整
+        circle.setAttribute("stroke-width", baseStrokeWidth / viewport.zoom); // ズームに応じて線幅調整
+        circle.dataset.baseRadius = String(baseRadius);
+        circle.dataset.baseStrokeWidth = String(baseStrokeWidth);
 
         group.appendChild(circle);
 
@@ -467,7 +555,7 @@ _renderGrid(viewport, gridSettings) {
            // フォントサイズを 1/zoom でスケール
            const fontSize = Math.max(5 / viewport.zoom, Math.min(16 / viewport.zoom, baseFontSize / viewport.zoom));
            // 半径も 1/zoom でスケール
-           const radius = style.radius / viewport.zoom;
+           const radius = baseRadius / viewport.zoom;
            // ラベルをポイントの「上」(SVG座標でYが小さい方)に表示
            const textOffsetY = radius + 2 / viewport.zoom;// ポイントからのオフセット
 
@@ -483,6 +571,12 @@ _renderGrid(viewport, gridSettings) {
           text.textContent = property.name;
            // クリックイベントを透過させる
            text.setAttribute("pointer-events", "none");
+          text.dataset.baseFontSize = String(baseFontSize);
+          text.dataset.baseFontMin = "5";
+          text.dataset.baseFontMax = "16";
+          text.dataset.anchorY = String(svgY);
+          text.dataset.baseOffset = "2";
+          text.dataset.baseRadius = String(baseRadius);
 
            group.appendChild(text);
         }
@@ -543,6 +637,8 @@ _renderGrid(viewport, gridSettings) {
             const pattern = style.strokeDasharray.split(',').map(v => parseFloat(v.trim()) / viewport.zoom).join(',');
             pathElement.setAttribute("stroke-dasharray", pattern);
         }
+        pathElement.dataset.baseStrokeWidth = String(style.strokeWidth);
+        pathElement.dataset.baseStrokeDasharray = style.strokeDasharray || "";
         group.appendChild(pathElement);
 
         // ラベルを描画（オプション）
@@ -576,6 +672,11 @@ _renderGrid(viewport, gridSettings) {
           text.textContent = property.name;
            // クリックイベントを透過させる
            text.setAttribute("pointer-events", "none");
+          text.dataset.baseFontSize = String(baseFontSize);
+          text.dataset.baseFontMin = "5";
+          text.dataset.baseFontMax = "16";
+          text.dataset.anchorY = String(svgY);
+          text.dataset.baseOffset = "5";
           group.appendChild(text);
         }
     }
@@ -690,6 +791,7 @@ _renderGrid(viewport, gridSettings) {
             pathElement.setAttribute("stroke-width", strokeWidth);
             pathElement.setAttribute("fill-opacity", fillOpacity);
             pathElement.setAttribute("fill-rule", "evenodd"); // 穴を正しく描画するためのルール
+            pathElement.dataset.baseStrokeWidth = String(style.strokeWidth);
             group.appendChild(pathElement);
         }
         // ラベル描画（オプション）(このオフセットの中心に対して)
@@ -710,6 +812,9 @@ _renderGrid(viewport, gridSettings) {
                 text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
                 text.textContent = property.name;
                 text.setAttribute("pointer-events", "none");
+                text.dataset.baseFontSize = String(baseFontSize);
+                text.dataset.baseFontMin = "6";
+                text.dataset.baseFontMax = "20";
                 group.appendChild(text);
             }
         }
@@ -813,16 +918,20 @@ toWorldY(svgY, viewport) {
     const svgX = this._toScreenX(x, viewport);
     const svgY = -this._toScreenY(y, viewport); // Y座標反転
 
+    const baseRadius = Number.isFinite(style.radius) ? style.radius : 5;
+    const baseStrokeWidth = Number.isFinite(style.strokeWidth) ? style.strokeWidth : 1;
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     circle.setAttribute("cx", svgX);
     circle.setAttribute("cy", svgY);
     // 半径を 1/zoom でスケール
-    circle.setAttribute("r", (style.radius || 5) / viewport.zoom);
+    circle.setAttribute("r", baseRadius / viewport.zoom);
     circle.setAttribute("fill", style.fill || "#ff0000");
     circle.setAttribute("stroke", style.stroke || "#000000");
-    circle.setAttribute("stroke-width", (style.strokeWidth || 1) / viewport.zoom);
+    circle.setAttribute("stroke-width", baseStrokeWidth / viewport.zoom);
     // クリックイベントを透過させる
     circle.setAttribute("pointer-events", "none");
+    circle.dataset.baseRadius = String(baseRadius);
+    circle.dataset.baseStrokeWidth = String(baseStrokeWidth);
 
     this._mainGroup.appendChild(circle);
     return circle;
@@ -853,13 +962,16 @@ toWorldY(svgY, viewport) {
       line.setAttribute("fill-rule", style.fillRule);
     }
     line.setAttribute("stroke", style.stroke || "#000000");
-    line.setAttribute("stroke-width", (style.strokeWidth || 2) / viewport.zoom);
+    const baseStrokeWidth = Number.isFinite(style.strokeWidth) ? style.strokeWidth : 2;
+    line.setAttribute("stroke-width", baseStrokeWidth / viewport.zoom);
     line.setAttribute("stroke-dasharray", style.strokeDasharray || "");
     // 破線の場合、パターンもズームに合わせて調整（オプション）
     if (style.strokeDasharray) {
         const pattern = style.strokeDasharray.split(',').map(v => parseFloat(v.trim()) / viewport.zoom).join(',');
         line.setAttribute("stroke-dasharray", pattern);
     }
+    line.dataset.baseStrokeWidth = String(baseStrokeWidth);
+    line.dataset.baseStrokeDasharray = style.strokeDasharray || "";
     // クリックイベントを透過させる
     line.setAttribute("pointer-events", "none");
 
@@ -909,6 +1021,8 @@ toWorldY(svgY, viewport) {
     } else {
       pathElement.setAttribute("stroke-dasharray", "");
     }
+    pathElement.dataset.baseStrokeWidth = String(strokeWidth);
+    pathElement.dataset.baseStrokeDasharray = style.strokeDasharray || "";
 
     pathElement.setAttribute("pointer-events", "none");
     this._mainGroup.appendChild(pathElement);
@@ -943,6 +1057,9 @@ toWorldY(svgY, viewport) {
     text.textContent = content;
     // クリックイベントを透過させる
     text.setAttribute("pointer-events", "none");
+    text.dataset.baseFontSize = String(baseFontSize);
+    text.dataset.baseFontMin = "6";
+    text.dataset.baseFontMax = "18";
 
     this._mainGroup.appendChild(text);
     return text;

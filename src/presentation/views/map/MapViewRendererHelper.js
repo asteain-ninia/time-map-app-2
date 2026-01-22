@@ -30,18 +30,59 @@ export class MapViewRendererHelper {
     this._measureElements = []; // 測定描画物
     this._temporaryElements = []; // 汎用一時要素描画物
     this._persistentVertexElements = []; // 常時表示する頂点マーカー
+    this._splitOverlayElements = []; // 分割ツール用のオーバーレイ
+    this._dragPreviewCache = null; // ドラッグプレビューの事前計算キャッシュ
   }
 
   /**
    * 全ての一時描画をクリア
    */
   clearAllTemporaryDrawings() {
+      this.clearSplitOverlay();
       this.clearPersistentVertexMarkers();
       this.clearSelectionHighlights();
       this.clearDragPreviews();
       this.clearAddingFeaturePreview();
       this.clearMeasureElements();
       this.clearGenericTemporaryElements();
+  }
+
+  /** 分割ツール用オーバーレイをクリア */
+  clearSplitOverlay() {
+    this._splitOverlayElements.forEach(el => this._renderer.removeElement(el));
+    this._splitOverlayElements = [];
+  }
+
+  /** 分割ツール用オーバーレイのみ更新 */
+  renderSplitOverlayOnly() {
+    this.clearSplitOverlay();
+    const viewport = this._viewportManager.getViewport();
+    if (!viewport) return;
+    const world = this._viewModel.getWorld();
+    if (!world || !world.vertices) return;
+    const mode = this._editingViewModel.getMode();
+    const tool = this._editingViewModel.getTool();
+    const splitTargetPolygon = this._editingViewModel.getTargetPolygon();
+    if (mode !== 'edit' || tool !== 'split' || !splitTargetPolygon) {
+      return;
+    }
+    const viewBoxWidth = viewport.width / viewport.zoom;
+    const viewBoxHeight = viewport.height / viewport.zoom;
+    const left = viewport.x - viewBoxWidth / 2;
+    const right = viewport.x + viewBoxWidth / 2;
+    const bottom = viewport.y - viewBoxHeight / 2;
+    const top = viewport.y + viewBoxHeight / 2;
+    const overlayLoop = [
+      { x: left, y: bottom },
+      { x: right, y: bottom },
+      { x: right, y: top },
+      { x: left, y: top }
+    ];
+    const overlayElem = this._renderer.drawPolygonLoops([overlayLoop], editingStyles.splitOverlay, viewport);
+    if (overlayElem) {
+      overlayElem.classList.add('temp-drawing', 'selection-highlight');
+      this._splitOverlayElements.push(overlayElem);
+    }
   }
 
   /** 選択ハイライトを描画 */
@@ -63,25 +104,7 @@ export class MapViewRendererHelper {
     const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo(); // Map<string, {originalPosition, currentPosition}>
     const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // {id, x, y} のマップ
 
-    const mode = this._editingViewModel.getMode();
-    const tool = this._editingViewModel.getTool();
-    const splitTargetPolygon = this._editingViewModel.getTargetPolygon();
-    if (mode === 'edit' && tool === 'split' && splitTargetPolygon) {
-      const viewBoxWidth = viewport.width / viewport.zoom;
-      const viewBoxHeight = viewport.height / viewport.zoom;
-      const left = viewport.x - viewBoxWidth / 2;
-      const right = viewport.x + viewBoxWidth / 2;
-      const bottom = viewport.y - viewBoxHeight / 2;
-      const top = viewport.y + viewBoxHeight / 2;
-      const overlayLoop = [
-        { x: left, y: bottom },
-        { x: right, y: bottom },
-        { x: right, y: top },
-        { x: left, y: top }
-      ];
-      const overlayElem = this._renderer.drawPolygonLoops([overlayLoop], editingStyles.splitOverlay, viewport);
-      if (overlayElem) this._selectionElements.push(overlayElem);
-    }
+    this.renderSplitOverlayOnly();
 
     const worldWidth = this._renderer.getWorldWidth();
     const finalOffsets = [0, -worldWidth, worldWidth];
@@ -261,7 +284,10 @@ export class MapViewRendererHelper {
     this.clearDragPreviews();
     const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo();
     const pendingVertexAdditionInfo = this._editingViewModel.getPendingVertexAdditionInfo();
-    if (draggingVerticesInfo.size === 0) return;
+    if (draggingVerticesInfo.size === 0) {
+      this._dragPreviewCache = null;
+      return;
+    }
 
     const world = this._viewModel.getWorld();
     const viewport = this._viewportManager.getViewport();
@@ -293,26 +319,50 @@ export class MapViewRendererHelper {
 
     // 影響を受ける地物の仮形状 (各オフセットで描画)
     const draggedVertexIds = new Set(draggingVerticesInfo.keys());
-    const affectedFeatures = new Map(); // 重複を避けるためにMapを使用
-    
-    // 1. 通常のドラッグ対象の地物を探す
-    world.features.forEach(f => {
-      const isAffected = Array.from(draggedVertexIds).some(draggedId => {
-        const isPolygon = f instanceof DomainPolygon;
-        return (f.vertexIds && f.vertexIds.includes(draggedId)) ||
-               (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(draggedId)));
-      });
-      if (isAffected) {
-        affectedFeatures.set(f.id, f);
-      }
-    });
+    const draggedVertexIdsArray = Array.from(draggedVertexIds);
+    const dragKey = draggedVertexIdsArray.slice().sort().join('|');
+    const pendingKey = pendingVertexAdditionInfo
+      ? `${pendingVertexAdditionInfo.featureId}:${pendingVertexAdditionInfo.ringId || ''}:${pendingVertexAdditionInfo.segmentStartVertexId}:${pendingVertexAdditionInfo.segmentEndVertexId}:${pendingVertexAdditionInfo.newVertexId}`
+      : '';
 
-    // 2. 保留中の線上点追加がある場合、その地物も対象に加える
-    if (pendingVertexAdditionInfo) {
-      const feature = world.features.find(f => f.id === pendingVertexAdditionInfo.featureId);
-      if (feature && !affectedFeatures.has(feature.id)) {
-        affectedFeatures.set(feature.id, feature);
+    let affectedFeatures = null;
+    if (
+      this._dragPreviewCache &&
+      this._dragPreviewCache.world === world &&
+      this._dragPreviewCache.features === world.features &&
+      this._dragPreviewCache.dragKey === dragKey &&
+      this._dragPreviewCache.pendingKey === pendingKey
+    ) {
+      affectedFeatures = this._dragPreviewCache.affectedFeatures;
+    } else {
+      affectedFeatures = new Map(); // 重複を避けるためにMapを使用
+      // 1. 通常のドラッグ対象の地物を探す
+      world.features.forEach(f => {
+        const isAffected = draggedVertexIdsArray.some(draggedId => {
+          const isPolygon = f instanceof DomainPolygon;
+          return (f.vertexIds && f.vertexIds.includes(draggedId)) ||
+                 (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(draggedId)));
+        });
+        if (isAffected) {
+          affectedFeatures.set(f.id, f);
+        }
+      });
+
+      // 2. 保留中の線上点追加がある場合、その地物も対象に加える
+      if (pendingVertexAdditionInfo) {
+        const feature = world.features.find(f => f.id === pendingVertexAdditionInfo.featureId);
+        if (feature && !affectedFeatures.has(feature.id)) {
+          affectedFeatures.set(feature.id, feature);
+        }
       }
+
+      this._dragPreviewCache = {
+        world,
+        features: world.features,
+        dragKey,
+        pendingKey,
+        affectedFeatures
+      };
     }
 
     const getVertexPosWithOffset = (vertexId, offsetX) => {
