@@ -38,6 +38,7 @@ export class ConfigManager {
         darkMode: false,
         sharedVertexSnapPixels: 50,
         renderFps: 60,
+        persistentVertexMarkerLimit: 10000,
         splitCircleRadiusPixels: 40
       },
       

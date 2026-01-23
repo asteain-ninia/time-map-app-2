@@ -96,20 +96,37 @@ export class MapViewRendererHelper {
     const vertexContextFeatureId = this._viewModel.getVertexSelectionContextId();
     const vertexOwnerIds = this._viewModel.getVertexSelectionOwnerIds();
     const visibleFeatures = this._viewModel.getFeatures();
-    const sharedVertexIds = this._collectSharedVertexIds(visibleFeatures);
     const viewport = this._viewportManager.getViewport();
     const world = this._viewModel.getWorld();
     const currentTime = this._viewModel.getCurrentTime();
-    if (!world || !world.vertices) return;
+    if (!world || !world.vertices || !viewport) return;
     const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo(); // Map<string, {originalPosition, currentPosition}>
-    const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // {id, x, y} のマップ
+    const visibleVertexIds = this._collectVisibleVertexIds(visibleFeatures);
 
     this.renderSplitOverlayOnly();
 
-    const worldWidth = this._renderer.getWorldWidth();
-    const finalOffsets = [0, -worldWidth, worldWidth];
+    const shouldRenderPersistentMarkers = this._shouldRenderPersistentVertexMarkers(visibleVertexIds);
+    const hasSelection = selectedFeatureIds.size > 0
+      || selectedVertexIds.size > 0
+      || draggingVerticesInfo.size > 0
+      || Boolean(vertexContextFeatureId)
+      || (vertexOwnerIds && vertexOwnerIds.size > 0);
 
-    this._renderPersistentVertexMarkers(verticesMap, selectedVertexIds, draggingVerticesInfo, sharedVertexIds, viewport, finalOffsets);
+    if (!shouldRenderPersistentMarkers && !hasSelection) {
+      return;
+    }
+
+    const sharedVertexIds = this._collectSharedVertexIds(visibleFeatures);
+    const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // {id, x, y} のマップ
+
+    const worldWidth = this._renderer.getWorldWidth();
+    const finalOffsets = typeof this._renderer.getRenderOffsets === 'function'
+      ? this._renderer.getRenderOffsets(viewport)
+      : [0, -worldWidth, worldWidth];
+
+    if (shouldRenderPersistentMarkers) {
+      this._renderPersistentVertexMarkers(verticesMap, visibleVertexIds, selectedVertexIds, draggingVerticesInfo, sharedVertexIds, viewport, finalOffsets);
+    }
 
     // 通常頂点マーカーのスタイル
     const normalVertexStyle = editingStyles.normalVertex;
@@ -294,8 +311,9 @@ export class MapViewRendererHelper {
     if (!world || !world.vertices) return; // verticesの存在チェック追加
     const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
 
-    const worldWidth = this._renderer.getWorldWidth(); // ワールド幅を取得
-    const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
+    const finalOffsets = typeof this._renderer.getRenderOffsets === 'function'
+      ? this._renderer.getRenderOffsets(viewport)
+      : [0, -this._renderer.getWorldWidth(), this._renderer.getWorldWidth()];
     const snapWorldDistance = this._getSharedVertexSnapDistanceWorld(viewport);
     const sharePreviewVertexIds = typeof this._editingViewModel.getSharePreviewVertexIds === 'function'
       ? this._editingViewModel.getSharePreviewVertexIds({
@@ -515,8 +533,9 @@ export class MapViewRendererHelper {
     if (measurePoints.length === 0) return;
 
     const viewport = this._viewportManager.getViewport();
-    const worldWidth = this._renderer.getWorldWidth();
-    const finalOffsets = [0, -worldWidth, worldWidth];
+    const finalOffsets = typeof this._renderer.getRenderOffsets === 'function'
+      ? this._renderer.getRenderOffsets(viewport)
+      : [0, -this._renderer.getWorldWidth(), this._renderer.getWorldWidth()];
 
     measurePoints.forEach((point, index) => {
         for (const offsetX of finalOffsets) {
@@ -584,21 +603,22 @@ export class MapViewRendererHelper {
   }
 
   /** 持続的な頂点マーカーを描画 */
-  _renderPersistentVertexMarkers(verticesMap, selectedVertexIds, draggingVerticesInfo, sharedVertexIds, viewport, offsets) {
+  _renderPersistentVertexMarkers(verticesMap, visibleVertexIds, selectedVertexIds, draggingVerticesInfo, sharedVertexIds, viewport, offsets) {
     const passiveStyle = editingStyles.persistentVertex || editingStyles.normalVertex;
     const sharedVertexStyle = editingStyles.sharedVertex || passiveStyle;
     const selectedSet = selectedVertexIds instanceof Set ? selectedVertexIds : new Set(selectedVertexIds || []);
     const draggingSet = draggingVerticesInfo instanceof Map ? new Set(draggingVerticesInfo.keys()) : new Set();
-    const features = this._viewModel.getFeatures();
-    if (!features || features.length === 0) return;
+    if (!visibleVertexIds || visibleVertexIds.size === 0) return;
 
-    const drawnVertexIds = new Set();
+    const markerLimit = this._getPersistentVertexMarkerLimit();
+    if (markerLimit <= 0) return;
+    if (Number.isFinite(markerLimit) && visibleVertexIds.size > markerLimit) return;
+
     const addMarker = (vertexId) => {
-      if (!vertexId || drawnVertexIds.has(vertexId)) return;
+      if (!vertexId) return;
       if (selectedSet.has(vertexId) || draggingSet.has(vertexId)) return;
       const vertex = verticesMap.get(vertexId);
       if (!vertex) return;
-      drawnVertexIds.add(vertexId);
       const markerStyle = sharedVertexIds && sharedVertexIds.has(vertexId) ? sharedVertexStyle : passiveStyle;
       for (const offsetX of offsets) {
         const elem = this._renderer.drawPoint(vertex.x + offsetX, vertex.y, markerStyle, viewport);
@@ -609,17 +629,7 @@ export class MapViewRendererHelper {
       }
     };
 
-    for (const feature of features) {
-      if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
-        feature.rings.forEach(ring => {
-          if (Array.isArray(ring.vertexIds)) ring.vertexIds.forEach(addMarker);
-        });
-      } else if (feature instanceof DomainLine && Array.isArray(feature.vertexIds)) {
-        feature.vertexIds.forEach(addMarker);
-      } else if (feature instanceof DomainPoint) {
-        addMarker(feature.vertexId);
-      }
-    }
+    visibleVertexIds.forEach(addMarker);
   }
 
   /** 測定描画物をクリア */
@@ -657,6 +667,46 @@ export class MapViewRendererHelper {
     this._temporaryElements = [];
     // ViewModel側のクリアはViewModelが行う想定
     // this._editingViewModel.clearTemporaryElements();
+  }
+
+  _collectVisibleVertexIds(features) {
+    const ids = new Set();
+    if (!features || features.length === 0) {
+      return ids;
+    }
+    for (const feature of features) {
+      if (!feature) continue;
+      if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
+        feature.rings.forEach(ring => {
+          if (Array.isArray(ring.vertexIds)) ring.vertexIds.forEach(id => ids.add(id));
+        });
+      } else if (feature instanceof DomainLine && Array.isArray(feature.vertexIds)) {
+        feature.vertexIds.forEach(id => ids.add(id));
+      } else if (feature instanceof DomainPoint) {
+        if (feature.vertexId) ids.add(feature.vertexId);
+      }
+    }
+    return ids;
+  }
+
+  _shouldRenderPersistentVertexMarkers(visibleVertexIds) {
+    if (!visibleVertexIds || visibleVertexIds.size === 0) {
+      return false;
+    }
+    const markerLimit = this._getPersistentVertexMarkerLimit();
+    if (markerLimit <= 0) return false;
+    if (!Number.isFinite(markerLimit)) return true;
+    return visibleVertexIds.size <= markerLimit;
+  }
+
+  _getPersistentVertexMarkerLimit() {
+    const rawLimit = this._configManager && typeof this._configManager.get === 'function'
+      ? this._configManager.get('ui.persistentVertexMarkerLimit', 10000)
+      : 10000;
+    if (!Number.isFinite(rawLimit)) {
+      return 10000;
+    }
+    return Math.max(0, rawLimit);
   }
 
   _collectSharedVertexIds(features) {

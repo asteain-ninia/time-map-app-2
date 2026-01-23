@@ -249,6 +249,9 @@ render(world, viewport, currentTime, projectSettings) {
   // 地物を描画
   this._clearFeatures();
 
+  const verticesMap = new Map(world.vertices.map(vertex => [vertex.id, vertex]));
+  const renderOffsets = this.getRenderOffsets(viewport);
+
   // レイヤーを順序でソート
   const sortedLayers = [...world.layers].sort((a, b) => a.order - b.order);
   // console.log('レイヤー数:', sortedLayers.length);
@@ -277,21 +280,21 @@ render(world, viewport, currentTime, projectSettings) {
 
     // 面 → 線 → 点の順で描画
     for (const polygon of polygons) {
-      const element = this._renderPolygon(polygon, layer, world.vertices, currentTime, viewport, projectSettings); // currentTime を渡す
+      const element = this._renderPolygon(polygon, layer, verticesMap, currentTime, viewport, projectSettings, renderOffsets); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
     }
 
     for (const line of lines) {
-      const element = this._renderLine(line, layer, world.vertices, currentTime, viewport); // currentTime を渡す
+      const element = this._renderLine(line, layer, verticesMap, currentTime, viewport, renderOffsets); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
     }
 
     for (const point of points) {
-      const element = this._renderPoint(point, layer, world.vertices, currentTime, viewport); // currentTime を渡す
+      const element = this._renderPoint(point, layer, verticesMap, currentTime, viewport, renderOffsets); // currentTime を渡す
       if (element) {
         layerGroup.appendChild(element);
       }
@@ -484,6 +487,34 @@ _renderGrid(viewport, gridSettings) {
   }
 
   /**
+   * 描画に必要なワールドオフセットを取得
+   * @param {Object} viewport - ビューポート情報
+   * @returns {number[]} オフセット配列
+   */
+  getRenderOffsets(viewport) {
+    const worldWidth = this.getWorldWidth();
+    if (!viewport || !Number.isFinite(worldWidth) || worldWidth <= 0) {
+      return [0];
+    }
+    const viewBoxWidth = viewport.width / viewport.zoom;
+    const left = viewport.x - viewBoxWidth / 2;
+    const right = viewport.x + viewBoxWidth / 2;
+    const baseOffset = Math.round(viewport.x / worldWidth) * worldWidth;
+    const baseMin = baseOffset - worldWidth / 2;
+    const baseMax = baseOffset + worldWidth / 2;
+    const offsets = [baseOffset];
+    const epsilon = 1e-6;
+
+    if (left < baseMin - epsilon) {
+      offsets.unshift(baseOffset - worldWidth);
+    }
+    if (right > baseMax + epsilon) {
+      offsets.push(baseOffset + worldWidth);
+    }
+    return offsets;
+  }
+
+  /**
    * ビューポートのviewBoxパラメータを取得するヘルパー
    * @param {Object} viewport - ビューポート情報
    * @returns {Object} { viewBoxX, viewBoxWidth, viewBoxHeight, viewBoxY }
@@ -506,13 +537,13 @@ _renderGrid(viewport, gridSettings) {
    * @returns {SVGElement | null} SVG要素
    * @private
    */
-  _renderPoint(point, layer, vertices, currentTime, viewport) {
+  _renderPoint(point, layer, verticesMap, currentTime, viewport, renderOffsets) {
     const property = point.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
     if (!property) return null; // 修正: property が null なら描画しない
 
     // 頂点を取得
     const vertexId = point.vertexId;
-    const vertex = vertices.find(v => v.id === vertexId);
+    const vertex = verticesMap.get(vertexId);
     if (!vertex) return null;
 
     // レイヤーに基づいたスタイルを取得
@@ -523,8 +554,9 @@ _renderGrid(viewport, gridSettings) {
     group.setAttribute("class", `point-${point.id}`);
     group.setAttribute("data-id", point.id);
 
-    const worldWidth = this.getWorldWidth();
-    const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
+    const finalOffsets = Array.isArray(renderOffsets) && renderOffsets.length > 0
+      ? renderOffsets
+      : [0];
 
     for (const offsetX of finalOffsets) {
         const currentX = vertex.x + offsetX;
@@ -595,12 +627,12 @@ _renderGrid(viewport, gridSettings) {
    * @returns {SVGElement | null} SVG要素
    * @private
    */
-  _renderLine(line, layer, vertices, currentTime, viewport) {
+  _renderLine(line, layer, verticesMap, currentTime, viewport, renderOffsets) {
     const property = line.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
     if (!property) return null; // 修正: property が null なら描画しない
 
     // 頂点を取得 (元座標)
-    const lineVerticesOriginal = line.vertexIds.map(id => vertices.find(v => v.id === id));
+    const lineVerticesOriginal = line.vertexIds.map(id => verticesMap.get(id));
     if (lineVerticesOriginal.some(v => !v) || lineVerticesOriginal.length < 2) return null;
 
     // レイヤーに基づいたスタイルを取得
@@ -611,8 +643,9 @@ _renderGrid(viewport, gridSettings) {
     group.setAttribute("class", `line-${line.id}`);
     group.setAttribute("data-id", line.id);
 
-    const worldWidth = this.getWorldWidth();
-    const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
+    const finalOffsets = Array.isArray(renderOffsets) && renderOffsets.length > 0
+      ? renderOffsets
+      : [0];
 
     for (const offsetX of finalOffsets) {
         // オフセット適用後の頂点リスト
@@ -693,7 +726,7 @@ _renderGrid(viewport, gridSettings) {
    * @returns {SVGElement | null} SVG要素、または描画できない場合はnull
    * @private
    */
-  _renderPolygon(polygon, layer, vertices, currentTime, viewport, projectSettings) {
+  _renderPolygon(polygon, layer, verticesMap, currentTime, viewport, projectSettings, renderOffsets) {
     const property = polygon.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
     if (!property) return null; // 修正: property が null なら描画しない
 
@@ -719,8 +752,9 @@ _renderGrid(viewport, gridSettings) {
 
     const invertY = true; // Y座標を反転させるフラグ
 
-    const verticesMap = new Map(vertices.map(v => [v.id, v]));
-    const worldWidth = this.getWorldWidth();
+    const finalOffsets = Array.isArray(renderOffsets) && renderOffsets.length > 0
+      ? renderOffsets
+      : [0];
     const childrenByRingId = new Map();
     for (const ring of polygon.rings) {
         childrenByRingId.set(ring.id, []);
@@ -749,8 +783,6 @@ _renderGrid(viewport, gridSettings) {
             resolveMinLabelScreenRatio(projectSettings)
         );
     }
-
-    const finalOffsets = [0, -worldWidth, worldWidth]; // 常に3つのオフセットで描画
 
     for (const offsetX of finalOffsets) {
         const buildSubPath = (ring) => {
