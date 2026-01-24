@@ -261,6 +261,14 @@ export class ProjectSettingsTabView {
         '地図描画の最大更新頻度です。低くすると描画負荷を抑えられます。'
       ));
 
+      const markerLimitRaw = this._configManager.get('ui.persistentVertexMarkerLimit', 10000);
+      const markerLimit = Number.isFinite(markerLimitRaw) ? markerLimitRaw : 10000;
+      appForm.appendChild(createRow(
+        '全頂点マーカー表示上限:',
+        createNumberInput('persistentVertexMarkerLimit', markerLimit, 0, undefined, 1),
+        '上限を超える場合は常時マーカーを省略します（0で常時非表示）。'
+      ));
+
       const appButtonContainer = document.createElement('div');
       appButtonContainer.style.marginTop = '20px';
       appButtonContainer.style.textAlign = 'right';
@@ -374,6 +382,7 @@ export class ProjectSettingsTabView {
     const formData = new FormData(formElement);
     const snapPixels = parseFloat(formData.get('sharedVertexSnapPixels'));
     const renderFps = parseInt(formData.get('renderFps'), 10);
+    const markerLimit = parseInt(formData.get('persistentVertexMarkerLimit'), 10);
 
     if (isNaN(snapPixels) || snapPixels <= 0) {
       alert('共有頂点スナップ距離は正の数値で入力してください。');
@@ -383,9 +392,14 @@ export class ProjectSettingsTabView {
       alert('描画更新頻度は1から60の範囲で入力してください。');
       return;
     }
+    if (isNaN(markerLimit) || markerLimit < 0) {
+      alert('全頂点マーカー表示上限は0以上の数値で入力してください。');
+      return;
+    }
 
     this._configManager.set('ui.sharedVertexSnapPixels', snapPixels);
     this._configManager.set('ui.renderFps', renderFps);
+    this._configManager.set('ui.persistentVertexMarkerLimit', markerLimit);
     alert('アプリ設定を保存しました。');
   }
 
@@ -397,10 +411,13 @@ export class ProjectSettingsTabView {
 
     const defaultSnapPixels = 50;
     const defaultRenderFps = 60;
+    const defaultMarkerLimit = 10000;
     formElement.sharedVertexSnapPixels.value = defaultSnapPixels;
     formElement.renderFps.value = defaultRenderFps;
+    formElement.persistentVertexMarkerLimit.value = defaultMarkerLimit;
     this._configManager.set('ui.sharedVertexSnapPixels', defaultSnapPixels);
     this._configManager.set('ui.renderFps', defaultRenderFps);
+    this._configManager.set('ui.persistentVertexMarkerLimit', defaultMarkerLimit);
     alert('アプリ設定をデフォルト値にリセットしました。');
   }
 
