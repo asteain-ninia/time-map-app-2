@@ -9,6 +9,7 @@ import { Property } from "../../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../../src/domain/entities/Vertex.js";
 import { Point } from "../../../src/domain/entities/Point.js";
+import { buildAnchorDeletionPlan, getAnchorKey } from "../../../src/presentation/views/sidebar/propertyAnchorUtils.js";
 
 const createProperty = (name = "Name") => new Property(new TimePoint(0), name, "", {});
 
@@ -622,6 +623,99 @@ describe("HistoryService integration", () => {
     "WorldUpdated",
     "HistoryChanged"
   ]);
+  });
+
+  it("restores anchor duplicate/delete sequence through undo and redo", async () => {
+    const initialProperty = new Property(
+      new TimePoint(1000),
+      "Origin",
+      "",
+      {},
+      new TimePoint(1000),
+      null
+    );
+    const feature = await ctx.editFeatureUseCase.addFeature(
+      "point",
+      [initialProperty],
+      { vertices: [{ x: 2, y: 2 }] },
+      "layer-0"
+    );
+    const featureId = feature.id;
+
+    const duplicatePayload = {
+      featureId,
+      oldProperties: [],
+      newProperties: []
+    };
+    await ctx.historyService.executeAndRecord(async () => {
+      const worldBefore = await ctx.worldRepository.getWorld();
+      const featureBefore = worldBefore.features.find((item) => item.id === featureId);
+      duplicatePayload.oldProperties = featureBefore.properties.map((property) =>
+        ctx.serializer.serialize(property)
+      );
+
+      const result = await ctx.editFeatureUseCase.updateFeature(featureId, {
+        propertyEdit: {
+          editTime: new TimePoint(1300),
+          startTime: new TimePoint(1300),
+          endTime: null,
+          name: "Future",
+          description: ""
+        }
+      });
+      duplicatePayload.newProperties = result.feature.properties.map((property) =>
+        ctx.serializer.serialize(property)
+      );
+      return { updatedFeature: result.feature };
+    }, "updateProperties", duplicatePayload);
+
+    const deletePayload = {
+      featureId,
+      oldProperties: [],
+      newProperties: []
+    };
+    await ctx.historyService.executeAndRecord(async () => {
+      const worldBefore = await ctx.worldRepository.getWorld();
+      const featureBefore = worldBefore.features.find((item) => item.id === featureId);
+      deletePayload.oldProperties = featureBefore.properties.map((property) =>
+        ctx.serializer.serialize(property)
+      );
+      const deletionPlan = buildAnchorDeletionPlan(
+        featureBefore.properties,
+        getAnchorKey(new TimePoint(1300))
+      );
+      const result = await ctx.editFeatureUseCase.updateFeature(featureId, {
+        properties: deletionPlan.updatedProperties
+      });
+      deletePayload.newProperties = result.feature.properties.map((property) =>
+        ctx.serializer.serialize(property)
+      );
+      return { updatedFeature: result.feature };
+    }, "updateProperties", deletePayload);
+
+    const afterDeleteWorld = await ctx.worldRepository.getWorld();
+    const afterDeleteFeature = afterDeleteWorld.features.find((item) => item.id === featureId);
+    expect(afterDeleteFeature.properties.map((property) => property.startTime.year)).toEqual([1000]);
+
+    await ctx.historyService.undo();
+    const afterUndoDeleteWorld = await ctx.worldRepository.getWorld();
+    const afterUndoDeleteFeature = afterUndoDeleteWorld.features.find((item) => item.id === featureId);
+    expect(afterUndoDeleteFeature.properties.map((property) => property.startTime.year)).toEqual([1000, 1300]);
+
+    await ctx.historyService.undo();
+    const afterUndoDuplicateWorld = await ctx.worldRepository.getWorld();
+    const afterUndoDuplicateFeature = afterUndoDuplicateWorld.features.find((item) => item.id === featureId);
+    expect(afterUndoDuplicateFeature.properties.map((property) => property.startTime.year)).toEqual([1000]);
+
+    await ctx.historyService.redo();
+    const afterRedoDuplicateWorld = await ctx.worldRepository.getWorld();
+    const afterRedoDuplicateFeature = afterRedoDuplicateWorld.features.find((item) => item.id === featureId);
+    expect(afterRedoDuplicateFeature.properties.map((property) => property.startTime.year)).toEqual([1000, 1300]);
+
+    await ctx.historyService.redo();
+    const afterRedoDeleteWorld = await ctx.worldRepository.getWorld();
+    const afterRedoDeleteFeature = afterRedoDeleteWorld.features.find((item) => item.id === featureId);
+    expect(afterRedoDeleteFeature.properties.map((property) => property.startTime.year)).toEqual([1000]);
   });
 
   it("records legacy add entries via addHistoryEntry without throwing", async () => {

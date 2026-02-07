@@ -1,4 +1,10 @@
 // src/presentation/views/sidebar/PropertiesTabView.js
+import {
+  buildAnchorDeletionPlan,
+  getAnchorKey,
+  getPropertyStartAnchor,
+  sortPropertiesByStart
+} from './propertyAnchorUtils.js';
 
 // MapViewModel, EditingViewModel はコンストラクタで受け取る想定
 
@@ -17,6 +23,7 @@ export class PropertiesTabView {
     this._tabContentElement = null;
     this._propertiesContainer = null; // プロパティフォームを保持するコンテナ
     this._timeFieldRefs = {};
+    this._selectedAnchorKeysByFeature = new Map();
 
     this._initializeDOM();
   }
@@ -87,7 +94,7 @@ export class PropertiesTabView {
    * @param {Feature} feature - 選択された地物インスタンス
    * @private
    */
-  _buildPropertyForm(feature) {
+  _buildPropertyForm(feature, selectedPropertyOverride = null) {
     this._timeFieldRefs = {};
 
     // 地物の種類を特定
@@ -110,6 +117,7 @@ export class PropertiesTabView {
     const currentProperty = typeof feature.getPropertyAt === 'function'
       ? feature.getPropertyAt(currentTime)
       : (feature.properties && feature.properties.length > 0 ? feature.properties[0] : null);
+    const sortedProperties = sortPropertiesByStart(feature.properties || []);
 
     if (!currentProperty) {
       const noPropertyMsg = document.createElement('p');
@@ -118,6 +126,8 @@ export class PropertiesTabView {
       return;
     }
 
+    const selectedAnchor = selectedPropertyOverride || this._resolveSelectedAnchor(feature, sortedProperties, currentProperty);
+    this._renderAnchorSection(feature, sortedProperties, selectedAnchor);
 
     const form = document.createElement('form');
     form.addEventListener('submit', e => {
@@ -125,10 +135,10 @@ export class PropertiesTabView {
       this._handleSaveProperties(feature, form);
     });
 
-    // 基本プロパティ (名前, 説明, カテゴリ)
+    // 基本プロパティ (名前, 説明)
     const basicPropsConfig = [
-      { id: 'name', label: '名前', type: 'text', value: currentProperty.name || '' },
-      { id: 'description', label: '説明', type: 'textarea', value: currentProperty.description || '' }
+      { id: 'name', label: '名前', type: 'text', value: selectedAnchor.name || '' },
+      { id: 'description', label: '説明', type: 'textarea', value: selectedAnchor.description || '' }
     ];
 
     basicPropsConfig.forEach(propConfig => {
@@ -160,7 +170,7 @@ export class PropertiesTabView {
 
     // 時間範囲 (存在期間)
     // 存在期間入力
-    this._buildExistenceSection(form, currentProperty);
+    this._buildExistenceSection(form, selectedAnchor);
 
     // ボタン行
     const buttonRow = document.createElement('div');
@@ -182,6 +192,157 @@ export class PropertiesTabView {
     form.appendChild(buttonRow);
 
     this._propertiesContainer.appendChild(form);
+  }
+
+  _resolveSelectedAnchor(feature, sortedProperties, fallbackProperty) {
+    const featureKey = String(feature.id);
+    const selectedKey = this._selectedAnchorKeysByFeature.get(featureKey);
+    const selected = sortedProperties.find(property =>
+      getAnchorKey(getPropertyStartAnchor(property)) === selectedKey
+    );
+    if (selected) {
+      return selected;
+    }
+    const resolved = fallbackProperty || sortedProperties[0] || null;
+    if (resolved) {
+      this._selectedAnchorKeysByFeature.set(featureKey, getAnchorKey(getPropertyStartAnchor(resolved)));
+    } else {
+      this._selectedAnchorKeysByFeature.delete(featureKey);
+    }
+    return resolved;
+  }
+
+  _setSelectedAnchorKey(featureId, anchorKey) {
+    const featureKey = String(featureId);
+    if (anchorKey) {
+      this._selectedAnchorKeysByFeature.set(featureKey, anchorKey);
+    } else {
+      this._selectedAnchorKeysByFeature.delete(featureKey);
+    }
+  }
+
+  _renderAnchorSection(feature, sortedProperties, selectedAnchor) {
+    const section = document.createElement('div');
+    section.style.cssText = 'margin-bottom: 14px; border: 1px solid #ddd; padding: 8px;';
+
+    const title = document.createElement('div');
+    title.textContent = '履歴アンカー';
+    title.style.cssText = 'font-weight: bold; margin-bottom: 6px;';
+    section.appendChild(title);
+
+    const selectedAnchorKey = selectedAnchor ? getAnchorKey(getPropertyStartAnchor(selectedAnchor)) : '';
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;';
+    sortedProperties.forEach(property => {
+      const anchor = getPropertyStartAnchor(property);
+      const anchorKey = getAnchorKey(anchor);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = `${this._formatTimePoint(anchor)}  ${property.name || '名称未設定'}`;
+      button.style.cssText = `
+        text-align: left;
+        border: 1px solid ${anchorKey === selectedAnchorKey ? '#2b6cb0' : '#ccc'};
+        background: ${anchorKey === selectedAnchorKey ? '#ebf8ff' : '#fff'};
+        padding: 4px 6px;
+        cursor: pointer;
+      `;
+      button.addEventListener('click', () => {
+        this._setSelectedAnchorKey(feature.id, anchorKey);
+        this.update();
+      });
+      list.appendChild(button);
+    });
+    section.appendChild(list);
+
+    const actionRow = document.createElement('div');
+    actionRow.style.cssText = 'display: flex; gap: 6px; flex-wrap: wrap;';
+
+    const duplicateButton = document.createElement('button');
+    duplicateButton.type = 'button';
+    duplicateButton.textContent = '現在時刻へ複製';
+    duplicateButton.addEventListener('click', () => this._handleDuplicateAnchorAtCurrentTime(feature, selectedAnchor));
+    actionRow.appendChild(duplicateButton);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.textContent = '選択アンカー削除';
+    deleteButton.disabled = sortedProperties.length <= 1 || !selectedAnchor;
+    deleteButton.addEventListener('click', () => this._handleDeleteAnchor(feature, selectedAnchor));
+    actionRow.appendChild(deleteButton);
+
+    section.appendChild(actionRow);
+    this._propertiesContainer.appendChild(section);
+  }
+
+  async _handleDuplicateAnchorAtCurrentTime(feature, selectedAnchor) {
+    if (!selectedAnchor) {
+      alert('複製する履歴アンカーを選択してください。');
+      return;
+    }
+
+    const editTime = this._mapViewModel.getCurrentTime();
+    const sortedProperties = sortPropertiesByStart(feature.properties || []);
+    const hasExactAnchor = sortedProperties.some(property => {
+      const anchor = getPropertyStartAnchor(property);
+      return anchor && anchor.equals(editTime);
+    });
+    if (hasExactAnchor) {
+      alert('現在時刻には既に履歴アンカーが存在します。');
+      return;
+    }
+
+    try {
+      await this._editingViewModel.updateFeatureProperties(feature.id, {
+        editTime,
+        startTime: editTime,
+        endTime: null,
+        name: selectedAnchor.name,
+        description: selectedAnchor.description
+      });
+      this._setSelectedAnchorKey(feature.id, getAnchorKey(editTime));
+      alert('履歴アンカーを現在時刻へ複製しました。');
+    } catch (error) {
+      console.error('履歴アンカーの複製に失敗しました (PropertiesTabView)', error);
+      alert(`履歴アンカーの複製に失敗: ${error.message}`);
+    }
+  }
+
+  async _handleDeleteAnchor(feature, selectedAnchor) {
+    if (!selectedAnchor) {
+      alert('削除する履歴アンカーを選択してください。');
+      return;
+    }
+
+    const selectedAnchorStart = getPropertyStartAnchor(selectedAnchor);
+    const selectedAnchorLabel = this._formatTimePoint(selectedAnchorStart);
+    if (!window.confirm(`履歴アンカー（${selectedAnchorLabel}）を削除しますか？`)) {
+      return;
+    }
+
+    try {
+      const deletionPlan = buildAnchorDeletionPlan(feature.properties || [], getAnchorKey(selectedAnchorStart));
+      await this._editingViewModel.updateFeatureProperties(feature.id, deletionPlan.updatedProperties);
+      this._setSelectedAnchorKey(feature.id, deletionPlan.nextSelectionKey);
+      alert('履歴アンカーを削除しました。');
+    } catch (error) {
+      console.error('履歴アンカーの削除に失敗しました (PropertiesTabView)', error);
+      alert(`履歴アンカーの削除に失敗: ${error.message}`);
+    }
+  }
+
+  _formatTimePoint(timePoint) {
+    if (!timePoint) {
+      return '時刻未設定';
+    }
+    let label = `${timePoint.year}`;
+    if (timePoint.month !== null && timePoint.month !== undefined) {
+      label += `/${timePoint.month}`;
+      if (timePoint.day !== null && timePoint.day !== undefined) {
+        label += `/${timePoint.day}`;
+      }
+    }
+    return label;
   }
 
   /**
