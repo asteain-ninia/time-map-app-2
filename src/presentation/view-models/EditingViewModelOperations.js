@@ -138,12 +138,28 @@ async function unlinkSharedVertex(vertexId, featureId) {
 /**
  * 地物プロパティを更新
  * @param {string} featureId - 更新する地物のID
- * @param {Property[]} newProperties - 新しいプロパティ配列 (Property インスタンスの配列)
+ * @param {Property[]|Object} propertyUpdate - 新しいプロパティ配列、または時間編集リクエスト
  * @returns {Promise<Object>} 更新された地物インスタンス
  */
-async function updateFeatureProperties(featureId, newProperties) {
-  if (!Array.isArray(newProperties) || newProperties.length === 0 || !newProperties.every(prop => prop instanceof Property)) {
-    throw new Error("Invalid newProperties format. Expected a non-empty array of Property instances.");
+async function updateFeatureProperties(featureId, propertyUpdate) {
+  let updatePayload = null;
+  if (Array.isArray(propertyUpdate)) {
+    if (propertyUpdate.length === 0 || !propertyUpdate.every(prop => prop instanceof Property)) {
+      throw new Error("Invalid newProperties format. Expected a non-empty array of Property instances.");
+    }
+    updatePayload = { properties: propertyUpdate };
+  } else if (propertyUpdate && typeof propertyUpdate === 'object') {
+    updatePayload = {
+      propertyEdit: {
+        editTime: propertyUpdate.editTime,
+        startTime: propertyUpdate.startTime,
+        endTime: propertyUpdate.endTime,
+        name: propertyUpdate.name,
+        description: propertyUpdate.description
+      }
+    };
+  } else {
+    throw new Error("Invalid propertyUpdate format.");
   }
 
   try {
@@ -156,7 +172,7 @@ async function updateFeatureProperties(featureId, newProperties) {
       ? [...featureBefore.properties]
       : [];
 
-    const updateResult = await this._editFeatureUseCase.updateFeature(featureId, { properties: newProperties });
+    const updateResult = await this._editFeatureUseCase.updateFeature(featureId, updatePayload);
     const updatedFeature = updateResult.feature;
     const updatedProperties = Array.isArray(updatedFeature.properties)
       ? updatedFeature.properties
