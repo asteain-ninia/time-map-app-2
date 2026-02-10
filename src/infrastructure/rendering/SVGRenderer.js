@@ -546,8 +546,8 @@ _renderGrid(viewport, gridSettings) {
     const vertex = verticesMap.get(vertexId);
     if (!vertex) return null;
 
-    // レイヤーに基づいたスタイルを取得
-    const style = this._getPointStyle(layer);
+    // 現在時刻で有効な Property からスタイルを取得
+    const style = this._getPointStyle(property);
 
     // グループ要素を作成 (これは地物ごとに1つ)
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -635,8 +635,8 @@ _renderGrid(viewport, gridSettings) {
     const lineVerticesOriginal = line.vertexIds.map(id => verticesMap.get(id));
     if (lineVerticesOriginal.some(v => !v) || lineVerticesOriginal.length < 2) return null;
 
-    // レイヤーに基づいたスタイルを取得
-    const style = this._getLineStyle(layer);
+    // 現在時刻で有効な Property からスタイルを取得
+    const style = this._getLineStyle(property);
 
     // グループ要素を作成 (地物ごとに1つ)
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -741,8 +741,8 @@ _renderGrid(viewport, gridSettings) {
     group.setAttribute("class", `polygon-${polygon.id}`);
     group.setAttribute("data-id", polygon.id);
 
-    // レイヤーに基づいたスタイルを取得
-    const style = this._getPolygonStyle(layer);
+    // 現在時刻で有効な Property からスタイルを取得
+    const style = this._getPolygonStyle(property);
 
     // 共通スタイル
     const fill = style.fill;
@@ -914,8 +914,8 @@ toWorldY(svgY, viewport) {
    * @returns {Object} スタイル情報
    * @private
    */
-  _getPointStyle(layer) {
-    return getPointStyle(this._layerService, layer);
+  _getPointStyle(property) {
+    return getPointStyle(this._layerService, property);
   }
 
   /**
@@ -924,8 +924,8 @@ toWorldY(svgY, viewport) {
    * @returns {Object} スタイル情報
    * @private
    */
-  _getLineStyle(layer) {
-    return getLineStyle(this._layerService, layer);
+  _getLineStyle(property) {
+    return getLineStyle(this._layerService, property);
   }
 
   /**
@@ -934,8 +934,8 @@ toWorldY(svgY, viewport) {
    * @returns {Object} スタイル情報
    * @private
    */
-  _getPolygonStyle(layer) {
-    return getPolygonStyle(this._layerService, layer);
+  _getPolygonStyle(property) {
+    return getPolygonStyle(this._layerService, property);
   }
 
   /**

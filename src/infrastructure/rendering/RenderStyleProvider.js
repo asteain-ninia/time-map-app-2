@@ -1,34 +1,66 @@
 // src/infrastructure/rendering/RenderStyleProvider.js
 
 /**
- * レイヤーサービスが提供するスタイル情報を取得するヘルパー
+ * レンダリングに利用するスタイル情報を取得するヘルパー
+ * 仕様上のスタイル責務は Property.attributes.styleOverrides にあるため、
+ * レイヤー個別設定は参照せず、型ごとの既定値 + styleOverrides で解決する。
  * SVGRenderer から利用されるユーティリティ
  * @param {LayerService} layerService
- * @param {Layer|null} layer
+ * @param {Property|null} property
  * @returns {Object}
  */
-export function getPointStyle(layerService, layer) {
-  return layerService.getLayerStyle(layer, 'point');
+export function getPointStyle(layerService, property) {
+  return resolveFeatureStyle(layerService, property, 'point');
 }
 
 /**
  * 線のスタイルを取得
  * @param {LayerService} layerService
- * @param {Layer|null} layer
+ * @param {Property|null} property
  * @returns {Object}
  */
-export function getLineStyle(layerService, layer) {
-  return layerService.getLayerStyle(layer, 'line');
+export function getLineStyle(layerService, property) {
+  return resolveFeatureStyle(layerService, property, 'line');
 }
 
 /**
  * 面のスタイルを取得
  * @param {LayerService} layerService
- * @param {Layer|null} layer
+ * @param {Property|null} property
  * @returns {Object}
  */
-export function getPolygonStyle(layerService, layer) {
-  return layerService.getLayerStyle(layer, 'polygon');
+export function getPolygonStyle(layerService, property) {
+  return resolveFeatureStyle(layerService, property, 'polygon');
+}
+
+function resolveFeatureStyle(layerService, property, featureType) {
+  const baseStyle = layerService.getLayerStyle(null, featureType);
+  const overrides = readStyleOverrides(property, featureType);
+  if (!overrides) {
+    return baseStyle;
+  }
+  return { ...baseStyle, ...overrides };
+}
+
+function readStyleOverrides(property, featureType) {
+  if (!property || typeof property.getAttribute !== 'function') {
+    return null;
+  }
+  const rawOverrides = property.getAttribute('styleOverrides', null);
+  if (!isPlainObject(rawOverrides)) {
+    return null;
+  }
+
+  const typedOverrides = rawOverrides[featureType];
+  if (isPlainObject(typedOverrides)) {
+    return typedOverrides;
+  }
+
+  return rawOverrides;
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 export const editingStyles = {
