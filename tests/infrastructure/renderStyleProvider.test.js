@@ -95,7 +95,7 @@ describe("RenderStyleProvider", () => {
   });
 
   it("resolves base style without referencing layer-specific style objects", () => {
-    const getLayerStyle = vi.fn((layer, featureType) => ({
+    const getLayerStyle = vi.fn((featureType) => ({
       featureType,
       stroke: "#000000",
       strokeWidth: 3
@@ -105,8 +105,7 @@ describe("RenderStyleProvider", () => {
 
     const style = getLineStyle(layerServiceLike, property);
 
-    expect(getLayerStyle).toHaveBeenCalledWith(null, "line");
+    expect(getLayerStyle).toHaveBeenCalledWith("line");
     expect(style.stroke).toBe("#ff00ff");
   });
 });
-

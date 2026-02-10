@@ -285,7 +285,7 @@ export class JSONSerializer {
    * @private
    */
   _serializeLayer(layer) {
-    const serialized = {
+    return {
       id: layer.id,
       name: layer.name,
       order: layer.order,
@@ -293,10 +293,6 @@ export class JSONSerializer {
       opacity: layer.opacity,
       description: layer.description
     };
-    if (layer.style) {
-      serialized.style = JSON.parse(JSON.stringify(layer.style));
-    }
-    return serialized;
   }
 
   /**
@@ -312,8 +308,7 @@ export class JSONSerializer {
       data.order,
       data.visible !== undefined ? data.visible : true, // visibleのデフォルト値をtrueに
       data.opacity !== undefined ? data.opacity : 1.0,   // opacityのデフォルト値を1.0に
-      data.description || "",
-      data.style || null
+      data.description || ""
     );
   }
 

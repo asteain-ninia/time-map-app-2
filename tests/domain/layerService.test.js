@@ -266,4 +266,31 @@ describe("LayerService", () => {
     const exclusive = service.checkExclusivity(polygon, [polygon], vertices, geometryService);
     expect(exclusive).toBe(false);
   });
+
+  it("returns immutable layer-default styles independent of layer instances", () => {
+    const point = service.getLayerStyle("point");
+    const line = service.getLayerStyle("line");
+    const polygon = service.getLayerStyle("polygon");
+
+    expect(point).toMatchObject({
+      radius: 5,
+      fill: "#3388ff",
+      stroke: "#000000",
+      strokeWidth: 1
+    });
+    expect(line).toMatchObject({
+      stroke: "#3388ff",
+      strokeWidth: 3
+    });
+    expect(polygon).toMatchObject({
+      fill: "#ffcc88",
+      stroke: "#ff8800",
+      strokeWidth: 3,
+      fillOpacity: 0.7
+    });
+
+    point.fill = "#ffffff";
+    const secondRead = service.getLayerStyle("point");
+    expect(secondRead.fill).toBe("#3388ff");
+  });
 });

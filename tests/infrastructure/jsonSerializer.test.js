@@ -115,4 +115,37 @@ describe("JSONSerializer", () => {
     expect(world.metadata.settings.equatorLength).toBe(40000);
     expect(world.metadata.settings.gridInterval).toBe(50);
   });
+
+  it("ignores legacy layer style fields and never serializes layer style", () => {
+    const raw = JSON.stringify({
+      version: "1.2-ringtype",
+      layers: [
+        {
+          id: "layer-legacy",
+          name: "Legacy",
+          order: 0,
+          visible: true,
+          opacity: 0.8,
+          description: "legacy layer",
+          style: {
+            point: { fill: "#ff0000" }
+          }
+        }
+      ],
+      vertices: [],
+      points: [],
+      lines: [],
+      polygons: [],
+      metadata: {}
+    });
+
+    const world = serializer.deserialize(raw);
+    const layer = world.layers[0];
+    expect(layer.id).toBe("layer-legacy");
+    expect("style" in layer).toBe(false);
+    expect(typeof layer.withStyle).toBe("undefined");
+
+    const serialized = JSON.parse(serializer.serialize(world));
+    expect(serialized.layers[0].style).toBeUndefined();
+  });
 });

@@ -34,7 +34,7 @@ export function getPolygonStyle(layerService, property) {
 }
 
 function resolveFeatureStyle(layerService, property, featureType) {
-  const baseStyle = layerService.getLayerStyle(null, featureType);
+  const baseStyle = layerService.getLayerStyle(featureType);
   const overrides = readStyleOverrides(property, featureType);
   if (!overrides) {
     return baseStyle;

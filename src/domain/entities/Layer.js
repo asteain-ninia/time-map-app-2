@@ -1,34 +1,3 @@
-function deepFreeze(obj) {
-  if (!obj || typeof obj !== 'object') {
-    return obj;
-  }
-  Object.getOwnPropertyNames(obj).forEach(prop => {
-    const value = obj[prop];
-    if (value && typeof value === 'object') {
-      deepFreeze(value);
-    }
-  });
-  return Object.freeze(obj);
-}
-
-function cloneStyleConfig(style) {
-  if (!style || typeof style !== 'object') {
-    return null;
-  }
-  const cloned = JSON.parse(JSON.stringify(style));
-  return deepFreeze(cloned);
-}
-
-function areStylesEqual(left, right) {
-  if (left === right) {
-    return true;
-  }
-  if (!left || !right) {
-    return false;
-  }
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 /**
  * レイヤー情報を表すエンティティ
  */
@@ -41,16 +10,14 @@ export class Layer {
    * @param {boolean} visible - 表示/非表示状態
    * @param {number} opacity - 不透明度（0.0～1.0）
    * @param {string} [description=""] - 説明
-   * @param {Object|null} [style=null] - 描画スタイル設定
    */
-  constructor(id, name, order, visible = true, opacity = 1.0, description = "", style = null) {
+  constructor(id, name, order, visible = true, opacity = 1.0, description = "") {
     this._id = id;
     this._name = name;
     this._order = order;
     this._visible = visible;
     this._opacity = opacity;
     this._description = description;
-    this._style = cloneStyleConfig(style);
     Object.freeze(this);
   }
 
@@ -103,20 +70,12 @@ export class Layer {
   }
 
   /**
-   * スタイル設定を取得
-   * @returns {Object|null} スタイル設定
-   */
-  get style() {
-    return this._style;
-  }
-
-  /**
    * 新しい名前で新インスタンスを作成
    * @param {string} name - 新しい名前
    * @returns {Layer} 新しいレイヤーオブジェクト
    */
   withName(name) {
-    return new Layer(this._id, name, this._order, this._visible, this._opacity, this._description, this._style);
+    return new Layer(this._id, name, this._order, this._visible, this._opacity, this._description);
   }
 
   /**
@@ -125,7 +84,7 @@ export class Layer {
    * @returns {Layer} 新しいレイヤーオブジェクト
    */
   withOrder(order) {
-    return new Layer(this._id, this._name, order, this._visible, this._opacity, this._description, this._style);
+    return new Layer(this._id, this._name, order, this._visible, this._opacity, this._description);
   }
 
   /**
@@ -134,7 +93,7 @@ export class Layer {
    * @returns {Layer} 新しいレイヤーオブジェクト
    */
   withVisibility(visible) {
-    return new Layer(this._id, this._name, this._order, visible, this._opacity, this._description, this._style);
+    return new Layer(this._id, this._name, this._order, visible, this._opacity, this._description);
   }
 
   /**
@@ -143,7 +102,7 @@ export class Layer {
    * @returns {Layer} 新しいレイヤーオブジェクト
    */
   withOpacity(opacity) {
-    return new Layer(this._id, this._name, this._order, this._visible, opacity, this._description, this._style);
+    return new Layer(this._id, this._name, this._order, this._visible, opacity, this._description);
   }
 
   /**
@@ -152,16 +111,7 @@ export class Layer {
    * @returns {Layer} 新しいレイヤーオブジェクト
    */
   withDescription(description) {
-    return new Layer(this._id, this._name, this._order, this._visible, this._opacity, description, this._style);
-  }
-
-  /**
-   * 新しいスタイルで新インスタンスを作成
-   * @param {Object|null} style - 新しいスタイル設定
-   * @returns {Layer} 新しいレイヤーオブジェクト
-   */
-  withStyle(style) {
-    return new Layer(this._id, this._name, this._order, this._visible, this._opacity, this._description, style);
+    return new Layer(this._id, this._name, this._order, this._visible, this._opacity, description);
   }
 
   /**
@@ -176,8 +126,7 @@ export class Layer {
            this._order === other.order &&
            this._visible === other.visible &&
            this._opacity === other.opacity &&
-           this._description === other.description &&
-           areStylesEqual(this._style, other.style);
+           this._description === other.description;
   }
 
   /**

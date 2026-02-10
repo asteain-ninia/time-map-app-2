@@ -399,21 +399,13 @@ export class LayerService {
   }
 
   /**
-   * レイヤーと地物種別に紐づく描画スタイルを取得
-   * @param {Layer|null} layer - スタイルを取得するレイヤー
+   * 地物種別に紐づく既定の描画スタイルを取得
    * @param {'point'|'line'|'polygon'} featureType - 地物種別
    * @returns {Object} 描画スタイル
    */
-  getLayerStyle(layer, featureType) {
+  getLayerStyle(featureType) {
     const baseStyle = DEFAULT_LAYER_STYLES[featureType];
-    const resolvedBase = baseStyle ? cloneStyle(baseStyle) : {};
-    const overrides = layer && layer.style && typeof layer.style === 'object'
-      ? layer.style[featureType]
-      : null;
-    if (!overrides || typeof overrides !== 'object') {
-      return resolvedBase;
-    }
-    return { ...resolvedBase, ...overrides };
+    return baseStyle ? cloneStyle(baseStyle) : {};
   }
 }
 
