@@ -238,6 +238,6 @@ export class SidebarView {
   // _updateLayersTab, _updateFeaturesTab, _updatePropertiesTab, _updateProjectSettingsTab
   // _showAddLayerDialog, _showEditLayerDialog, _showDeleteLayerConfirm, _addLayer, etc.
   // _saveFeatureProperties, _showDeleteFeatureConfirm
-  // _filterFeatures, _categorizeFeaturesBy, _getCategoryDisplayName, _getFeatureTypeName, _getCategoriesForFeatureType
+  // _filterFeaturesByText, _groupFeaturesByLayer, _getFeatureTypeName
 
 }
