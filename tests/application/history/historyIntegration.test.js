@@ -754,6 +754,86 @@ describe("HistoryService integration", () => {
     expect(afterRedoDeleteFeature.properties.map((property) => property.startTime.year)).toEqual([1000]);
   });
 
+  it("keeps failed anchor save out of history and undoes only the successful duplicate", async () => {
+    const initialProperty = new Property(
+      new TimePoint(1000),
+      "Origin",
+      "",
+      {},
+      new TimePoint(1000),
+      null
+    );
+    const feature = await ctx.editFeatureUseCase.addFeature(
+      "point",
+      [initialProperty],
+      { vertices: [{ x: 2, y: 2 }] },
+      "layer-0"
+    );
+    const featureId = feature.id;
+
+    const duplicatePayload = {
+      featureId,
+      oldProperties: [],
+      newProperties: []
+    };
+    await ctx.historyService.executeAndRecord(async () => {
+      const worldBefore = await ctx.worldRepository.getWorld();
+      const featureBefore = worldBefore.features.find((item) => item.id === featureId);
+      duplicatePayload.oldProperties = featureBefore.properties.map((property) =>
+        ctx.serializer.serialize(property)
+      );
+
+      const result = await ctx.editFeatureUseCase.updateFeature(featureId, {
+        propertyEdit: {
+          editTime: new TimePoint(1300),
+          startTime: new TimePoint(1300),
+          endTime: null,
+          name: "Future",
+          description: ""
+        }
+      });
+      duplicatePayload.newProperties = result.feature.properties.map((property) =>
+        ctx.serializer.serialize(property)
+      );
+      return { updatedFeature: result.feature };
+    }, "updateProperties", duplicatePayload);
+
+    const afterDuplicateWorld = await ctx.worldRepository.getWorld();
+    const afterDuplicateFeature = afterDuplicateWorld.features.find((item) => item.id === featureId);
+    expect(afterDuplicateFeature.properties.map((property) => property.startTime.year)).toEqual([1000, 1300]);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+
+    ctx.eventBus.events.length = 0;
+    await expect(
+      ctx.historyService.executeAndRecord(async () => {
+        await ctx.editFeatureUseCase.updateFeature(featureId, {
+          propertyEdit: {
+            editTime: new TimePoint(1100),
+            startTime: new TimePoint(1100),
+            endTime: new TimePoint(1400),
+            name: "Invalid",
+            description: ""
+          }
+        });
+      }, "updateProperties", { featureId, oldProperties: [], newProperties: [] })
+    ).rejects.toThrow(/次の歴史の錨/);
+
+    expect(ctx.eventBus.events).toEqual([]);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    const afterFailedSaveWorld = await ctx.worldRepository.getWorld();
+    const afterFailedSaveFeature = afterFailedSaveWorld.features.find((item) => item.id === featureId);
+    expect(afterFailedSaveFeature.properties.map((property) => property.startTime.year)).toEqual([1000, 1300]);
+
+    await ctx.historyService.undo();
+    const worldAfterUndo = await ctx.worldRepository.getWorld();
+    const featureAfterUndo = worldAfterUndo.features.find((item) => item.id === featureId);
+    expect(featureAfterUndo.properties.map((property) => property.startTime.year)).toEqual([1000]);
+    expect(ctx.historyService.canUndo()).toBe(false);
+    expect(ctx.historyService.canRedo()).toBe(true);
+  });
+
   it("records legacy add entries via addHistoryEntry without throwing", async () => {
     const feature = await ctx.editFeatureUseCase.addFeature(
       "point",

@@ -264,6 +264,32 @@ describe('PropertiesTabView anchor UI', () => {
     expect(updatedProperties[1].endTime).toBeNull();
   });
 
+  it('shows save failure message when timeline validation rejects end time', async () => {
+    const feature = createFeature([
+      createProperty(1000, 1300, 'Anchor-1000'),
+      createProperty(1300, null, 'Anchor-1300')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(1100));
+    const editingViewModel = createEditingViewModelMock();
+    editingViewModel.updateFeatureProperties.mockRejectedValueOnce(
+      new Error('存在終了は次の歴史の錨の開始時刻を超えられません。')
+    );
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    const endYearInput = parent.querySelector('input[name="endYear"]');
+    endYearInput.value = '1400';
+
+    const saveButton = getButtonByText(parent, '保存');
+    saveButton.click();
+    await flushAsync();
+
+    expect(editingViewModel.updateFeatureProperties).toHaveBeenCalledTimes(1);
+    expect(alertSpy).toHaveBeenCalledWith(
+      'プロパティの保存に失敗: 存在終了は次の歴史の錨の開始時刻を超えられません。'
+    );
+  });
+
   it('disables anchor delete when only one anchor exists', () => {
     const feature = createFeature([createProperty(1000, null, 'Only-Anchor')]);
     const mapViewModel = createMapViewModel(feature, new TimePoint(1000));

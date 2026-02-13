@@ -100,8 +100,9 @@ export class UpdateFeatureUseCase {
       if (!Array.isArray(updates.properties) || updates.properties.length === 0 || !updates.properties.every(prop => prop instanceof Property)) {
         throw new Error("Invalid properties format for UpdateFeatureUseCase: must be a non-empty array of Property instances. Received:" + JSON.stringify(updates.properties));
       }
+      const normalizedProperties = this._normalizeAndValidatePropertyTimeline(updates.properties);
       if (updatedFeature && typeof updatedFeature.withProperties === 'function') {
-        updatedFeature = updatedFeature.withProperties(updates.properties);
+        updatedFeature = updatedFeature.withProperties(normalizedProperties);
       } else {
         throw new Error(`Invalid feature object or missing withProperties method for ID: ${featureId}`);
       }
@@ -243,12 +244,12 @@ export class UpdateFeatureUseCase {
       }
     }
 
-    const existing = Array.isArray(feature.properties) ? [...feature.properties] : [];
+    let existing = Array.isArray(feature.properties) ? [...feature.properties] : [];
     if (existing.length === 0) {
       throw new Error('編集対象の履歴アンカーが存在しません。');
     }
 
-    existing.sort((left, right) => this._comparePropertyStartAnchors(left, right));
+    existing = this._normalizeAndValidatePropertyTimeline(existing);
 
     const exactAnchorIndex = existing.findIndex(property => {
       const start = this._getPropertyStartAnchor(property);
@@ -305,8 +306,7 @@ export class UpdateFeatureUseCase {
       merged[exactAnchorIndex] = mergedProperty;
     }
 
-    this._assertNoPropertyAnchorCollisions(merged);
-    return merged;
+    return this._normalizeAndValidatePropertyTimeline(merged);
   }
 
   _getPropertyStartAnchor(property) {
@@ -382,9 +382,17 @@ export class UpdateFeatureUseCase {
     return null;
   }
 
-  _assertNoPropertyAnchorCollisions(properties) {
+  _normalizeAndValidatePropertyTimeline(properties) {
+    const sorted = [...properties];
+    sorted.sort((left, right) => this._comparePropertyStartAnchors(left, right));
+
     const seenAnchors = [];
-    for (const property of properties) {
+    for (let index = 0; index < sorted.length; index += 1) {
+      const property = sorted[index];
+      if (!(property instanceof Property)) {
+        throw new Error('履歴アンカーが Property ではありません。');
+      }
+
       const start = this._getPropertyStartAnchor(property);
       if (!(start instanceof TimePoint)) {
         throw new Error('履歴アンカーの開始時刻が不正です。');
@@ -392,8 +400,32 @@ export class UpdateFeatureUseCase {
       if (seenAnchors.some(anchor => anchor.equals(start))) {
         throw new Error('同一時刻の歴史の錨が重複しています。');
       }
+
+      const endTime = property.endTime;
+      if (endTime !== null && endTime !== undefined) {
+        if (!(endTime instanceof TimePoint)) {
+          throw new Error('存在終了は TimePoint で指定してください。');
+        }
+        if (!start.isBefore(endTime)) {
+          throw new Error('存在終了は開始時刻より後に設定してください。');
+        }
+      }
+
+      const nextProperty = sorted[index + 1];
+      if (nextProperty) {
+        const nextStart = this._getPropertyStartAnchor(nextProperty);
+        if (!(nextStart instanceof TimePoint)) {
+          throw new Error('履歴アンカーの開始時刻が不正です。');
+        }
+        if (endTime instanceof TimePoint && nextStart.isBefore(endTime)) {
+          throw new Error('存在終了は次の歴史の錨の開始時刻を超えられません。');
+        }
+      }
+
       seenAnchors.push(start);
     }
+
+    return sorted;
   }
 
   _ensurePolygonPlacementOrRollback(updatedPolygon, world, originalPolygon, originalVerticesSnapshot, featureIndex) {

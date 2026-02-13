@@ -83,6 +83,64 @@ describe("UpdateFeatureUseCase property updates", () => {
     await expect(useCase.execute("point-1", { properties: [] })).rejects.toThrow(/non-empty/);
   });
 
+  it("rejects duplicate anchors in properties array updates", async () => {
+    const initialProperty = createProperty(1, "Initial");
+    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+
+    const duplicateA = createProperty(1000, "A");
+    const duplicateB = createProperty(1000, "B");
+
+    await expect(
+      useCase.execute("point-1", { properties: [duplicateA, duplicateB] })
+    ).rejects.toThrow(/同一時刻の歴史の錨が重複/);
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    expect(world.features[0].properties).toHaveLength(1);
+    expect(world.features[0].properties[0].name).toBe("Initial");
+  });
+
+  it("rejects overlapping ranges in properties array updates", async () => {
+    const initialProperty = createProperty(1, "Initial");
+    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+
+    const past = createPropertyWithEnd(1000, 1500, "Past");
+    const future = createProperty(1300, "Future");
+
+    await expect(
+      useCase.execute("point-1", { properties: [future, past] })
+    ).rejects.toThrow(/次の歴史の錨/);
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    expect(world.features[0].properties[0].name).toBe("Initial");
+  });
+
+  it("rejects end times that are not after anchor start in properties array updates", async () => {
+    const initialProperty = createProperty(1, "Initial");
+    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+
+    const invalidRange = createPropertyWithEnd(1200, 1200, "Invalid");
+
+    await expect(
+      useCase.execute("point-1", { properties: [invalidRange] })
+    ).rejects.toThrow(/開始時刻より後/);
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    expect(world.features[0].properties[0].name).toBe("Initial");
+  });
+
+  it("allows explicit gaps in properties array updates", async () => {
+    const initialProperty = createProperty(1, "Initial");
+    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+
+    const past = createPropertyWithEnd(1000, 1100, "Past");
+    const future = createProperty(1300, "Future");
+
+    const result = await useCase.execute("point-1", { properties: [future, past] });
+
+    expect(result.feature.properties).toHaveLength(2);
+    expect(result.feature.properties[0].startTime.equals(new TimePoint(1000))).toBe(true);
+    expect(result.feature.properties[0].endTime.equals(new TimePoint(1100))).toBe(true);
+    expect(result.feature.properties[1].startTime.equals(new TimePoint(1300))).toBe(true);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
   it("splits an anchor at edit time and preserves the future anchor", async () => {
     const past = createProperty(1000, "Past");
     const future = createProperty(1300, "Future");
