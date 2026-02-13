@@ -407,6 +407,42 @@ describe("HistoryService integration", () => {
     expect(worldAfterDelete.features).toHaveLength(0);
   });
 
+  it("does not record failed operations and keeps undo/redo target unchanged", async () => {
+    await prepareAddCommand("Stable");
+
+    const worldAfterAdd = await ctx.worldRepository.getWorld();
+    expect(worldAfterAdd.features).toHaveLength(1);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+
+    ctx.eventBus.events.length = 0;
+    await expect(
+      ctx.historyService.executeAndRecord(
+        async () => {
+          throw new Error("forced failure");
+        },
+        "updateProperties",
+        { featureId: "missing", oldProperties: [], newProperties: [] }
+      )
+    ).rejects.toThrow("forced failure");
+
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events).toEqual([]);
+
+    await ctx.historyService.undo();
+    const worldAfterUndo = await ctx.worldRepository.getWorld();
+    expect(worldAfterUndo.features).toHaveLength(0);
+    expect(ctx.historyService.canUndo()).toBe(false);
+    expect(ctx.historyService.canRedo()).toBe(true);
+
+    await ctx.historyService.redo();
+    const worldAfterRedo = await ctx.worldRepository.getWorld();
+    expect(worldAfterRedo.features).toHaveLength(1);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+  });
+
   it("updates properties and restores them via undo/redo", async () => {
     const baseProperty = createProperty("PropBase");
     const feature = await ctx.editFeatureUseCase.addFeature(

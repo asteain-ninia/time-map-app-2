@@ -10,6 +10,14 @@ import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 const createProperty = (name = "Polygon") => new Property(new TimePoint(0), name, "", {});
+const createPropertyWithRange = (startYear, endYear, name = "Polygon") => new Property(
+  new TimePoint(startYear),
+  name,
+  "",
+  {},
+  new TimePoint(startYear),
+  endYear === null ? null : new TimePoint(endYear)
+);
 
 const makeWorldRepository = (world) => ({
   getWorld: vi.fn(async () => world),
@@ -97,6 +105,56 @@ describe("Polygon layer validation integration", () => {
     expect(world.vertices).toHaveLength(4);
   });
 
+  it("allows polygon addition when overlap exists only outside active time range", async () => {
+    const layers = [new Layer("layer-base", "Base", 0, true, 1, "")];
+    const world = {
+      layers,
+      vertices: [
+        new Vertex("v1", 0, 0),
+        new Vertex("v2", 10, 0),
+        new Vertex("v3", 10, 10),
+        new Vertex("v4", 0, 10)
+      ],
+      features: [
+        new Polygon("poly-existing", [createPropertyWithRange(1000, 1200, "Existing")], "layer-base", "0", [], [
+          { id: "ring-existing", vertexIds: ["v1", "v2", "v3", "v4"], ringType: "territory", parentId: null }
+        ])
+      ],
+      metadata: {}
+    };
+
+    const worldRepository = makeWorldRepository(world);
+    const processGeometry = makeProcessGeometry();
+    const generateId = (() => {
+      let counter = 0;
+      return (prefix = "feature") => `${prefix}-${++counter}`;
+    })();
+
+    const useCase = new AddFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      generateId,
+      processGeometry,
+      getVerticesFromIds
+    );
+
+    const added = await useCase.execute(
+      "polygon",
+      [createPropertyWithRange(1200, null, "Later")],
+      { vertices: [
+        { x: 5, y: 5 },
+        { x: 15, y: 5 },
+        { x: 15, y: 15 },
+        { x: 5, y: 15 }
+      ] },
+      "layer-base"
+    );
+
+    expect(added.id).toMatch(/^polygon-/);
+    expect(world.features).toHaveLength(2);
+  });
+
   it("rejects moving an upper-layer polygon into a base layer when it overlaps", async () => {
     const layers = [
       new Layer("layer-base", "Base", 0, true, 1, ""),
@@ -150,6 +208,192 @@ describe("Polygon layer validation integration", () => {
     const upperPolygon = world.features.find(feature => feature.id === "poly-upper");
     expect(upperPolygon.layerId).toBe("layer-upper");
     expect(world.vertices).toHaveLength(8);
+  });
+
+  it("rejects property edits that introduce overlap at future anchor times", async () => {
+    const layers = [new Layer("layer-base", "Base", 0, true, 1, "")];
+    const world = {
+      layers,
+      vertices: [
+        new Vertex("a1", 0, 0),
+        new Vertex("a2", 10, 0),
+        new Vertex("a3", 10, 10),
+        new Vertex("a4", 0, 10),
+        new Vertex("b1", 5, 5),
+        new Vertex("b2", 15, 5),
+        new Vertex("b3", 15, 15),
+        new Vertex("b4", 5, 15)
+      ],
+      features: [
+        new Polygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
+          { id: "ring-a", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }
+        ]),
+        new Polygon("poly-b", [createPropertyWithRange(1200, null, "B")], "layer-base", "0", [], [
+          { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
+        ])
+      ],
+      metadata: {}
+    };
+
+    const worldRepository = makeWorldRepository(world);
+    const processGeometry = makeProcessGeometry();
+    const polygonEditService = {
+      removeRingFromPolygon: vi.fn(),
+      updateRingVertices: vi.fn(),
+      addRingToPolygon: vi.fn(),
+      addRingWithId: vi.fn()
+    };
+
+    const useCase = new UpdateFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      processGeometry,
+      getVerticesFromIds,
+      polygonEditService
+    );
+
+    await expect(
+      useCase.execute("poly-a", {
+        propertyEdit: {
+          editTime: new TimePoint(1100),
+          startTime: new TimePoint(1100),
+          endTime: new TimePoint(1300),
+          name: "A-edited",
+          description: ""
+        }
+      })
+    ).rejects.toThrow(/重なっています/);
+
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    const polyAAfter = world.features.find((feature) => feature.id === "poly-a");
+    expect(polyAAfter.properties).toHaveLength(1);
+    expect(polyAAfter.properties[0].startTime.equals(new TimePoint(1000))).toBe(true);
+    expect(polyAAfter.properties[0].endTime.equals(new TimePoint(1200))).toBe(true);
+    expect(polyAAfter.existsAt(new TimePoint(1250))).toBe(false);
+  });
+
+  it("allows property edits that avoid future overlap by ending before the next anchor", async () => {
+    const layers = [new Layer("layer-base", "Base", 0, true, 1, "")];
+    const world = {
+      layers,
+      vertices: [
+        new Vertex("a1", 0, 0),
+        new Vertex("a2", 10, 0),
+        new Vertex("a3", 10, 10),
+        new Vertex("a4", 0, 10),
+        new Vertex("b1", 5, 5),
+        new Vertex("b2", 15, 5),
+        new Vertex("b3", 15, 15),
+        new Vertex("b4", 5, 15)
+      ],
+      features: [
+        new Polygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
+          { id: "ring-a", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }
+        ]),
+        new Polygon("poly-b", [createPropertyWithRange(1200, null, "B")], "layer-base", "0", [], [
+          { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
+        ])
+      ],
+      metadata: {}
+    };
+
+    const worldRepository = makeWorldRepository(world);
+    const processGeometry = makeProcessGeometry();
+    const polygonEditService = {
+      removeRingFromPolygon: vi.fn(),
+      updateRingVertices: vi.fn(),
+      addRingToPolygon: vi.fn(),
+      addRingWithId: vi.fn()
+    };
+
+    const useCase = new UpdateFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      processGeometry,
+      getVerticesFromIds,
+      polygonEditService
+    );
+
+    const result = await useCase.execute("poly-a", {
+      propertyEdit: {
+        editTime: new TimePoint(1100),
+        startTime: new TimePoint(1100),
+        endTime: new TimePoint(1190),
+        name: "A-edited",
+        description: ""
+      }
+    });
+
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+    expect(result.feature.existsAt(new TimePoint(1189))).toBe(true);
+    expect(result.feature.existsAt(new TimePoint(1195))).toBe(false);
+    expect(result.feature.existsAt(new TimePoint(1200))).toBe(false);
+  });
+
+  it("rejects upper-layer polygons that outlive their containing parent in future anchors", async () => {
+    const layers = [
+      new Layer("layer-base", "Base", 0, true, 1, ""),
+      new Layer("layer-upper", "Upper", 1, true, 1, "")
+    ];
+    const world = {
+      layers,
+      vertices: [
+        new Vertex("p1", 0, 0),
+        new Vertex("p2", 20, 0),
+        new Vertex("p3", 20, 20),
+        new Vertex("p4", 0, 20),
+        new Vertex("c1", 5, 5),
+        new Vertex("c2", 10, 5),
+        new Vertex("c3", 10, 10),
+        new Vertex("c4", 5, 10)
+      ],
+      features: [
+        new Polygon("parent", [createPropertyWithRange(1000, 1200, "Parent")], "layer-base", "0", [], [
+          { id: "ring-parent", vertexIds: ["p1", "p2", "p3", "p4"], ringType: "territory", parentId: null }
+        ]),
+        new Polygon("child", [createPropertyWithRange(1000, 1200, "Child")], "layer-upper", "parent", [], [
+          { id: "ring-child", vertexIds: ["c1", "c2", "c3", "c4"], ringType: "territory", parentId: null }
+        ])
+      ],
+      metadata: {}
+    };
+
+    const worldRepository = makeWorldRepository(world);
+    const processGeometry = makeProcessGeometry();
+    const polygonEditService = {
+      removeRingFromPolygon: vi.fn(),
+      updateRingVertices: vi.fn(),
+      addRingToPolygon: vi.fn(),
+      addRingWithId: vi.fn()
+    };
+
+    const useCase = new UpdateFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      processGeometry,
+      getVerticesFromIds,
+      polygonEditService
+    );
+
+    await expect(
+      useCase.execute("child", {
+        propertyEdit: {
+          editTime: new TimePoint(1100),
+          startTime: new TimePoint(1100),
+          endTime: new TimePoint(1300),
+          name: "Child-edited",
+          description: ""
+        }
+      })
+    ).rejects.toThrow(/レイヤー階層|上位レイヤー/);
+
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    const childAfter = world.features.find((feature) => feature.id === "child");
+    expect(childAfter.properties).toHaveLength(1);
+    expect(childAfter.properties[0].endTime.equals(new TimePoint(1200))).toBe(true);
   });
 
   it("allows polygon addition inside another polygon's hole", async () => {
