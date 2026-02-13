@@ -310,10 +310,11 @@ export class MapViewRendererHelper {
     const viewport = this._viewportManager.getViewport();
     if (!world || !world.vertices) return; // verticesの存在チェック追加
     const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+    const worldWidth = this._renderer.getWorldWidth();
 
     const finalOffsets = typeof this._renderer.getRenderOffsets === 'function'
       ? this._renderer.getRenderOffsets(viewport)
-      : [0, -this._renderer.getWorldWidth(), this._renderer.getWorldWidth()];
+      : [0, -worldWidth, worldWidth];
     const snapWorldDistance = this._getSharedVertexSnapDistanceWorld(viewport);
     const sharePreviewVertexIds = typeof this._editingViewModel.getSharePreviewVertexIds === 'function'
       ? this._editingViewModel.getSharePreviewVertexIds({
