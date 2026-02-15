@@ -3,6 +3,7 @@ import { Property } from '../../domain/value-objects/Property.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { DeleteFeatureCommand } from '../../application/services/history/commands/DeleteFeatureCommand.js';
 import { DeleteVerticesCommand } from '../../application/services/history/commands/DeleteVerticesCommand.js';
+import { BatchUpdatePropertiesCommand } from '../../application/services/history/commands/BatchUpdatePropertiesCommand.js';
 import { UpdatePropertiesCommand } from '../../application/services/history/commands/UpdatePropertiesCommand.js';
 import { UnlinkSharedVertexCommand } from '../../application/services/history/commands/UnlinkSharedVertexCommand.js';
 
@@ -155,7 +156,8 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
         startTime: propertyUpdate.startTime,
         endTime: propertyUpdate.endTime,
         name: propertyUpdate.name,
-        description: propertyUpdate.description
+        description: propertyUpdate.description,
+        conflictResolutions: propertyUpdate.conflictResolutions
       }
     };
   } else {
@@ -167,28 +169,59 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
     const world = await worldRepository.getWorld();
     const featureBefore = world.features.find(f => f.id === featureId);
     if (!featureBefore) { throw new Error(`Feature not found: ${featureId}`); }
-    
-    const oldPropertiesInstances = Array.isArray(featureBefore.properties)
-      ? [...featureBefore.properties]
-      : [];
+
+    const oldPropertiesByFeatureId = new Map();
+    (world.features || []).forEach(feature => {
+      if (!feature || feature.id === null || feature.id === undefined) {
+        return;
+      }
+      oldPropertiesByFeatureId.set(
+        feature.id,
+        Array.isArray(feature.properties) ? [...feature.properties] : []
+      );
+    });
 
     const updateResult = await this._editFeatureUseCase.updateFeature(featureId, updatePayload);
     const updatedFeature = updateResult.feature;
-    const updatedProperties = Array.isArray(updatedFeature.properties)
-      ? updatedFeature.properties
-      : [];
+    const updatedFeatures = Array.isArray(updateResult.updatedFeatures) && updateResult.updatedFeatures.length > 0
+      ? updateResult.updatedFeatures
+      : (updatedFeature ? [updatedFeature] : []);
 
-    const payload = {
-      featureId: featureId,
-      oldProperties: oldPropertiesInstances.map(p => this._historyService._serializer.serialize(p)),
-      newProperties: updatedProperties.map(p => this._historyService._serializer.serialize(p))
-    };
+    const updatesPayload = updatedFeatures
+      .filter(feature => feature && feature.id !== null && feature.id !== undefined)
+      .map(feature => {
+        const beforeProps = oldPropertiesByFeatureId.get(feature.id) || [];
+        const afterProps = Array.isArray(feature.properties) ? feature.properties : [];
+        return {
+          featureId: feature.id,
+          oldProperties: beforeProps.map(property => this._historyService._serializer.serialize(property)),
+          newProperties: afterProps.map(property => this._historyService._serializer.serialize(property))
+        };
+      });
 
-    const command = new UpdatePropertiesCommand(payload, this._editFeatureUseCase, this._historyService._serializer, this._historyService._worldRepository);
+    const command = updatesPayload.length > 1
+      ? new BatchUpdatePropertiesCommand(
+          { updates: updatesPayload },
+          this._editFeatureUseCase,
+          this._historyService._serializer,
+          this._historyService._worldRepository
+        )
+      : new UpdatePropertiesCommand(
+          updatesPayload[0] || {
+            featureId,
+            oldProperties: [],
+            newProperties: []
+          },
+          this._editFeatureUseCase,
+          this._historyService._serializer,
+          this._historyService._worldRepository
+        );
     this._historyService._stackManager.pushUndo(command);
     this._historyService._notifyHistoryChanged();
 
-    this._eventBus.publish('FeatureUpdated', { feature: updatedFeature });
+    updatedFeatures.forEach(feature => {
+      this._eventBus.publish('FeatureUpdated', { feature });
+    });
     return updatedFeature;
   } catch (error) {
     console.error('地物プロパティの更新に失敗しました (EditingViewModel)', error);

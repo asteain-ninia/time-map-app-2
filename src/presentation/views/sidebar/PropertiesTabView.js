@@ -5,6 +5,7 @@ import {
   getPropertyStartAnchor,
   sortPropertiesByStart
 } from './propertyAnchorUtils.js';
+import { AnchorConflictResolutionDialog } from './AnchorConflictResolutionDialog.js';
 
 // MapViewModel, EditingViewModel はコンストラクタで受け取る想定
 
@@ -24,6 +25,7 @@ export class PropertiesTabView {
     this._propertiesContainer = null; // プロパティフォームを保持するコンテナ
     this._timeFieldRefs = {};
     this._selectedAnchorKeysByFeature = new Map();
+    this._anchorConflictResolutionDialog = new AnchorConflictResolutionDialog();
 
     this._initializeDOM();
   }
@@ -293,7 +295,7 @@ export class PropertiesTabView {
     }
 
     try {
-      await this._editingViewModel.updateFeatureProperties(feature.id, {
+      await this._updateFeaturePropertiesWithConflictResolution(feature.id, {
         editTime,
         startTime: editTime,
         endTime: null,
@@ -329,6 +331,57 @@ export class PropertiesTabView {
       console.error('履歴アンカーの削除に失敗しました (PropertiesTabView)', error);
       alert(`履歴アンカーの削除に失敗: ${error.message}`);
     }
+  }
+
+  async _updateFeaturePropertiesWithConflictResolution(featureId, payload) {
+    let requestPayload = { ...payload };
+    let retryCount = 0;
+
+    while (retryCount < 4) {
+      try {
+        return await this._editingViewModel.updateFeatureProperties(featureId, requestPayload);
+      } catch (error) {
+        if (!this._isAnchorConflictError(error)) {
+          throw error;
+        }
+
+        const conflicts = Array.isArray(error.conflicts) ? error.conflicts : [];
+        const resolutions = await this._anchorConflictResolutionDialog.show({
+          conflicts,
+          resolveFeatureLabel: id => this._resolveFeatureLabel(id)
+        });
+        if (!resolutions) {
+          throw new Error('競合解決をキャンセルしました。');
+        }
+
+        requestPayload = {
+          ...payload,
+          conflictResolutions: resolutions
+        };
+        retryCount += 1;
+      }
+    }
+
+    throw new Error('競合解決の再試行回数が上限を超えました。');
+  }
+
+  _isAnchorConflictError(error) {
+    return !!(
+      error &&
+      typeof error === 'object' &&
+      error.code === 'FEATURE_ANCHOR_CONFLICTS' &&
+      Array.isArray(error.conflicts)
+    );
+  }
+
+  _resolveFeatureLabel(featureId) {
+    const world = typeof this._mapViewModel.getWorld === 'function'
+      ? this._mapViewModel.getWorld()
+      : null;
+    const feature = world && Array.isArray(world.features)
+      ? world.features.find(candidate => String(candidate?.id) === String(featureId))
+      : null;
+    return this._formatFeatureLabel(feature, String(featureId));
   }
 
   _formatTimePoint(timePoint) {
@@ -381,7 +434,7 @@ export class PropertiesTabView {
     }
 
     try {
-      await this._editingViewModel.updateFeatureProperties(featureId, {
+      await this._updateFeaturePropertiesWithConflictResolution(featureId, {
         editTime,
         startTime: startTp,
         endTime: endTp,

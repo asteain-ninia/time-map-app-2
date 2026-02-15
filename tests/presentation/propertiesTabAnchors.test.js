@@ -290,6 +290,192 @@ describe('PropertiesTabView anchor UI', () => {
     );
   });
 
+  it('retries save with conflict resolutions selected in dialog', async () => {
+    const featureA = new Point('feature-1', ['v1'], [
+      createProperty(1000, 1200, 'A-1000'),
+      createProperty(1200, null, 'A-1200')
+    ], 'layer-1');
+    const featureB = new Point('feature-2', ['v2'], [
+      createProperty(1000, null, 'B-1000')
+    ], 'layer-1');
+    const world = {
+      features: [featureA, featureB],
+      vertices: [
+        { id: 'v1', x: 0, y: 0 },
+        { id: 'v2', x: 1, y: 1 }
+      ],
+      layers: [{ id: 'layer-1', name: 'Layer', order: 0, visible: true, opacity: 1 }]
+    };
+
+    const mapViewModel = {
+      getSelectionContextFeature: () => featureA,
+      getSelectedFeatureIds: () => new Set([featureA.id]),
+      getSelectedVertexIds: () => new Set(),
+      getVertexSelectionOwnerIds: () => new Set(),
+      getCurrentTime: () => new TimePoint(1100),
+      getCalendarConfig: () => ({ monthsPerYear: 12 }),
+      getDaysInMonth: () => 31,
+      createTimePoint: (year, month = null, day = null) => new TimePoint(year, month, day),
+      getFeatures: () => [featureA, featureB],
+      getWorld: () => world
+    };
+
+    const conflictError = new Error('同一レイヤー上の面情報が重なっています。解決方針を指定してください。');
+    conflictError.code = 'FEATURE_ANCHOR_CONFLICTS';
+    conflictError.conflicts = [{
+      id: 'polygon-overlap:feature-1::feature-2:1100:null:null',
+      timeLabel: '1100',
+      featureIdA: 'feature-1',
+      featureIdB: 'feature-2'
+    }];
+    const editingViewModel = {
+      updateFeatureProperties: vi.fn()
+        .mockRejectedValueOnce(conflictError)
+        .mockResolvedValueOnce(featureA),
+      deleteFeature: vi.fn(async () => {})
+    };
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    const endYearInput = parent.querySelector('input[name="endYear"]');
+    endYearInput.value = '1300';
+
+    const saveButton = getButtonByText(parent, '保存');
+    saveButton.click();
+    await flushAsync();
+
+    const dialog = document.querySelector('.anchor-conflict-resolution-dialog');
+    expect(dialog).not.toBeNull();
+    const preferredRadio = dialog.querySelector('input[type="radio"][value="feature-1"]');
+    preferredRadio.click();
+    const applyButton = [...dialog.querySelectorAll('button')]
+      .find(button => button.textContent.includes('解決を適用'));
+    applyButton.click();
+    await flushAsync();
+
+    expect(editingViewModel.updateFeatureProperties).toHaveBeenCalledTimes(2);
+    const secondPayload = editingViewModel.updateFeatureProperties.mock.calls[1][1];
+    expect(secondPayload.conflictResolutions).toEqual({
+      'polygon-overlap:feature-1::feature-2:1100:null:null': { preferFeatureId: 'feature-1' }
+    });
+    expect(alertSpy).toHaveBeenCalledWith('プロパティを保存しました。');
+  });
+
+  it('keeps conflict apply disabled until all conflicts are selected', async () => {
+    const featureA = new Point('feature-1', ['v1'], [createProperty(1000, null, 'A')], 'layer-1');
+    const featureB = new Point('feature-2', ['v2'], [createProperty(1000, null, 'B')], 'layer-1');
+    const featureC = new Point('feature-3', ['v3'], [createProperty(1000, null, 'C')], 'layer-1');
+    const world = {
+      features: [featureA, featureB, featureC],
+      vertices: [
+        { id: 'v1', x: 0, y: 0 },
+        { id: 'v2', x: 1, y: 1 },
+        { id: 'v3', x: 2, y: 2 }
+      ],
+      layers: [{ id: 'layer-1', name: 'Layer', order: 0, visible: true, opacity: 1 }]
+    };
+    const mapViewModel = {
+      getSelectionContextFeature: () => featureA,
+      getSelectedFeatureIds: () => new Set([featureA.id]),
+      getSelectedVertexIds: () => new Set(),
+      getVertexSelectionOwnerIds: () => new Set(),
+      getCurrentTime: () => new TimePoint(1100),
+      getCalendarConfig: () => ({ monthsPerYear: 12 }),
+      getDaysInMonth: () => 31,
+      createTimePoint: (year, month = null, day = null) => new TimePoint(year, month, day),
+      getFeatures: () => [featureA, featureB, featureC],
+      getWorld: () => world
+    };
+    const conflictError = new Error('同一レイヤー上の面情報が重なっています。解決方針を指定してください。');
+    conflictError.code = 'FEATURE_ANCHOR_CONFLICTS';
+    conflictError.conflicts = [
+      { id: 'conflict-1', timeLabel: '1100', featureIdA: 'feature-1', featureIdB: 'feature-2' },
+      { id: 'conflict-2', timeLabel: '1200', featureIdA: 'feature-1', featureIdB: 'feature-3' }
+    ];
+    const editingViewModel = {
+      updateFeatureProperties: vi.fn()
+        .mockRejectedValueOnce(conflictError)
+        .mockResolvedValueOnce(featureA),
+      deleteFeature: vi.fn(async () => {})
+    };
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getButtonByText(parent, '保存').click();
+    await flushAsync();
+
+    const dialog = document.querySelector('.anchor-conflict-resolution-dialog');
+    const applyButton = dialog.querySelector('button[data-action="confirm"]');
+    expect(applyButton.disabled).toBe(true);
+
+    dialog.querySelector('input[name="conflict-conflict-1"][value="feature-1"]').click();
+    expect(applyButton.disabled).toBe(true);
+
+    dialog.querySelector('input[name="conflict-conflict-2"][value="feature-1"]').click();
+    expect(applyButton.disabled).toBe(false);
+
+    applyButton.click();
+    await flushAsync();
+
+    expect(editingViewModel.updateFeatureProperties).toHaveBeenCalledTimes(2);
+    const secondPayload = editingViewModel.updateFeatureProperties.mock.calls[1][1];
+    expect(secondPayload.conflictResolutions).toEqual({
+      'conflict-1': { preferFeatureId: 'feature-1' },
+      'conflict-2': { preferFeatureId: 'feature-1' }
+    });
+  });
+
+  it('cancels conflict dialog without partial save', async () => {
+    const featureA = new Point('feature-1', ['v1'], [createProperty(1000, null, 'A')], 'layer-1');
+    const featureB = new Point('feature-2', ['v2'], [createProperty(1000, null, 'B')], 'layer-1');
+    const world = {
+      features: [featureA, featureB],
+      vertices: [
+        { id: 'v1', x: 0, y: 0 },
+        { id: 'v2', x: 1, y: 1 }
+      ],
+      layers: [{ id: 'layer-1', name: 'Layer', order: 0, visible: true, opacity: 1 }]
+    };
+    const mapViewModel = {
+      getSelectionContextFeature: () => featureA,
+      getSelectedFeatureIds: () => new Set([featureA.id]),
+      getSelectedVertexIds: () => new Set(),
+      getVertexSelectionOwnerIds: () => new Set(),
+      getCurrentTime: () => new TimePoint(1100),
+      getCalendarConfig: () => ({ monthsPerYear: 12 }),
+      getDaysInMonth: () => 31,
+      createTimePoint: (year, month = null, day = null) => new TimePoint(year, month, day),
+      getFeatures: () => [featureA, featureB],
+      getWorld: () => world
+    };
+    const conflictError = new Error('同一レイヤー上の面情報が重なっています。解決方針を指定してください。');
+    conflictError.code = 'FEATURE_ANCHOR_CONFLICTS';
+    conflictError.conflicts = [{
+      id: 'conflict-cancel',
+      timeLabel: '1100',
+      featureIdA: 'feature-1',
+      featureIdB: 'feature-2'
+    }];
+    const editingViewModel = {
+      updateFeatureProperties: vi.fn().mockRejectedValueOnce(conflictError),
+      deleteFeature: vi.fn(async () => {})
+    };
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getButtonByText(parent, '保存').click();
+    await flushAsync();
+
+    const dialog = document.querySelector('.anchor-conflict-resolution-dialog');
+    dialog.querySelector('button[data-action="cancel"]').click();
+    await flushAsync();
+    await flushAsync();
+
+    expect(document.querySelector('.anchor-conflict-resolution-dialog')).toBeNull();
+    expect(editingViewModel.updateFeatureProperties).toHaveBeenCalledTimes(1);
+    expect(alertSpy).toHaveBeenCalledWith('プロパティの保存に失敗: 競合解決をキャンセルしました。');
+  });
+
   it('disables anchor delete when only one anchor exists', () => {
     const feature = createFeature([createProperty(1000, null, 'Only-Anchor')]);
     const mapViewModel = createMapViewModel(feature, new TimePoint(1000));

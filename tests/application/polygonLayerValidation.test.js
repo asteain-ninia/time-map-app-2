@@ -332,6 +332,151 @@ describe("Polygon layer validation integration", () => {
     expect(result.feature.existsAt(new TimePoint(1200))).toBe(false);
   });
 
+  it("returns conflict details when property edit introduces overlap without resolutions", async () => {
+    const layers = [new Layer("layer-base", "Base", 0, true, 1, "")];
+    const world = {
+      layers,
+      vertices: [
+        new Vertex("a1", 0, 0),
+        new Vertex("a2", 10, 0),
+        new Vertex("a3", 10, 10),
+        new Vertex("a4", 0, 10),
+        new Vertex("b1", 5, 5),
+        new Vertex("b2", 15, 5),
+        new Vertex("b3", 15, 15),
+        new Vertex("b4", 5, 15)
+      ],
+      features: [
+        new Polygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
+          { id: "ring-a", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }
+        ]),
+        new Polygon("poly-b", [createPropertyWithRange(900, null, "B")], "layer-base", "0", [], [
+          { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
+        ])
+      ],
+      metadata: {}
+    };
+
+    const worldRepository = makeWorldRepository(world);
+    const processGeometry = makeProcessGeometry();
+    const polygonEditService = {
+      removeRingFromPolygon: vi.fn(),
+      updateRingVertices: vi.fn(),
+      addRingToPolygon: vi.fn(),
+      addRingWithId: vi.fn()
+    };
+
+    const useCase = new UpdateFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      processGeometry,
+      getVerticesFromIds,
+      polygonEditService
+    );
+
+    try {
+      await useCase.execute("poly-a", {
+        propertyEdit: {
+          editTime: new TimePoint(1100),
+          startTime: new TimePoint(1100),
+          endTime: new TimePoint(1300),
+          name: "A-edited",
+          description: ""
+        }
+      });
+      throw new Error("Expected conflict error");
+    } catch (error) {
+      expect(error.code).toBe("FEATURE_ANCHOR_CONFLICTS");
+      expect(Array.isArray(error.conflicts)).toBe(true);
+      expect(error.conflicts.length).toBeGreaterThan(0);
+      expect(error.conflicts[0].featureIdA).toBe("poly-a");
+      expect(error.conflicts[0].featureIdB).toBe("poly-b");
+    }
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
+  it("applies provided conflict resolutions and updates the losing polygon timeline", async () => {
+    const layers = [new Layer("layer-base", "Base", 0, true, 1, "")];
+    const world = {
+      layers,
+      vertices: [
+        new Vertex("a1", 0, 0),
+        new Vertex("a2", 10, 0),
+        new Vertex("a3", 10, 10),
+        new Vertex("a4", 0, 10),
+        new Vertex("b1", 5, 5),
+        new Vertex("b2", 15, 5),
+        new Vertex("b3", 15, 15),
+        new Vertex("b4", 5, 15)
+      ],
+      features: [
+        new Polygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
+          { id: "ring-a", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }
+        ]),
+        new Polygon("poly-b", [createPropertyWithRange(900, null, "B")], "layer-base", "0", [], [
+          { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
+        ])
+      ],
+      metadata: {}
+    };
+
+    const worldRepository = makeWorldRepository(world);
+    const processGeometry = makeProcessGeometry();
+    const polygonEditService = {
+      removeRingFromPolygon: vi.fn(),
+      updateRingVertices: vi.fn(),
+      addRingToPolygon: vi.fn(),
+      addRingWithId: vi.fn()
+    };
+
+    const useCase = new UpdateFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      processGeometry,
+      getVerticesFromIds,
+      polygonEditService
+    );
+
+    let conflictId = "";
+    try {
+      await useCase.execute("poly-a", {
+        propertyEdit: {
+          editTime: new TimePoint(1100),
+          startTime: new TimePoint(1100),
+          endTime: new TimePoint(1300),
+          name: "A-edited",
+          description: ""
+        }
+      });
+      throw new Error("Expected conflict error");
+    } catch (error) {
+      conflictId = error.conflicts[0].id;
+    }
+
+    const result = await useCase.execute("poly-a", {
+      propertyEdit: {
+        editTime: new TimePoint(1100),
+        startTime: new TimePoint(1100),
+        endTime: new TimePoint(1300),
+        name: "A-edited",
+        description: "",
+        conflictResolutions: {
+          [conflictId]: { preferFeatureId: "poly-a" }
+        }
+      }
+    });
+
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+    expect(result.feature.existsAt(new TimePoint(1250))).toBe(true);
+    const polyBAfter = world.features.find(feature => feature.id === "poly-b");
+    expect(polyBAfter.existsAt(new TimePoint(1200))).toBe(false);
+    expect(polyBAfter.properties[0].endTime.equals(new TimePoint(1000))).toBe(true);
+    const updatedIds = (result.updatedFeatures || []).map(feature => feature.id).sort();
+    expect(updatedIds).toEqual(["poly-a", "poly-b"]);
+  });
+
   it("rejects upper-layer polygons that outlive their containing parent in future anchors", async () => {
     const layers = [
       new Layer("layer-base", "Base", 0, true, 1, ""),

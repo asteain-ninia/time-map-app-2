@@ -101,7 +101,7 @@ export class MapViewEventHandler {
     this._mapView.hideContextMenu();
     const targetElement = event.target;
     // ダイアログ上のイベントは無視
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog, .anchor-conflict-resolution-dialog')) return;
 
     // 中ボタンクリックで視点移動を開始
     if (event.button === 1) {
@@ -221,7 +221,7 @@ export class MapViewEventHandler {
   /** マウス移動 */
   handleMouseMove(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog, .anchor-conflict-resolution-dialog')) return;
 
     const pageX = event.clientX;
     const pageY = event.clientY;
@@ -284,7 +284,7 @@ export class MapViewEventHandler {
   /** マウスアップ */
   handleMouseUp(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog, .anchor-conflict-resolution-dialog')) return;
 
     // 中ボタンのドラッグ終了
     if (event.button === 1) {
@@ -379,7 +379,7 @@ export class MapViewEventHandler {
   /** ホイール */
   handleWheel(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog, .anchor-conflict-resolution-dialog')) return;
     event.preventDefault(); // デフォルトのスクロール動作をキャンセル
     const delta = -event.deltaY; // ホイールの方向（上方向が正）
     const zoomFactor = delta > 0 ? 0.1 : -0.1; // 10%ずつズーム
@@ -395,7 +395,7 @@ export class MapViewEventHandler {
   /** ダブルクリック */
   handleDoubleClick(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog, .anchor-conflict-resolution-dialog')) return;
 
     const pageX = event.clientX;
     const pageY = event.clientY;
@@ -423,7 +423,7 @@ export class MapViewEventHandler {
   /** コンテキストメニュー */
   handleContextMenu(event) {
     const targetElement = event.target;
-    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog')) return;
+    if (targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form') || targetElement.closest('.conflict-resolution-dialog, .anchor-conflict-resolution-dialog')) return;
     event.preventDefault(); // デフォルトのコンテキストメニューを抑制
     this._mapView.hideContextMenu();
 
@@ -457,7 +457,7 @@ export class MapViewEventHandler {
       return;
     }
     const targetElement = event.target;
-    const conflictDialog = targetElement.closest('.conflict-resolution-dialog');
+    const conflictDialog = targetElement.closest('.conflict-resolution-dialog, .anchor-conflict-resolution-dialog');
     const isInInputDialog = targetElement.closest('.property-input-dialog') || targetElement.closest('.layer-input-form');
     if (conflictDialog) {
         if (event.key === 'Enter') {

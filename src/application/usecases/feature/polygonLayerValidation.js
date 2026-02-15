@@ -55,6 +55,79 @@ function formatTimePoint(timePoint) {
   return `${timePoint.year}/${timePoint.month}/${timePoint.day}`;
 }
 
+function toTimeKey(timePoint) {
+  if (!(timePoint instanceof TimePoint)) {
+    return 'unknown';
+  }
+  return `${timePoint.year}:${timePoint.month ?? 'null'}:${timePoint.day ?? 'null'}`;
+}
+
+function toPairKey(featureIdA, featureIdB) {
+  return [String(featureIdA), String(featureIdB)].sort().join('::');
+}
+
+export function collectPolygonExclusivityConflicts(polygon, world, layerService, geometryService) {
+  if (!(polygon instanceof Polygon)) {
+    return [];
+  }
+
+  const worldPolygons = world.features.filter(feature => feature instanceof Polygon);
+  const hasExisting = worldPolygons.some(existing => existing.id === polygon.id);
+  const candidatePolygons = hasExisting
+    ? worldPolygons.map(existing => (existing.id === polygon.id ? polygon : existing))
+    : [...worldPolygons, polygon];
+
+  const validationTimes = collectValidationTimePoints(candidatePolygons);
+  const conflictsByPair = new Map();
+
+  for (const timePoint of validationTimes) {
+    if (!polygon.existsAt(timePoint)) {
+      continue;
+    }
+
+    const activePolygons = candidatePolygons.filter(candidate => candidate.existsAt(timePoint));
+    const sameLayerPolygons = activePolygons.filter(candidate => candidate.layerId === polygon.layerId);
+
+    if (!layerService.checkExclusivity(polygon, [polygon], world.vertices, geometryService)) {
+      throw new Error(
+        `ポリゴン ${polygon.id} の形状が不正です。競合解決前に形状を修正してください。 (時刻: ${formatTimePoint(timePoint)})`
+      );
+    }
+
+    for (const otherPolygon of sameLayerPolygons) {
+      if (otherPolygon.id === polygon.id) {
+        continue;
+      }
+      const isExclusive = layerService.checkExclusivity(
+        polygon,
+        [polygon, otherPolygon],
+        world.vertices,
+        geometryService
+      );
+      if (isExclusive) {
+        continue;
+      }
+
+      const pairKey = toPairKey(polygon.id, otherPolygon.id);
+      if (conflictsByPair.has(pairKey)) {
+        continue;
+      }
+
+      conflictsByPair.set(pairKey, {
+        id: `polygon-overlap:${pairKey}:${toTimeKey(timePoint)}`,
+        type: 'polygon_overlap',
+        timePoint,
+        timeLabel: formatTimePoint(timePoint),
+        layerId: polygon.layerId,
+        featureIdA: polygon.id,
+        featureIdB: otherPolygon.id
+      });
+    }
+  }
+
+  return [...conflictsByPair.values()];
+}
+
 /**
  * ポリゴンがレイヤー/階層ルールを満たしているか検証する。
  * @param {Polygon} polygon

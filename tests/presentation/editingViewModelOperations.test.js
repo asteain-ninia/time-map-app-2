@@ -3,11 +3,12 @@ import { operationMethods } from "../../src/presentation/view-models/EditingView
 import { Point } from "../../src/domain/entities/Point.js";
 import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
+import { BatchUpdatePropertiesCommand } from "../../src/application/services/history/commands/BatchUpdatePropertiesCommand.js";
 
 const createProperty = (year, name) =>
   new Property(new TimePoint(year), name, "", {}, new TimePoint(year), null);
 
-const buildContext = ({ world, updatedFeature, updateError = null }) => {
+const buildContext = ({ world, updatedFeature, updatedFeatures = null, updateError = null }) => {
   const worldRepository = {
     getWorld: vi.fn(async () => world)
   };
@@ -18,7 +19,10 @@ const buildContext = ({ world, updatedFeature, updateError = null }) => {
       ? vi.fn(async () => {
           throw updateError;
         })
-      : vi.fn(async () => ({ feature: updatedFeature }))
+      : vi.fn(async () => ({
+          feature: updatedFeature,
+          updatedFeatures: updatedFeatures || undefined
+        }))
   };
 
   const serializer = {
@@ -26,7 +30,19 @@ const buildContext = ({ world, updatedFeature, updateError = null }) => {
       name: value?.name ?? "",
       startYear: value?.startTime?.year ?? null,
       endYear: value?.endTime?.year ?? null
-    }))
+    })),
+    deserialize: vi.fn((value) =>
+      new Property(
+        new TimePoint(value?.startYear ?? 0),
+        value?.name ?? "",
+        "",
+        {},
+        new TimePoint(value?.startYear ?? 0),
+        value?.endYear === null || value?.endYear === undefined
+          ? null
+          : new TimePoint(value.endYear)
+      )
+    )
   };
 
   const historyService = {
@@ -114,5 +130,61 @@ describe("EditingViewModelOperations.updateFeatureProperties", () => {
     expect(historyService._notifyHistoryChanged).not.toHaveBeenCalled();
     expect(eventBus.publish).toHaveBeenCalledWith("WorldUpdated");
     expect(eventBus.publish).not.toHaveBeenCalledWith("FeatureUpdated", expect.anything());
+  });
+
+  it("records one batch history command when multiple features are updated", async () => {
+    const beforeFeatureA = new Point("point-a", ["v1"], [createProperty(1000, "A-before")], "layer-1");
+    const beforeFeatureB = new Point("point-b", ["v2"], [createProperty(1000, "B-before")], "layer-1");
+    const afterFeatureA = new Point("point-a", ["v1"], [createProperty(1200, "A-after")], "layer-1");
+    const afterFeatureB = new Point("point-b", ["v2"], [createProperty(1200, "B-after")], "layer-1");
+    const world = {
+      features: [beforeFeatureA, beforeFeatureB],
+      vertices: [
+        { id: "v1", x: 0, y: 0 },
+        { id: "v2", x: 1, y: 1 }
+      ],
+      layers: [{ id: "layer-1", order: 0 }],
+      metadata: {}
+    };
+    const { context, editFeatureUseCase, historyService, eventBus } = buildContext({
+      world,
+      updatedFeature: afterFeatureA,
+      updatedFeatures: [afterFeatureA, afterFeatureB]
+    });
+
+    const result = await operationMethods.updateFeatureProperties.call(context, "point-a", {
+      editTime: new TimePoint(1200),
+      startTime: new TimePoint(1200),
+      endTime: null,
+      name: "A-after",
+      description: "",
+      conflictResolutions: {
+        "polygon-overlap:point-a::point-b:1200:null:null": { preferFeatureId: "point-a" }
+      }
+    });
+
+    expect(result).toBe(afterFeatureA);
+    expect(editFeatureUseCase.updateFeature).toHaveBeenCalledTimes(1);
+    expect(editFeatureUseCase.updateFeature).toHaveBeenCalledWith("point-a", {
+      propertyEdit: expect.objectContaining({
+        conflictResolutions: {
+          "polygon-overlap:point-a::point-b:1200:null:null": { preferFeatureId: "point-a" }
+        }
+      })
+    });
+    expect(historyService._stackManager.pushUndo).toHaveBeenCalledTimes(1);
+    const pushedCommand = historyService._stackManager.pushUndo.mock.calls[0][0];
+    expect(pushedCommand).toBeInstanceOf(BatchUpdatePropertiesCommand);
+    await pushedCommand.reverse();
+    expect(editFeatureUseCase.updateFeature).toHaveBeenCalledTimes(3);
+    expect(editFeatureUseCase.updateFeature).toHaveBeenNthCalledWith(2, "point-b", {
+      properties: [expect.objectContaining({ name: "B-before" })]
+    });
+    expect(editFeatureUseCase.updateFeature).toHaveBeenNthCalledWith(3, "point-a", {
+      properties: [expect.objectContaining({ name: "A-before" })]
+    });
+    expect(historyService._notifyHistoryChanged).toHaveBeenCalledTimes(1);
+    expect(eventBus.publish).toHaveBeenCalledWith("FeatureUpdated", { feature: afterFeatureA });
+    expect(eventBus.publish).toHaveBeenCalledWith("FeatureUpdated", { feature: afterFeatureB });
   });
 });
