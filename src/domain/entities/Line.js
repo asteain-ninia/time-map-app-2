@@ -1,4 +1,39 @@
 import { Feature } from './Feature.js';
+import { FeatureAnchor } from '../value-objects/FeatureAnchor.js';
+
+function buildLineShape(vertexIds) {
+  return { type: 'LineString', vertexIds: [...vertexIds] };
+}
+
+function buildLinePlacement(layerId) {
+  return { layerId };
+}
+
+function ensureLineAnchors(id, vertexIds, properties, layerId, anchors) {
+  if (Array.isArray(anchors) && anchors.length > 0) {
+    return anchors.map(anchor => {
+      if (!(anchor instanceof FeatureAnchor)) {
+        return anchor;
+      }
+      const shape = anchor.shape?.type === 'LineString' && Array.isArray(anchor.shape?.vertexIds)
+        ? anchor.shape
+        : buildLineShape(vertexIds);
+      const placement = {
+        ...(anchor.placement || {}),
+        layerId: typeof anchor.placement?.layerId === 'string' ? anchor.placement.layerId : layerId
+      };
+      return anchor.withShape(shape).withPlacement(placement);
+    });
+  }
+
+  const normalized = Feature._normalizeProperties(id, properties);
+  return normalized.map((property, index) => FeatureAnchor.fromProperty(
+    property,
+    buildLineShape(vertexIds),
+    buildLinePlacement(layerId),
+    `anchor-${id}-${index + 1}`
+  ));
+}
 /**
  * 線情報を表すエンティティ
  */
@@ -9,14 +44,22 @@ export class Line extends Feature {
    * @param {string[]} vertexIds - 頂点IDの配列（順序付き）
    * @param {Property[]} properties - 時間依存プロパティの配列
    * @param {string} layerId - 所属レイヤーID
+   * @param {FeatureAnchor[]|null|undefined} anchors - 履歴アンカー正準データ
    */
-  constructor(id, vertexIds, properties, layerId) {
-    super(id, vertexIds, properties, layerId);
-    
+  constructor(id, vertexIds, properties, layerId, anchors = null) {
     // 線情報は少なくとも2つの頂点を持つべき
     if (vertexIds.length < 2) {
       throw new Error('Line must have at least two vertices');
     }
+
+    const preparedAnchors = ensureLineAnchors(
+      id,
+      vertexIds,
+      properties,
+      layerId,
+      anchors
+    );
+    super(id, vertexIds, properties, layerId, preparedAnchors);
   }
 
   /**
@@ -38,7 +81,14 @@ export class Line extends Feature {
    */
   withProperties(properties) {
     const normalized = Feature._normalizeProperties(this._id, properties);
-    return new Line(this._id, this._vertexIds, normalized, this._layerId);
+    const nextAnchors = Feature._syncAnchorsWithProperties(
+      this._id,
+      this._anchors,
+      normalized,
+      buildLineShape(this._vertexIds),
+      buildLinePlacement(this._layerId)
+    );
+    return new Line(this._id, this._vertexIds, normalized, this._layerId, nextAnchors);
   }
 
   /**
@@ -47,7 +97,13 @@ export class Line extends Feature {
    * @returns {Line} 新しい線情報オブジェクト
    */
   withLayerId(layerId) {
-    return new Line(this._id, this._vertexIds, this._properties, layerId);
+    const nextAnchors = this._anchors.length > 0
+      ? this._anchors.map(anchor => anchor.withPlacement({
+        ...(anchor.placement || {}),
+        layerId
+      }))
+      : null;
+    return new Line(this._id, this._vertexIds, this._properties, layerId, nextAnchors);
   }
 
   /**
@@ -59,7 +115,23 @@ export class Line extends Feature {
     if (!Array.isArray(vertexIds) || vertexIds.length < 2) {
       throw new Error('Line.withVertexIds expects an array with at least two vertexIds.');
     }
-    return new Line(this._id, vertexIds, this._properties, this._layerId);
+    const nextAnchors = this._anchors.length > 0
+      ? this._anchors.map(anchor => anchor.withShape(buildLineShape(vertexIds)))
+      : null;
+    return new Line(this._id, vertexIds, this._properties, this._layerId, nextAnchors);
+  }
+
+  /**
+   * 指定時刻で有効な頂点ID列を取得
+   * @param {TimePoint|null|undefined} timePoint
+   * @returns {string[]}
+   */
+  getVertexIdsAt(timePoint) {
+    const anchor = this.getAnchorAt(timePoint);
+    if (anchor?.shape?.type === 'LineString' && Array.isArray(anchor.shape.vertexIds)) {
+      return [...anchor.shape.vertexIds];
+    }
+    return [...this._vertexIds];
   }
 }
 

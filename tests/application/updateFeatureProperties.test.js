@@ -70,8 +70,10 @@ describe("UpdateFeatureUseCase property updates", () => {
     const result = await useCase.execute("point-1", { properties: [later, earlier] });
 
     expect(result.feature.properties).toHaveLength(2);
-    expect(result.feature.properties[0]).toBe(earlier);
-    expect(result.feature.properties[1]).toBe(later);
+    expect(result.feature.properties[0].startTime.equals(earlier.startTime)).toBe(true);
+    expect(result.feature.properties[0].name).toBe(earlier.name);
+    expect(result.feature.properties[1].startTime.equals(later.startTime)).toBe(true);
+    expect(result.feature.properties[1].name).toBe(later.name);
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
     expect(world.features[0].properties).toHaveLength(2);
   });

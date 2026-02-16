@@ -66,6 +66,46 @@ function toPairKey(featureIdA, featureIdB) {
   return [String(featureIdA), String(featureIdB)].sort().join('::');
 }
 
+function cloneRings(rings) {
+  return (rings || []).map(ring => ({
+    id: ring.id,
+    vertexIds: [...ring.vertexIds],
+    ringType: ring.ringType,
+    parentId: ring.parentId ?? null
+  }));
+}
+
+function buildPolygonSnapshotAtTime(polygon, timePoint) {
+  if (!(polygon instanceof Polygon) || !polygon.existsAt(timePoint)) {
+    return null;
+  }
+
+  const activeProperty = polygon.getPropertyAt(timePoint);
+  if (!(activeProperty instanceof Property)) {
+    return null;
+  }
+
+  const ringsAtTime = typeof polygon.getRingsAt === 'function'
+    ? polygon.getRingsAt(timePoint)
+    : polygon.rings;
+  const placementAtTime = typeof polygon.getPlacementAt === 'function'
+    ? polygon.getPlacementAt(timePoint)
+    : {
+      layerId: polygon.layerId,
+      parentId: polygon.parentId,
+      childIds: polygon.childIds
+    };
+
+  return new Polygon(
+    polygon.id,
+    [activeProperty],
+    placementAtTime.layerId,
+    placementAtTime.parentId ?? '0',
+    placementAtTime.childIds || [],
+    cloneRings(ringsAtTime || [])
+  );
+}
+
 export function collectPolygonExclusivityConflicts(polygon, world, layerService, geometryService) {
   if (!(polygon instanceof Polygon)) {
     return [];
@@ -85,22 +125,28 @@ export function collectPolygonExclusivityConflicts(polygon, world, layerService,
       continue;
     }
 
-    const activePolygons = candidatePolygons.filter(candidate => candidate.existsAt(timePoint));
-    const sameLayerPolygons = activePolygons.filter(candidate => candidate.layerId === polygon.layerId);
+    const activeSnapshots = candidatePolygons
+      .map(candidate => buildPolygonSnapshotAtTime(candidate, timePoint))
+      .filter(candidate => candidate instanceof Polygon);
+    const polygonSnapshot = activeSnapshots.find(candidate => candidate.id === polygon.id);
+    if (!polygonSnapshot) {
+      continue;
+    }
+    const sameLayerPolygons = activeSnapshots.filter(candidate => candidate.layerId === polygonSnapshot.layerId);
 
-    if (!layerService.checkExclusivity(polygon, [polygon], world.vertices, geometryService)) {
+    if (!layerService.checkExclusivity(polygonSnapshot, [polygonSnapshot], world.vertices, geometryService)) {
       throw new Error(
-        `ポリゴン ${polygon.id} の形状が不正です。競合解決前に形状を修正してください。 (時刻: ${formatTimePoint(timePoint)})`
+        `ポリゴン ${polygonSnapshot.id} の形状が不正です。競合解決前に形状を修正してください。 (時刻: ${formatTimePoint(timePoint)})`
       );
     }
 
     for (const otherPolygon of sameLayerPolygons) {
-      if (otherPolygon.id === polygon.id) {
+      if (otherPolygon.id === polygonSnapshot.id) {
         continue;
       }
       const isExclusive = layerService.checkExclusivity(
-        polygon,
-        [polygon, otherPolygon],
+        polygonSnapshot,
+        [polygonSnapshot, otherPolygon],
         world.vertices,
         geometryService
       );
@@ -118,8 +164,8 @@ export function collectPolygonExclusivityConflicts(polygon, world, layerService,
         type: 'polygon_overlap',
         timePoint,
         timeLabel: formatTimePoint(timePoint),
-        layerId: polygon.layerId,
-        featureIdA: polygon.id,
+        layerId: polygonSnapshot.layerId,
+        featureIdA: polygonSnapshot.id,
         featureIdB: otherPolygon.id
       });
     }
@@ -153,19 +199,25 @@ export function ensurePolygonLayerConstraints(polygon, world, layerService, geom
       continue;
     }
 
-    const activePolygons = candidatePolygons.filter(candidate => candidate.existsAt(timePoint));
-
-    if (!layerService.validatePolygonHierarchy(polygon, activePolygons, world.layers)) {
-      throw new Error(`ポリゴン ${polygon.id} はレイヤー階層の制約に違反しています。 (時刻: ${formatTimePoint(timePoint)})`);
+    const activePolygons = candidatePolygons
+      .map(candidate => buildPolygonSnapshotAtTime(candidate, timePoint))
+      .filter(candidate => candidate instanceof Polygon);
+    const targetPolygon = activePolygons.find(candidate => candidate.id === polygon.id);
+    if (!targetPolygon) {
+      continue;
     }
 
-    if (!layerService.isContainedInHigherLayerPolygon(polygon, activePolygons, world.vertices, world.layers, geometryService)) {
-      throw new Error(`ポリゴン ${polygon.id} は上位レイヤーの親ポリゴンの内側に収まる必要があります。 (時刻: ${formatTimePoint(timePoint)})`);
+    if (!layerService.validatePolygonHierarchy(targetPolygon, activePolygons, world.layers)) {
+      throw new Error(`ポリゴン ${targetPolygon.id} はレイヤー階層の制約に違反しています。 (時刻: ${formatTimePoint(timePoint)})`);
     }
 
-    const layerPolygons = activePolygons.filter(candidate => candidate.layerId === polygon.layerId);
-    if (!layerService.checkExclusivity(polygon, layerPolygons, world.vertices, geometryService)) {
-      throw new Error(`ポリゴン ${polygon.id} がレイヤー ${polygon.layerId} 上の他の領域と重なっています。 (時刻: ${formatTimePoint(timePoint)})`);
+    if (!layerService.isContainedInHigherLayerPolygon(targetPolygon, activePolygons, world.vertices, world.layers, geometryService)) {
+      throw new Error(`ポリゴン ${targetPolygon.id} は上位レイヤーの親ポリゴンの内側に収まる必要があります。 (時刻: ${formatTimePoint(timePoint)})`);
+    }
+
+    const layerPolygons = activePolygons.filter(candidate => candidate.layerId === targetPolygon.layerId);
+    if (!layerService.checkExclusivity(targetPolygon, layerPolygons, world.vertices, geometryService)) {
+      throw new Error(`ポリゴン ${targetPolygon.id} がレイヤー ${targetPolygon.layerId} 上の他の領域と重なっています。 (時刻: ${formatTimePoint(timePoint)})`);
     }
   }
 }

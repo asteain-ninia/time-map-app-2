@@ -135,7 +135,10 @@ export class MapViewModel {
 
     // 現在の時間点で存在し、かつ可視レイヤーに属する地物をフィルタリング
     this._features = this._world.features.filter(feature =>
-      feature.existsAt(currentTime) && (layers.length === 0 || visibleLayerIds.has(feature.layerId))
+      feature.existsAt(currentTime) &&
+      (layers.length === 0 || visibleLayerIds.has(
+        typeof feature.getLayerIdAt === 'function' ? feature.getLayerIdAt(currentTime) : feature.layerId
+      ))
     );
 
     // 選択中の地物が現在の時間で存在しない場合は選択セットから除外
@@ -377,7 +380,12 @@ export class MapViewModel {
         const remaining = new Set();
         this._selectedFeatureIds.forEach(id => {
             const feature = this._world?.features.find(f => f.id === id);
-            if (!feature || feature.layerId === layerId) {
+            const featureLayerId = feature
+              ? (typeof feature.getLayerIdAt === 'function'
+                ? feature.getLayerIdAt(this._navigateTimeUseCase.getCurrentTime())
+                : feature.layerId)
+              : null;
+            if (!feature || featureLayerId === layerId) {
                 selectionChanged = true;
             } else {
                 remaining.add(id);
@@ -408,7 +416,9 @@ export class MapViewModel {
         this._selectedVertexIds.forEach(vertexId => {
             // この頂点が、非表示になったレイヤー *以外* の、現在表示されている地物に属しているか
             const belongsToOtherVisibleLayerFeature = this._features.some(f =>
-                f.layerId !== layerId && // このレイヤー以外で
+                (typeof f.getLayerIdAt === 'function'
+                  ? f.getLayerIdAt(this._navigateTimeUseCase.getCurrentTime())
+                  : f.layerId) !== layerId && // このレイヤー以外で
                 // リングベースで頂点が含まれるかチェック
                 ( (f instanceof DomainPolygon && f.rings?.some(r => r.vertexIds.includes(vertexId))) ||
                   ((f instanceof DomainLine || f instanceof DomainPoint) && f.vertexIds?.includes(vertexId)) )

@@ -2,6 +2,7 @@
 
 import { Feature } from './Feature.js';
 import { Property } from '../value-objects/Property.js';
+import { FeatureAnchor } from '../value-objects/FeatureAnchor.js';
 // Vertex は直接使わないが、概念として関連
 
 /**
@@ -12,6 +13,62 @@ import { Property } from '../value-objects/Property.js';
  * @property {'territory' | 'hole'} ringType - リングの種類 ('territory': 領土, 'hole': 穴)
  * @property {string | null} parentId - このリングを直接含む外周リングのID (ポリゴンの最外周リングまたは飛び地外周リングの場合はnull)
  */
+
+function cloneRing(ring) {
+  return {
+    id: ring.id,
+    vertexIds: [...ring.vertexIds],
+    ringType: ring.ringType,
+    parentId: ring.parentId ?? null
+  };
+}
+
+function cloneRings(rings) {
+  return (rings || []).map(ring => cloneRing(ring));
+}
+
+function buildPolygonShape(rings) {
+  return {
+    type: 'Polygon',
+    rings: cloneRings(rings)
+  };
+}
+
+function buildPolygonPlacement(layerId, parentId, childIds) {
+  return {
+    layerId,
+    parentId,
+    childIds: [...childIds]
+  };
+}
+
+function ensurePolygonAnchors(id, properties, layerId, parentId, childIds, rings, anchors) {
+  if (Array.isArray(anchors) && anchors.length > 0) {
+    return anchors.map(anchor => {
+      if (!(anchor instanceof FeatureAnchor)) {
+        return anchor;
+      }
+      const shape = anchor.shape?.type === 'Polygon' && Array.isArray(anchor.shape?.rings)
+        ? anchor.shape
+        : buildPolygonShape(rings);
+      const placement = {
+        ...(anchor.placement || {}),
+        layerId: typeof anchor.placement?.layerId === 'string' ? anchor.placement.layerId : layerId,
+        parentId: typeof anchor.placement?.parentId === 'string' ? anchor.placement.parentId : parentId,
+        childIds: Array.isArray(anchor.placement?.childIds) ? [...anchor.placement.childIds] : [...childIds]
+      };
+      return anchor.withShape(shape).withPlacement(placement);
+    });
+  }
+
+  const normalized = Feature._normalizeProperties(id, properties);
+  return normalized.map((property, index) => FeatureAnchor.fromProperty(
+    property,
+    buildPolygonShape(rings),
+    buildPolygonPlacement(layerId, parentId, childIds),
+    `anchor-${id}-${index + 1}`
+  ));
+}
 
 /**
  * 面情報を表すエンティティ (リングベース構造)
@@ -32,22 +89,47 @@ export class Polygon extends Feature {
    * @param {string} parentId - ドメイン階層における上位領域ID（最上位の場合は "0"）
    * @param {string[]} childIds - ドメイン階層における下位領域IDの配列
    * @param {Ring[]} rings - このポリゴンを構成するリングの配列
+   * @param {FeatureAnchor[]|null|undefined} anchors - 履歴アンカー正準データ
    */
-  constructor(id, properties, layerId, parentId = "0", childIds = [], rings = []) {
+  constructor(id, properties, layerId, parentId = "0", childIds = [], rings = [], anchors = null) {
+    const preparedRings = cloneRings(rings);
+    const preparedAnchors = ensurePolygonAnchors(
+      id,
+      properties,
+      layerId,
+      parentId,
+      childIds,
+      preparedRings,
+      anchors
+    );
+
     // Feature基底クラスのコンストラクタ呼び出し
     // リングベースでは Feature._vertexIds は直接使わないが、空配列を渡しておく
-    super(id, [], properties, layerId);
+    super(id, [], properties, layerId, preparedAnchors);
 
     this._parentId = parentId;
     this._childIds = [...childIds];
 
     // リング配列のディープコピーと不変性の確保
-    this._rings = rings.map(ring => ({
+    this._rings = preparedRings.map(ring => ({
         id: ring.id,
         vertexIds: [...ring.vertexIds],
         ringType: ring.ringType,
         parentId: ring.parentId // null も許容
     }));
+
+    if (this._anchors.length > 0) {
+      const latestAnchor = this._anchors[this._anchors.length - 1];
+      if (latestAnchor?.shape?.type === 'Polygon' && Array.isArray(latestAnchor.shape.rings)) {
+        this._rings = cloneRings(latestAnchor.shape.rings);
+      }
+      if (typeof latestAnchor?.placement?.parentId === 'string') {
+        this._parentId = latestAnchor.placement.parentId;
+      }
+      if (Array.isArray(latestAnchor?.placement?.childIds)) {
+        this._childIds = [...latestAnchor.placement.childIds];
+      }
+    }
 
     // リング配列と各リングの頂点配列を凍結
     this._rings.forEach(ring => {
@@ -84,8 +166,10 @@ export class Polygon extends Feature {
    * @returns {ReadonlyArray<Ring>} リングの配列
    */
   get rings() {
-    // 不変性を保つためディープコピーを返すのが理想だが、パフォーマンス考慮でReadOnlyを返す
-    // (コンストラクタで凍結済み)
+    const latestAnchor = this.getAnchorAt(null);
+    if (latestAnchor?.shape?.type === 'Polygon' && Array.isArray(latestAnchor.shape.rings)) {
+      return latestAnchor.shape.rings;
+    }
     return this._rings;
   }
 
@@ -94,7 +178,7 @@ export class Polygon extends Feature {
    * @returns {string} 上位領域ID
    */
   get parentId() {
-    return this._parentId;
+    return this.getPlacementAt(null).parentId;
   }
 
   /**
@@ -102,7 +186,35 @@ export class Polygon extends Feature {
    * @returns {ReadonlyArray<string>} 下位領域IDの配列
    */
   get childIds() {
-    return this._childIds; // 凍結済みなのでコピー不要
+    return this.getPlacementAt(null).childIds;
+  }
+
+  /**
+   * 指定時刻で有効なリング配列を取得
+   * @param {TimePoint|null|undefined} timePoint
+   * @returns {ReadonlyArray<Ring>}
+   */
+  getRingsAt(timePoint) {
+    const anchor = this.getAnchorAt(timePoint);
+    if (anchor?.shape?.type === 'Polygon' && Array.isArray(anchor.shape.rings)) {
+      return anchor.shape.rings;
+    }
+    return this._rings;
+  }
+
+  /**
+   * 指定時刻で有効な配置情報を取得
+   * @param {TimePoint|null|undefined} timePoint
+   * @returns {{layerId:string,parentId:string,childIds:string[]}}
+   */
+  getPlacementAt(timePoint) {
+    const anchor = this.getAnchorAt(timePoint);
+    const placement = anchor?.placement || {};
+    return {
+      layerId: typeof placement.layerId === 'string' ? placement.layerId : this._layerId,
+      parentId: typeof placement.parentId === 'string' ? placement.parentId : this._parentId,
+      childIds: Array.isArray(placement.childIds) ? [...placement.childIds] : [...this._childIds]
+    };
   }
 
   /**
@@ -110,7 +222,7 @@ export class Polygon extends Feature {
    * @returns {boolean} 下位領域を持つならtrue
    */
   hasChildren() {
-    return this._childIds.length > 0;
+    return this.childIds.length > 0;
   }
 
   /**
@@ -118,7 +230,7 @@ export class Polygon extends Feature {
    * @returns {boolean} 1つ以上のリングを持つならtrue
    */
   hasShapeRings() {
-      return this._rings.length > 0;
+      return this.rings.length > 0;
   }
 
   // --- Featureクラスから継承したメソッドのオーバーライド ---
@@ -142,13 +254,23 @@ export class Polygon extends Feature {
    */
   withProperties(properties) {
     const normalized = Feature._normalizeProperties(this._id, properties);
+    const placement = this.getPlacementAt(null);
+    const baseRings = this.getRingsAt(null);
+    const nextAnchors = Feature._syncAnchorsWithProperties(
+      this._id,
+      this._anchors,
+      normalized,
+      buildPolygonShape(baseRings),
+      buildPolygonPlacement(this._layerId, placement.parentId, placement.childIds)
+    );
     return new Polygon(
       this._id,
       normalized,
       this._layerId,
-      this._parentId,
-      this._childIds,
-      this._rings
+      placement.parentId,
+      placement.childIds,
+      baseRings,
+      nextAnchors
     );
   }
 
@@ -158,14 +280,22 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withLayerId(layerId) {
-    // リング構造や他のPolygon固有プロパティは維持
+    const placement = this.getPlacementAt(null);
+    const baseRings = this.getRingsAt(null);
+    const nextAnchors = this._anchors.length > 0
+      ? this._anchors.map(anchor => anchor.withPlacement({
+        ...(anchor.placement || {}),
+        layerId
+      }))
+      : null;
     return new Polygon(
       this._id,
       this._properties,
       layerId, // 新しいレイヤーID
-      this._parentId,
-      this._childIds,
-      this._rings // リングはそのまま引き継ぐ
+      placement.parentId,
+      placement.childIds,
+      baseRings, // リングはそのまま引き継ぐ
+      nextAnchors
     );
   }
 
@@ -180,12 +310,14 @@ export class Polygon extends Feature {
    * @private
    */
    _withRings(newRings) {
-       // TODO: ここで基本的なリング構造の検証を行うべき
-       // (PolygonEditServiceでの完全な検証とは別に)
+       const placement = this.getPlacementAt(null);
+       const nextAnchors = this._anchors.length > 0
+         ? this._anchors.map(anchor => anchor.withShape(buildPolygonShape(newRings)))
+         : null;
        return new Polygon(
-           this._id, this._properties, this._layerId,
-           this._parentId, this._childIds, newRings
-       );
+            this._id, this._properties, this._layerId,
+            placement.parentId, placement.childIds, newRings, nextAnchors
+        );
    }
 
   /**
@@ -199,11 +331,12 @@ export class Polygon extends Feature {
       if (!Array.isArray(newVertexIds) || newVertexIds.length < 3) {
           throw new Error("New vertex IDs must be an array with at least 3 elements.");
       }
-      const ringIndex = this._rings.findIndex(r => r.id === ringId);
+      const currentRings = this.rings;
+      const ringIndex = currentRings.findIndex(r => r.id === ringId);
       if (ringIndex === -1) {
           throw new Error(`Ring with id ${ringId} not found in polygon ${this.id}.`);
       }
-      const newRings = this._rings.map((ring, index) => {
+      const newRings = currentRings.map((ring, index) => {
           if (index === ringIndex) {
               // 対象リングの vertexIds を更新した新しいオブジェクトを返す
               return { ...ring, vertexIds: [...newVertexIds] };
@@ -220,16 +353,17 @@ export class Polygon extends Feature {
     * @throws {Error} リングIDが重複する場合など
     */
    withAddedRing(newRing) {
-       if (!newRing || !newRing.id || !Array.isArray(newRing.vertexIds) || (newRing.ringType !== 'territory' && newRing.ringType !== 'hole')) {
-           throw new Error("Invalid ring data provided.");
-       }
-       if (this._rings.some(r => r.id === newRing.id)) {
-           throw new Error(`Ring with id ${newRing.id} already exists in polygon ${this.id}.`);
-       }
-       // parentId の存在チェックなどは Service 層で行う前提
-       const newRings = [...this._rings, newRing];
-       return this._withRings(newRings);
-   }
+        if (!newRing || !newRing.id || !Array.isArray(newRing.vertexIds) || (newRing.ringType !== 'territory' && newRing.ringType !== 'hole')) {
+            throw new Error("Invalid ring data provided.");
+        }
+       const currentRings = this.rings;
+       if (currentRings.some(r => r.id === newRing.id)) {
+            throw new Error(`Ring with id ${newRing.id} already exists in polygon ${this.id}.`);
+        }
+        // parentId の存在チェックなどは Service 層で行う前提
+        const newRings = [...currentRings, newRing];
+        return this._withRings(newRings);
+    }
 
    /**
     * 特定のリングを削除し、子の親子関係を再構築した新しいPolygonインスタンスを返す
@@ -237,19 +371,20 @@ export class Polygon extends Feature {
     * @returns {Polygon} 更新されたPolygonインスタンス
     */
    withRemovedRing(ringIdToRemove) {
-        const ringToRemove = this._rings.find(r => r.id === ringIdToRemove);
-        if (!ringToRemove) {
-            console.warn(`Ring with id ${ringIdToRemove} not found in polygon ${this.id}. Returning original polygon.`);
-            return this;
-        }
+         const currentRings = this.rings;
+         const ringToRemove = currentRings.find(r => r.id === ringIdToRemove);
+         if (!ringToRemove) {
+             console.warn(`Ring with id ${ringIdToRemove} not found in polygon ${this.id}. Returning original polygon.`);
+             return this;
+         }
 
-        const childrenByParent = new Map();
-        for (const ring of this._rings) {
-            const parentKey = ring.parentId !== undefined ? ring.parentId : null;
-            if (!childrenByParent.has(parentKey)) {
-                childrenByParent.set(parentKey, []);
-            }
-            childrenByParent.get(parentKey).push(ring);
+         const childrenByParent = new Map();
+         for (const ring of currentRings) {
+             const parentKey = ring.parentId !== undefined ? ring.parentId : null;
+             if (!childrenByParent.has(parentKey)) {
+                 childrenByParent.set(parentKey, []);
+             }
+             childrenByParent.get(parentKey).push(ring);
         }
 
         const ringsToRemove = new Set([ringIdToRemove]);
@@ -288,12 +423,12 @@ export class Polygon extends Feature {
             return this;
         }
 
-        const newRings = this._rings
-            .filter(ring => !ringsToRemove.has(ring.id))
-            .map(ring => {
-                if (parentUpdates.has(ring.id)) {
-                    return { ...ring, parentId: parentUpdates.get(ring.id) };
-                }
+         const newRings = currentRings
+             .filter(ring => !ringsToRemove.has(ring.id))
+             .map(ring => {
+                 if (parentUpdates.has(ring.id)) {
+                     return { ...ring, parentId: parentUpdates.get(ring.id) };
+                 }
                 return ring;
             });
 
@@ -308,11 +443,19 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withParentId(parentId) {
-    if (this._parentId === parentId) return this;
+    const placement = this.getPlacementAt(null);
+    if (placement.parentId === parentId) return this;
+    const baseRings = this.getRingsAt(null);
+    const nextAnchors = this._anchors.length > 0
+      ? this._anchors.map(anchor => anchor.withPlacement({
+        ...(anchor.placement || {}),
+        parentId
+      }))
+      : null;
     return new Polygon(
       this._id, this._properties, this._layerId,
       parentId, // 新しい親ID
-      this._childIds, this._rings
+      placement.childIds, baseRings, nextAnchors
     );
   }
 
@@ -322,12 +465,22 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   addChildId(childId) {
-    if (this._childIds.includes(childId)) return this;
+    const placement = this.getPlacementAt(null);
+    if (placement.childIds.includes(childId)) return this;
+    const nextChildIds = [...placement.childIds, childId];
+    const baseRings = this.getRingsAt(null);
+    const nextAnchors = this._anchors.length > 0
+      ? this._anchors.map(anchor => anchor.withPlacement({
+        ...(anchor.placement || {}),
+        childIds: nextChildIds
+      }))
+      : null;
     return new Polygon(
       this._id, this._properties, this._layerId,
-      this._parentId,
-      [...this._childIds, childId], // 子ID追加
-      this._rings
+      placement.parentId,
+      nextChildIds, // 子ID追加
+      baseRings,
+      nextAnchors
     );
   }
 
@@ -337,13 +490,22 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   removeChildId(childId) {
-    const newChildIds = this._childIds.filter(id => id !== childId);
-    if (newChildIds.length === this._childIds.length) return this;
+    const placement = this.getPlacementAt(null);
+    const newChildIds = placement.childIds.filter(id => id !== childId);
+    if (newChildIds.length === placement.childIds.length) return this;
+    const baseRings = this.getRingsAt(null);
+    const nextAnchors = this._anchors.length > 0
+      ? this._anchors.map(anchor => anchor.withPlacement({
+        ...(anchor.placement || {}),
+        childIds: newChildIds
+      }))
+      : null;
     return new Polygon(
       this._id, this._properties, this._layerId,
-      this._parentId,
+      placement.parentId,
       newChildIds, // 子ID削除
-      this._rings
+      baseRings,
+      nextAnchors
     );
   }
 
@@ -356,7 +518,7 @@ export class Polygon extends Feature {
   get holesVertexIds() {
     console.warn("Polygon.holesVertexIds getter is deprecated. Use polygon.rings instead.");
     // 最上位の穴リングの頂点ID配列を返す（簡易的な互換性のため）
-    return this._rings.filter(r => r.ringType === 'hole' && r.parentId === null).map(r => r.vertexIds);
+    return this.rings.filter(r => r.ringType === 'hole' && r.parentId === null).map(r => r.vertexIds);
   }
 
   /**
@@ -365,7 +527,7 @@ export class Polygon extends Feature {
   get isMultiPolygon() {
     console.warn("Polygon.isMultiPolygon getter is deprecated. Use polygon.rings instead.");
     // 複数の最上位領土リングがある場合に true を返す（簡易的な互換性のため）
-    return this._rings.filter(r => r.ringType === 'territory' && r.parentId === null).length > 1;
+    return this.rings.filter(r => r.ringType === 'territory' && r.parentId === null).length > 1;
   }
 
   /**

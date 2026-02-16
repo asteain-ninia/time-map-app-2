@@ -5,6 +5,7 @@ import { Line as DomainLine } from '../../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../../domain/entities/Polygon.js';
 import { Property } from '../../../domain/value-objects/Property.js';
 import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
+import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
 
 export class HistorySerializer {
 
@@ -48,6 +49,55 @@ export class HistorySerializer {
     return new Property(timePoint, propName, propDesc, mergedAttributes, startTime, endTime);
   }
 
+  _serializeFeatureAnchor(anchor) {
+    if (!(anchor instanceof FeatureAnchor)) {
+      return null;
+    }
+    const serializeTimePoint = (tp) => tp ? { year: tp.year, month: tp.month, day: tp.day } : null;
+    const timeRange = {
+      start: serializeTimePoint(anchor.startTime)
+    };
+    if (anchor.endTime) {
+      timeRange.end = serializeTimePoint(anchor.endTime);
+    }
+    return {
+      _constructorName: 'FeatureAnchor',
+      id: anchor.id,
+      timeRange,
+      property: {
+        name: anchor.name,
+        description: anchor.description,
+        attributes: anchor.getAttributes()
+      },
+      shape: JSON.parse(JSON.stringify(anchor.shape || {})),
+      placement: JSON.parse(JSON.stringify(anchor.placement || {}))
+    };
+  }
+
+  _deserializeFeatureAnchorFromData(data) {
+    if (!data || data._constructorName !== 'FeatureAnchor') {
+      return null;
+    }
+    try {
+      const start = this._deserializeTimePointFromData(data.timeRange?.start);
+      const end = this._deserializeTimePointFromData(data.timeRange?.end);
+      return new FeatureAnchor({
+        id: data.id,
+        timeRange: { start, end },
+        property: {
+          name: data.property?.name,
+          description: data.property?.description,
+          attributes: data.property?.attributes || {}
+        },
+        shape: data.shape || {},
+        placement: data.placement || {}
+      });
+    } catch (error) {
+      console.warn('FeatureAnchor deserialization for history failed:', error, data);
+      return null;
+    }
+  }
+
   /**
    * ドメインオブジェクトを履歴保存用のプレーンオブジェクトにシリアライズする。
    * @param {Object | null} object - シリアライズ対象のドメインオブジェクト (Vertex, Feature, Property, TimePoint など)
@@ -85,6 +135,7 @@ export class HistorySerializer {
         id: object.id,
         vertexIds: Array.isArray(object.vertexIds) ? [...object.vertexIds] : [],
         properties: Array.isArray(object.properties) ? object.properties.map(serializeProperty).filter(Boolean) : [],
+        anchors: Array.isArray(object.anchors) ? object.anchors.map(anchor => this._serializeFeatureAnchor(anchor)).filter(Boolean) : [],
         layerId: object.layerId
       };
     } else if (object instanceof DomainPolygon) {
@@ -92,6 +143,7 @@ export class HistorySerializer {
         _constructorName: 'Polygon',
         id: object.id,
         properties: Array.isArray(object.properties) ? object.properties.map(serializeProperty).filter(Boolean) : [],
+        anchors: Array.isArray(object.anchors) ? object.anchors.map(anchor => this._serializeFeatureAnchor(anchor)).filter(Boolean) : [],
         layerId: object.layerId,
         parentId: object.parentId,
         childIds: Array.isArray(object.childIds) ? [...object.childIds] : [],
@@ -152,10 +204,28 @@ export class HistorySerializer {
           return this._deserializePropertyFromData(data);
         case 'Point':
           const pointProps = (data.properties || []).map(pData => this.deserialize(pData)).filter(p => p instanceof Property);
-          return new Point(data.id, data.vertexIds || [], pointProps, data.layerId);
+          const pointAnchors = (data.anchors || [])
+            .map(anchorData => this._deserializeFeatureAnchorFromData(anchorData))
+            .filter(anchor => anchor instanceof FeatureAnchor);
+          return new Point(
+            data.id,
+            data.vertexIds || [],
+            pointProps,
+            data.layerId,
+            pointAnchors.length > 0 ? pointAnchors : null
+          );
         case 'Line':
           const lineProps = (data.properties || []).map(pData => this.deserialize(pData)).filter(p => p instanceof Property);
-          return new DomainLine(data.id, data.vertexIds || [], lineProps, data.layerId);
+          const lineAnchors = (data.anchors || [])
+            .map(anchorData => this._deserializeFeatureAnchorFromData(anchorData))
+            .filter(anchor => anchor instanceof FeatureAnchor);
+          return new DomainLine(
+            data.id,
+            data.vertexIds || [],
+            lineProps,
+            data.layerId,
+            lineAnchors.length > 0 ? lineAnchors : null
+          );
         case 'Polygon':
           const polygonRings = (data.rings || []).map(ringData => ({ // リングはプレーンオブジェクトのまま
             id: ringData.id,
@@ -164,7 +234,18 @@ export class HistorySerializer {
             parentId: ringData.parentId !== undefined ? ringData.parentId : null
           }));
           const polygonProps = (data.properties || []).map(pData => this.deserialize(pData)).filter(p => p instanceof Property);
-          return new DomainPolygon(data.id, polygonProps, data.layerId, data.parentId || "0", data.childIds || [], polygonRings);
+          const polygonAnchors = (data.anchors || [])
+            .map(anchorData => this._deserializeFeatureAnchorFromData(anchorData))
+            .filter(anchor => anchor instanceof FeatureAnchor);
+          return new DomainPolygon(
+            data.id,
+            polygonProps,
+            data.layerId,
+            data.parentId || "0",
+            data.childIds || [],
+            polygonRings,
+            polygonAnchors.length > 0 ? polygonAnchors : null
+          );
         default:
           console.warn(`HistorySerializer: Unsupported constructor name for deserialization: ${constructorName}`, data);
           return null;

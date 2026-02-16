@@ -4,6 +4,7 @@ import { MapViewModel } from "../../src/presentation/view-models/MapViewModel.js
 import { TimelineViewModel } from "../../src/presentation/view-models/TimelineViewModel.js";
 import { EditingViewModel } from "../../src/presentation/view-models/EditingViewModel.js";
 import { Point } from "../../src/domain/entities/Point.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
@@ -26,6 +27,26 @@ const createEventBus = () => {
 };
 
 const createProperty = (year = 0, name = "Name") => new Property(new TimePoint(year), name, "", {});
+const createAnchor = ({ id, startYear, endYear, name, vertexId, layerId }) =>
+  new FeatureAnchor({
+    id,
+    timeRange: {
+      start: new TimePoint(startYear),
+      end: endYear === null ? null : new TimePoint(endYear)
+    },
+    property: {
+      name,
+      description: "",
+      attributes: {}
+    },
+    shape: {
+      type: "Point",
+      vertexId
+    },
+    placement: {
+      layerId
+    }
+  });
 
 describe("MapViewModel", () => {
   const createWorld = () => {
@@ -76,15 +97,15 @@ describe("MapViewModel", () => {
     };
   };
 
-  const setupViewModel = () => {
+  const setupViewModel = (worldFactory = createWorld, getCurrentTime = () => new TimePoint(0)) => {
     const eventBus = createEventBus();
     const worldRepository = {
-      getWorld: vi.fn(async () => createWorld()),
+      getWorld: vi.fn(async () => worldFactory()),
       saveWorld: vi.fn(async () => {})
     };
     const editFeatureUseCase = { getWorldRepository: () => worldRepository };
     const navigateTimeUseCase = {
-      getCurrentTime: vi.fn(() => new TimePoint(0)),
+      getCurrentTime: vi.fn(() => getCurrentTime()),
       moveToTime: vi.fn((year, month = null, day = null) => new TimePoint(year, month, day)),
       createTimePoint: vi.fn((year, month = null, day = null) => new TimePoint(year, month, day))
     };
@@ -216,6 +237,122 @@ describe("MapViewModel", () => {
       { settings: expect.objectContaining({ sliderMin: 10, sliderMax: 200 }) }
     );
     expect(notifications.some(({ type }) => type === "projectSettingsChanged")).toBe(true);
+  });
+
+  it("filters features by anchor layer on time change and clears stale selection", async () => {
+    let currentTime = new TimePoint(0);
+    const shiftingFeature = new Point(
+      "feature-shifting-layer",
+      ["v-visible"],
+      [
+        new Property(new TimePoint(0), "Old", "", {}, new TimePoint(0), new TimePoint(100)),
+        new Property(new TimePoint(100), "New", "", {}, new TimePoint(100), null)
+      ],
+      "layer-visible",
+      [
+        createAnchor({
+          id: "anchor-shift-0",
+          startYear: 0,
+          endYear: 100,
+          name: "Old",
+          vertexId: "v-visible",
+          layerId: "layer-visible"
+        }),
+        createAnchor({
+          id: "anchor-shift-100",
+          startYear: 100,
+          endYear: null,
+          name: "New",
+          vertexId: "v-visible",
+          layerId: "layer-hidden"
+        })
+      ]
+    );
+
+    const worldFactory = () => ({
+      features: [shiftingFeature],
+      vertices: [{ id: "v-visible", x: 0, y: 0 }],
+      layers: [
+        { id: "layer-visible", visible: true },
+        { id: "layer-hidden", visible: false }
+      ],
+      metadata: { settings: { sliderMin: 0, sliderMax: 100 } }
+    });
+
+    const { viewModel, eventBus } = setupViewModel(worldFactory, () => currentTime);
+    await viewModel.loadWorld();
+
+    expect(viewModel.getFeatures().map((feature) => feature.id)).toEqual(["feature-shifting-layer"]);
+    viewModel.selectFeature("feature-shifting-layer");
+    expect(viewModel.getSelectedFeatureIds()).toEqual(new Set(["feature-shifting-layer"]));
+
+    currentTime = new TimePoint(150);
+    eventBus.emit("TimeChanged", { time: currentTime });
+    await Promise.resolve();
+
+    expect(viewModel.getFeatures()).toHaveLength(0);
+    expect(viewModel.getSelectedFeatureIds().size).toBe(0);
+  });
+
+  it("uses current-time anchor layer when clearing selection on layer visibility change", async () => {
+    let currentTime = new TimePoint(150);
+    const shiftingFeature = new Point(
+      "feature-layer-toggle",
+      ["v-visible"],
+      [
+        new Property(new TimePoint(0), "Old", "", {}, new TimePoint(0), new TimePoint(100)),
+        new Property(new TimePoint(100), "New", "", {}, new TimePoint(100), null)
+      ],
+      "layer-hidden",
+      [
+        createAnchor({
+          id: "anchor-toggle-0",
+          startYear: 0,
+          endYear: 100,
+          name: "Old",
+          vertexId: "v-visible",
+          layerId: "layer-visible"
+        }),
+        createAnchor({
+          id: "anchor-toggle-100",
+          startYear: 100,
+          endYear: null,
+          name: "New",
+          vertexId: "v-visible",
+          layerId: "layer-hidden"
+        })
+      ]
+    );
+
+    const worldFactory = () => ({
+      features: [shiftingFeature],
+      vertices: [{ id: "v-visible", x: 0, y: 0 }],
+      layers: [
+        { id: "layer-visible", visible: true },
+        { id: "layer-hidden", visible: true }
+      ],
+      metadata: { settings: { sliderMin: 0, sliderMax: 100 } }
+    });
+
+    const { viewModel, eventBus } = setupViewModel(worldFactory, () => currentTime);
+    await viewModel.loadWorld();
+    viewModel.selectFeature("feature-layer-toggle");
+    expect(viewModel.getSelectedFeatureIds()).toEqual(new Set(["feature-layer-toggle"]));
+
+    eventBus.emit("LayerVisibilityChanged", {
+      layerId: "layer-visible",
+      layer: { id: "layer-visible", visible: false }
+    });
+    await Promise.resolve();
+    expect(viewModel.getSelectedFeatureIds()).toEqual(new Set(["feature-layer-toggle"]));
+
+    eventBus.emit("LayerVisibilityChanged", {
+      layerId: "layer-hidden",
+      layer: { id: "layer-hidden", visible: false }
+    });
+    await Promise.resolve();
+    expect(viewModel.getSelectedFeatureIds().size).toBe(0);
+    expect(viewModel.getFeatures()).toHaveLength(0);
   });
 });
 

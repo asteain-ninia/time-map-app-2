@@ -266,7 +266,8 @@ render(world, viewport, currentTime, projectSettings) {
 
     // このレイヤーに属する地物をフィルタリング
     const layerFeatures = world.features.filter(f =>
-      f.layerId === layer.id && f.existsAt(currentTime) // 修正: Feature.existsAt を使用
+      (typeof f.getLayerIdAt === 'function' ? f.getLayerIdAt(currentTime) : f.layerId) === layer.id &&
+      f.existsAt(currentTime) // 修正: Feature.existsAt を使用
     );
 
     // console.log(`レイヤー ${layer.name} の地物数:`, layerFeatures.length);
@@ -542,7 +543,9 @@ _renderGrid(viewport, gridSettings) {
     if (!property) return null; // 修正: property が null なら描画しない
 
     // 頂点を取得
-    const vertexId = point.vertexId;
+    const vertexId = typeof point.getVertexIdAt === 'function'
+      ? point.getVertexIdAt(currentTime)
+      : point.vertexId;
     const vertex = verticesMap.get(vertexId);
     if (!vertex) return null;
 
@@ -632,7 +635,10 @@ _renderGrid(viewport, gridSettings) {
     if (!property) return null; // 修正: property が null なら描画しない
 
     // 頂点を取得 (元座標)
-    const lineVerticesOriginal = line.vertexIds.map(id => verticesMap.get(id));
+    const lineVertexIds = typeof line.getVertexIdsAt === 'function'
+      ? line.getVertexIdsAt(currentTime)
+      : line.vertexIds;
+    const lineVerticesOriginal = lineVertexIds.map(id => verticesMap.get(id));
     if (lineVerticesOriginal.some(v => !v) || lineVerticesOriginal.length < 2) return null;
 
     // 現在時刻で有効な Property からスタイルを取得
@@ -730,8 +736,12 @@ _renderGrid(viewport, gridSettings) {
     const property = polygon.getPropertyAt(currentTime); // 修正: getPropertyAt を使用
     if (!property) return null; // 修正: property が null なら描画しない
 
+    const rings = typeof polygon.getRingsAt === 'function'
+      ? polygon.getRingsAt(currentTime)
+      : polygon.rings;
+
     // リングが存在しない場合は描画しない (子ポリゴンのみの場合は描画しないルール)
-    if (!polygon.rings || polygon.rings.length === 0) {
+    if (!rings || rings.length === 0) {
         // console.log(`Polygon ${polygon.id} has no rings, skipping render.`);
         return null;
     }
@@ -756,17 +766,17 @@ _renderGrid(viewport, gridSettings) {
       ? renderOffsets
       : [0];
     const childrenByRingId = new Map();
-    for (const ring of polygon.rings) {
+    for (const ring of rings) {
         childrenByRingId.set(ring.id, []);
     }
-    for (const ring of polygon.rings) {
+    for (const ring of rings) {
         if (ring.parentId !== null && ring.parentId !== undefined) {
             const bucket = childrenByRingId.get(ring.parentId);
             if (bucket) bucket.push(ring);
         }
     }
     const ringVerticesCache = new Map();
-    for (const ring of polygon.rings) {
+    for (const ring of rings) {
         const ringVertices = ring.vertexIds
             .map(id => verticesMap.get(id))
             .filter(v => v);
@@ -800,7 +810,7 @@ _renderGrid(viewport, gridSettings) {
             return subPath;
         };
         const pathSegments = [];
-        for (const ring of polygon.rings) {
+        for (const ring of rings) {
             if (ring.ringType !== "territory") continue;
             const territoryPath = buildSubPath(ring);
             if (!territoryPath) continue;
