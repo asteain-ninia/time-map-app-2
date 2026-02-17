@@ -5,6 +5,7 @@ import { Point } from "../../src/domain/entities/Point.js";
 import { Line } from "../../src/domain/entities/Line.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
 import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../src/domain/entities/Vertex.js";
 import { GeometryService } from "../../src/domain/services/GeometryService.js";
@@ -243,6 +244,409 @@ describe("VertexEditUseCase", () => {
     ).rejects.toThrow(/重なっています/);
 
     expect(world.vertices.find((v) => v.id === "b1")).toEqual({ id: "b1", x: 6, y: 0 });
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
+  it("splits only the edited anchor when moving vertices with editTime", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 1, y: 0 },
+      { id: "v3", x: 0, y: 1 }
+    ];
+    const shapeAtAnchor = {
+      type: "Polygon",
+      rings: [makeRing("ring-1", ["v1", "v2", "v3"])]
+    };
+    const placement = { layerId: "layer-1", parentId: "0", childIds: [] };
+    const anchors = [
+      new FeatureAnchor({
+        id: "anchor-1",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "poly-time", description: "", attributes: {} },
+        shape: shapeAtAnchor,
+        placement
+      }),
+      new FeatureAnchor({
+        id: "anchor-2",
+        timeRange: { start: t1200, end: null },
+        property: { name: "poly-time", description: "", attributes: {} },
+        shape: shapeAtAnchor,
+        placement
+      })
+    ];
+    world.features = [
+      new Polygon(
+        "poly-time",
+        [
+          new Property(t1000, "poly-time", "", {}, t1000, t1200),
+          new Property(t1200, "poly-time", "", {}, t1200, null)
+        ],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-1", ["v1", "v2", "v3"])],
+        anchors
+      )
+    ];
+    generateId.mockReset();
+    generateId.mockReturnValueOnce("v2-1100");
+    generateId.mockReturnValueOnce("anchor-1100");
+
+    const result = await useCase.moveVertices(
+      [{ vertexId: "v2", newPosition: { x: 2, y: 2 } }],
+      { editTime: t1100 }
+    );
+
+    expect(result.requiresWorldRefresh).toBe(true);
+    expect(result.updatedVertices).toEqual([{ id: "v2-1100", x: 2, y: 2 }]);
+    expect(result.historyPatch.featureChanges).toHaveLength(1);
+    expect(result.historyPatch.addedVertices).toEqual([{ id: "v2-1100", x: 2, y: 2 }]);
+
+    const polygonAfter = world.features.find((feature) => feature.id === "poly-time");
+    expect(polygonAfter).toBeInstanceOf(Polygon);
+    expect(polygonAfter.anchors).toHaveLength(3);
+
+    const anchorAt1000 = polygonAfter.getAnchorAt(t1000);
+    const anchorAt1100 = polygonAfter.getAnchorAt(t1100);
+    const anchorAt1200 = polygonAfter.getAnchorAt(t1200);
+    expect(anchorAt1000).toBeTruthy();
+    expect(anchorAt1100).toBeTruthy();
+    expect(anchorAt1200).toBeTruthy();
+
+    expect(anchorAt1000.startTime.equals(t1000)).toBe(true);
+    expect(anchorAt1000.endTime.equals(t1100)).toBe(true);
+    expect(anchorAt1100.startTime.equals(t1100)).toBe(true);
+    expect(anchorAt1100.endTime.equals(t1200)).toBe(true);
+    expect(anchorAt1200.startTime.equals(t1200)).toBe(true);
+    expect(anchorAt1200.endTime).toBeNull();
+
+    expect(anchorAt1000.shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    expect(anchorAt1100.shape.rings[0].vertexIds).toEqual(["v1", "v2-1100", "v3"]);
+    expect(anchorAt1200.shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    expect(world.vertices.find((vertex) => vertex.id === "v2")).toEqual({ id: "v2", x: 1, y: 0 });
+    expect(world.vertices.find((vertex) => vertex.id === "v2-1100")).toEqual({ id: "v2-1100", x: 2, y: 2 });
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates an existing anchor in place when editTime matches anchor start", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 1, y: 0 },
+      { id: "v3", x: 0, y: 1 }
+    ];
+    const shapeAtAnchor = {
+      type: "Polygon",
+      rings: [makeRing("ring-1", ["v1", "v2", "v3"])]
+    };
+    const placement = { layerId: "layer-1", parentId: "0", childIds: [] };
+    const anchors = [
+      new FeatureAnchor({
+        id: "anchor-1",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "poly-existing", description: "", attributes: {} },
+        shape: shapeAtAnchor,
+        placement
+      }),
+      new FeatureAnchor({
+        id: "anchor-2",
+        timeRange: { start: t1200, end: null },
+        property: { name: "poly-existing", description: "", attributes: {} },
+        shape: shapeAtAnchor,
+        placement
+      })
+    ];
+    world.features = [
+      new Polygon(
+        "poly-existing",
+        [
+          new Property(t1000, "poly-existing", "", {}, t1000, t1200),
+          new Property(t1200, "poly-existing", "", {}, t1200, null)
+        ],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-1", ["v1", "v2", "v3"])],
+        anchors
+      )
+    ];
+    generateId.mockReset();
+    generateId.mockReturnValueOnce("v2-1200");
+
+    const result = await useCase.moveVertices(
+      [{ vertexId: "v2", newPosition: { x: 3, y: 3 } }],
+      { editTime: t1200 }
+    );
+
+    expect(result.requiresWorldRefresh).toBe(true);
+    expect(result.updatedVertices).toEqual([{ id: "v2-1200", x: 3, y: 3 }]);
+    const polygonAfter = world.features.find((feature) => feature.id === "poly-existing");
+    expect(polygonAfter).toBeInstanceOf(Polygon);
+    expect(polygonAfter.anchors).toHaveLength(2);
+    expect(polygonAfter.getAnchorAt(t1000).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    expect(polygonAfter.getAnchorAt(t1200).shape.rings[0].vertexIds).toEqual(["v1", "v2-1200", "v3"]);
+    expect(result.historyPatch.featureChanges).toHaveLength(1);
+    expect(result.historyPatch.addedVertices).toEqual([{ id: "v2-1200", x: 3, y: 3 }]);
+    expect(generateId).toHaveBeenCalledTimes(1);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves multiple vertices at editTime while keeping past and future anchors unchanged", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1300 = new TimePoint(1300);
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 4, y: 0 },
+      { id: "v3", x: 4, y: 4 },
+      { id: "v4", x: 0, y: 4 }
+    ];
+    const shapeAtAnchor = {
+      type: "Polygon",
+      rings: [makeRing("ring-1", ["v1", "v2", "v3", "v4"])]
+    };
+    const placement = { layerId: "layer-1", parentId: "0", childIds: [] };
+    const anchors = [
+      new FeatureAnchor({
+        id: "anchor-1",
+        timeRange: { start: t1000, end: t1300 },
+        property: { name: "poly-multi", description: "", attributes: {} },
+        shape: shapeAtAnchor,
+        placement
+      }),
+      new FeatureAnchor({
+        id: "anchor-2",
+        timeRange: { start: t1300, end: null },
+        property: { name: "poly-multi", description: "", attributes: {} },
+        shape: shapeAtAnchor,
+        placement
+      })
+    ];
+    world.features = [
+      new Polygon(
+        "poly-multi",
+        [
+          new Property(t1000, "poly-multi", "", {}, t1000, t1300),
+          new Property(t1300, "poly-multi", "", {}, t1300, null)
+        ],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-1", ["v1", "v2", "v3", "v4"])],
+        anchors
+      )
+    ];
+    generateId.mockReset();
+    generateId.mockReturnValueOnce("v2-1100");
+    generateId.mockReturnValueOnce("v3-1100");
+    generateId.mockReturnValueOnce("anchor-1100");
+
+    const result = await useCase.moveVertices(
+      [
+        { vertexId: "v2", newPosition: { x: 5, y: 1 } },
+        { vertexId: "v3", newPosition: { x: 5, y: 5 } }
+      ],
+      { editTime: t1100 }
+    );
+
+    expect(result.requiresWorldRefresh).toBe(true);
+    expect(result.updatedVertices).toHaveLength(2);
+    expect(result.updatedVertices).toEqual(
+      expect.arrayContaining([
+        { id: "v2-1100", x: 5, y: 1 },
+        { id: "v3-1100", x: 5, y: 5 }
+      ])
+    );
+
+    const polygonAfter = world.features.find((feature) => feature.id === "poly-multi");
+    expect(polygonAfter).toBeInstanceOf(Polygon);
+    expect(polygonAfter.anchors).toHaveLength(3);
+    expect(polygonAfter.getAnchorAt(t1000).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3", "v4"]);
+    expect(polygonAfter.getAnchorAt(t1100).shape.rings[0].vertexIds).toEqual(["v1", "v2-1100", "v3-1100", "v4"]);
+    expect(polygonAfter.getAnchorAt(t1300).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3", "v4"]);
+    expect(world.vertices.find((vertex) => vertex.id === "v2")).toEqual({ id: "v2", x: 4, y: 0 });
+    expect(world.vertices.find((vertex) => vertex.id === "v3")).toEqual({ id: "v3", x: 4, y: 4 });
+    expect(world.vertices.find((vertex) => vertex.id === "v2-1100")).toEqual({ id: "v2-1100", x: 5, y: 1 });
+    expect(world.vertices.find((vertex) => vertex.id === "v3-1100")).toEqual({ id: "v3-1100", x: 5, y: 5 });
+  });
+
+  it("moves a point at editTime without mutating other anchors", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [{ id: "vp", x: 1, y: 1 }];
+    const placement = { layerId: "layer-1" };
+    const anchors = [
+      new FeatureAnchor({
+        id: "anchor-point-1",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "point-time", description: "", attributes: {} },
+        shape: { type: "Point", vertexId: "vp" },
+        placement
+      }),
+      new FeatureAnchor({
+        id: "anchor-point-2",
+        timeRange: { start: t1200, end: null },
+        property: { name: "point-time", description: "", attributes: {} },
+        shape: { type: "Point", vertexId: "vp" },
+        placement
+      })
+    ];
+    world.features = [
+      new Point(
+        "point-time",
+        ["vp"],
+        [
+          new Property(t1000, "point-time", "", {}, t1000, t1200),
+          new Property(t1200, "point-time", "", {}, t1200, null)
+        ],
+        "layer-1",
+        anchors
+      )
+    ];
+    generateId.mockReset();
+    generateId.mockReturnValueOnce("vp-1100");
+    generateId.mockReturnValueOnce("anchor-point-1100");
+
+    const result = await useCase.moveVertex("vp", { x: 9, y: 9 }, { editTime: t1100 });
+
+    expect(result.requiresWorldRefresh).toBe(true);
+    expect(result.vertex).toEqual({ id: "vp-1100", x: 9, y: 9 });
+    const pointAfter = world.features.find((feature) => feature.id === "point-time");
+    expect(pointAfter).toBeInstanceOf(Point);
+    expect(pointAfter.anchors).toHaveLength(3);
+    expect(pointAfter.getVertexIdAt(t1000)).toBe("vp");
+    expect(pointAfter.getVertexIdAt(t1100)).toBe("vp-1100");
+    expect(pointAfter.getVertexIdAt(t1200)).toBe("vp");
+    expect(world.vertices.find((vertex) => vertex.id === "vp")).toEqual({ id: "vp", x: 1, y: 1 });
+    expect(world.vertices.find((vertex) => vertex.id === "vp-1100")).toEqual({ id: "vp-1100", x: 9, y: 9 });
+  });
+
+  it("moves a line at editTime without mutating other anchors", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [
+      { id: "vl1", x: 0, y: 0 },
+      { id: "vl2", x: 5, y: 0 },
+      { id: "vl3", x: 10, y: 0 }
+    ];
+    const placement = { layerId: "layer-1" };
+    const anchors = [
+      new FeatureAnchor({
+        id: "anchor-line-1",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "line-time", description: "", attributes: {} },
+        shape: { type: "LineString", vertexIds: ["vl1", "vl2", "vl3"] },
+        placement
+      }),
+      new FeatureAnchor({
+        id: "anchor-line-2",
+        timeRange: { start: t1200, end: null },
+        property: { name: "line-time", description: "", attributes: {} },
+        shape: { type: "LineString", vertexIds: ["vl1", "vl2", "vl3"] },
+        placement
+      })
+    ];
+    world.features = [
+      new Line(
+        "line-time",
+        ["vl1", "vl2", "vl3"],
+        [
+          new Property(t1000, "line-time", "", {}, t1000, t1200),
+          new Property(t1200, "line-time", "", {}, t1200, null)
+        ],
+        "layer-1",
+        anchors
+      )
+    ];
+    generateId.mockReset();
+    generateId.mockReturnValueOnce("vl2-1100");
+    generateId.mockReturnValueOnce("anchor-line-1100");
+
+    const result = await useCase.moveVertices(
+      [{ vertexId: "vl2", newPosition: { x: 6, y: 2 } }],
+      { editTime: t1100 }
+    );
+
+    expect(result.requiresWorldRefresh).toBe(true);
+    expect(result.updatedVertices).toEqual([{ id: "vl2-1100", x: 6, y: 2 }]);
+    const lineAfter = world.features.find((feature) => feature.id === "line-time");
+    expect(lineAfter).toBeInstanceOf(Line);
+    expect(lineAfter.anchors).toHaveLength(3);
+    expect(lineAfter.getVertexIdsAt(t1000)).toEqual(["vl1", "vl2", "vl3"]);
+    expect(lineAfter.getVertexIdsAt(t1100)).toEqual(["vl1", "vl2-1100", "vl3"]);
+    expect(lineAfter.getVertexIdsAt(t1200)).toEqual(["vl1", "vl2", "vl3"]);
+    expect(world.vertices.find((vertex) => vertex.id === "vl2")).toEqual({ id: "vl2", x: 5, y: 0 });
+    expect(world.vertices.find((vertex) => vertex.id === "vl2-1100")).toEqual({ id: "vl2-1100", x: 6, y: 2 });
+  });
+
+  it("keeps world unchanged when editTime movement fails self-intersection validation", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 1, y: 0 },
+      { id: "v3", x: 0, y: 1 }
+    ];
+    const shapeAtAnchor = {
+      type: "Polygon",
+      rings: [makeRing("ring-1", ["v1", "v2", "v3"])]
+    };
+    const placement = { layerId: "layer-1", parentId: "0", childIds: [] };
+    const anchors = [
+      new FeatureAnchor({
+        id: "anchor-1",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "poly-fail", description: "", attributes: {} },
+        shape: shapeAtAnchor,
+        placement
+      }),
+      new FeatureAnchor({
+        id: "anchor-2",
+        timeRange: { start: t1200, end: null },
+        property: { name: "poly-fail", description: "", attributes: {} },
+        shape: shapeAtAnchor,
+        placement
+      })
+    ];
+    const originalFeature = new Polygon(
+      "poly-fail",
+      [
+        new Property(t1000, "poly-fail", "", {}, t1000, t1200),
+        new Property(t1200, "poly-fail", "", {}, t1200, null)
+      ],
+      "layer-1",
+      "0",
+      [],
+      [makeRing("ring-1", ["v1", "v2", "v3"])],
+      anchors
+    );
+    world.features = [originalFeature];
+    geometryService.isPolygonSelfIntersecting.mockImplementationOnce(() => true);
+    generateId.mockReset();
+    generateId.mockReturnValueOnce("v2-1100");
+    generateId.mockReturnValueOnce("anchor-1100");
+
+    await expect(
+      useCase.moveVertices([{ vertexId: "v2", newPosition: { x: 2, y: 2 } }], { editTime: t1100 })
+    ).rejects.toThrow(/自己交差/);
+
+    const polygonAfter = world.features.find((feature) => feature.id === "poly-fail");
+    expect(polygonAfter).toBe(originalFeature);
+    expect(polygonAfter.anchors).toHaveLength(2);
+    expect(polygonAfter.getAnchorAt(t1000).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    expect(polygonAfter.getAnchorAt(t1200).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    expect(world.vertices).toEqual([
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 1, y: 0 },
+      { id: "v3", x: 0, y: 1 }
+    ]);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
   });
 

@@ -190,6 +190,57 @@ describe("History commands", () => {
     });
   });
 
+  it("replays and rewinds MoveVerticesCommand using feature patch payloads", async () => {
+    const serializer = new HistorySerializer();
+    const beforeFeature = createLine("line-patch", ["vertex-1", "vertex-2"]);
+    const afterFeature = createLine("line-patch", ["vertex-1", "vertex-added"]);
+    const addedVertex = new Vertex("vertex-added", 7, 8);
+
+    const world = {
+      vertices: [
+        { id: "vertex-1", x: 0, y: 0 },
+        { id: "vertex-2", x: 5, y: 0 }
+      ],
+      features: [beforeFeature],
+      layers: []
+    };
+    const worldRepository = {
+      getWorld: vi.fn(async () => world),
+      saveWorld: vi.fn(async () => {})
+    };
+    const editFeatureUseCase = {
+      moveVertices: vi.fn()
+    };
+    const payload = {
+      featureChanges: [
+        {
+          featureId: "line-patch",
+          beforeFeatureData: serializer.serialize(beforeFeature),
+          afterFeatureData: serializer.serialize(afterFeature)
+        }
+      ],
+      addedVertices: [serializer.serialize(addedVertex)]
+    };
+
+    const command = new MoveVerticesCommand(payload, editFeatureUseCase, serializer, worldRepository);
+
+    const executeResult = await command.execute();
+    expect(executeResult).toEqual({ eventType: "WorldUpdated", eventPayload: null });
+    expect(editFeatureUseCase.moveVertices).not.toHaveBeenCalled();
+    const featureAfterExecute = world.features.find((feature) => feature.id === "line-patch");
+    expect(featureAfterExecute).toBeInstanceOf(Line);
+    expect(featureAfterExecute.vertexIds).toEqual(["vertex-1", "vertex-added"]);
+    expect(world.vertices).toContainEqual({ id: "vertex-added", x: 7, y: 8 });
+
+    const reverseResult = await command.reverse();
+    expect(reverseResult).toEqual({ eventType: "WorldUpdated", eventPayload: null });
+    const featureAfterReverse = world.features.find((feature) => feature.id === "line-patch");
+    expect(featureAfterReverse).toBeInstanceOf(Line);
+    expect(featureAfterReverse.vertexIds).toEqual(["vertex-1", "vertex-2"]);
+    expect(world.vertices.some((vertex) => vertex.id === "vertex-added")).toBe(false);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(2);
+  });
+
   it("executes DeleteVerticesCommand and rebuilds state on reverse", async () => {
     const serializer = new HistorySerializer();
     const deleteResult = {

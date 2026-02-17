@@ -106,12 +106,18 @@ export class EditFeatureUseCase {
     return this._vertexEditUseCase.deleteVertices(vertexIdsToDelete);
   }
 
-  async moveVertex(vertexId, newPosition) {
-    return this._vertexEditUseCase.moveVertex(vertexId, newPosition);
+  async moveVertex(vertexId, newPosition, options = undefined) {
+    if (options === undefined) {
+      return this._vertexEditUseCase.moveVertex(vertexId, newPosition);
+    }
+    return this._vertexEditUseCase.moveVertex(vertexId, newPosition, options);
   }
 
-  async moveVertices(vertexUpdates) {
-    return this._vertexEditUseCase.moveVertices(vertexUpdates);
+  async moveVertices(vertexUpdates, options = undefined) {
+    if (options === undefined) {
+      return this._vertexEditUseCase.moveVertices(vertexUpdates);
+    }
+    return this._vertexEditUseCase.moveVertices(vertexUpdates, options);
   }
 
   async shareVertices(vertexId1, vertexId2, options = {}) {

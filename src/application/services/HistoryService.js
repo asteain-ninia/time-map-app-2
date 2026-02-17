@@ -234,7 +234,7 @@ export class HistoryService {
       case 'updateProperties':
         return new UpdatePropertiesCommand(payload, this._editFeatureUseCase, this._serializer);
       case 'moveVertices':
-        return new MoveVerticesCommand(payload, this._editFeatureUseCase, this._serializer);
+        return new MoveVerticesCommand(payload, this._editFeatureUseCase, this._serializer, this._worldRepository);
       case 'addRing':
         return new AddRingCommand(payload, this._editFeatureUseCase, this._worldRepository, this._serializer);
       case 'addVertexToEdge':

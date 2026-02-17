@@ -741,7 +741,10 @@ export class MapViewEventHandler {
     const visibleFeatures = typeof this._viewModel.getFeatures === 'function'
       ? this._viewModel.getFeatures()
       : [];
-    return { snapWorldDistance, worldWidth, visibleFeatures };
+    const editTime = typeof this._viewModel.getCurrentTime === 'function'
+      ? this._viewModel.getCurrentTime()
+      : null;
+    return { snapWorldDistance, worldWidth, visibleFeatures, editTime };
   }
 
   _collectVerticesForFeature(feature) {

@@ -9,6 +9,8 @@ import { Property } from "../../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../../src/domain/entities/Vertex.js";
 import { Point } from "../../../src/domain/entities/Point.js";
+import { Polygon } from "../../../src/domain/entities/Polygon.js";
+import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.js";
 import { buildAnchorDeletionPlan, getAnchorKey } from "../../../src/presentation/views/sidebar/propertyAnchorUtils.js";
 
 const createProperty = (name = "Name") => new Property(new TimePoint(0), name, "", {});
@@ -83,7 +85,10 @@ const createGeometryServiceStub = () => ({
 });
 
 const createLayerServiceStub = () => ({
-  validateLayerHierarchy: vi.fn(() => true)
+  validateLayerHierarchy: vi.fn(() => true),
+  validatePolygonHierarchy: vi.fn(() => true),
+  isContainedInHigherLayerPolygon: vi.fn(() => true),
+  checkExclusivity: vi.fn(() => true)
 });
 
 const createWorld = () => ({
@@ -350,6 +355,133 @@ describe("HistoryService integration", () => {
     expect(ctx.eventBus.events.at(-1)?.payload).toEqual({ canUndo: true, canRedo: false });
   });
 
+  it("moves vertices with editTime and restores anchor split via undo/redo", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    const world = await ctx.worldRepository.getWorld();
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 1, y: 0 },
+      { id: "v3", x: 0, y: 1 }
+    ];
+    const shapeAtAnchor = {
+      type: "Polygon",
+      rings: [
+        {
+          id: "ring-1",
+          vertexIds: ["v1", "v2", "v3"],
+          ringType: "territory",
+          parentId: null
+        }
+      ]
+    };
+    const placement = { layerId: "layer-0", parentId: "0", childIds: [] };
+    world.features = [
+      new Polygon(
+        "poly-anchor-history",
+        [
+          new Property(t1000, "Poly", "", {}, t1000, t1200),
+          new Property(t1200, "Poly", "", {}, t1200, null)
+        ],
+        "layer-0",
+        "0",
+        [],
+        [
+          {
+            id: "ring-1",
+            vertexIds: ["v1", "v2", "v3"],
+            ringType: "territory",
+            parentId: null
+          }
+        ],
+        [
+          new FeatureAnchor({
+            id: "anchor-1",
+            timeRange: { start: t1000, end: t1200 },
+            property: { name: "Poly", description: "", attributes: {} },
+            shape: shapeAtAnchor,
+            placement
+          }),
+          new FeatureAnchor({
+            id: "anchor-2",
+            timeRange: { start: t1200, end: null },
+            property: { name: "Poly", description: "", attributes: {} },
+            shape: shapeAtAnchor,
+            placement
+          })
+        ]
+      )
+    ];
+
+    const movePayload = {};
+    await ctx.historyService.executeAndRecord(async () => {
+      const result = await ctx.editFeatureUseCase.moveVertices(
+        [{ vertexId: "v2", newPosition: { x: 2, y: 2 } }],
+        { editTime: t1100 }
+      );
+      const featureChanges = Array.isArray(result?.historyPatch?.featureChanges)
+        ? result.historyPatch.featureChanges.map((change) => ({
+            featureId: change.featureId,
+            beforeFeatureData: ctx.serializer.serialize(change.beforeFeature),
+            afterFeatureData: ctx.serializer.serialize(change.afterFeature)
+          }))
+        : [];
+      const addedVertices = Array.isArray(result?.historyPatch?.addedVertices)
+        ? result.historyPatch.addedVertices.map((vertexData) =>
+            ctx.serializer.serialize(new Vertex(vertexData.id, vertexData.x, vertexData.y))
+          )
+        : [];
+      Object.assign(movePayload, { featureChanges, addedVertices });
+      return { eventType: "WorldUpdated", eventPayload: null };
+    }, "moveVertices", movePayload);
+
+    const worldAfterMove = await ctx.worldRepository.getWorld();
+    const featureAfterMove = worldAfterMove.features.find((feature) => feature.id === "poly-anchor-history");
+    expect(featureAfterMove).toBeInstanceOf(Polygon);
+    expect(featureAfterMove.anchors).toHaveLength(3);
+    expect(featureAfterMove.getAnchorAt(t1000).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    const movedVertexIdsAt1100 = featureAfterMove.getAnchorAt(t1100).shape.rings[0].vertexIds;
+    expect(movedVertexIdsAt1100[0]).toBe("v1");
+    expect(movedVertexIdsAt1100[2]).toBe("v3");
+    expect(movedVertexIdsAt1100[1]).not.toBe("v2");
+    const movedVertexId = movedVertexIdsAt1100[1];
+    expect(worldAfterMove.vertices.some((vertex) => vertex.id === movedVertexId && vertex.x === 2 && vertex.y === 2)).toBe(true);
+    expect(featureAfterMove.getAnchorAt(t1200).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.undo();
+    const worldAfterUndo = await ctx.worldRepository.getWorld();
+    const featureAfterUndo = worldAfterUndo.features.find((feature) => feature.id === "poly-anchor-history");
+    expect(featureAfterUndo.anchors).toHaveLength(2);
+    expect(featureAfterUndo.getAnchorAt(t1100).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    expect(worldAfterUndo.vertices.some((vertex) => vertex.id === movedVertexId)).toBe(false);
+    expect(ctx.historyService.canUndo()).toBe(false);
+    expect(ctx.historyService.canRedo()).toBe(true);
+    expect(ctx.eventBus.events.map((event) => event.type)).toEqual([
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
+    expect(ctx.eventBus.events.at(-1)?.payload).toEqual({ canUndo: false, canRedo: true });
+
+    ctx.eventBus.events.length = 0;
+    await ctx.historyService.redo();
+    const worldAfterRedo = await ctx.worldRepository.getWorld();
+    const featureAfterRedo = worldAfterRedo.features.find((feature) => feature.id === "poly-anchor-history");
+    expect(featureAfterRedo.anchors).toHaveLength(3);
+    expect(featureAfterRedo.getAnchorAt(t1100).shape.rings[0].vertexIds[1]).toBe(movedVertexId);
+    expect(worldAfterRedo.vertices.some((vertex) => vertex.id === movedVertexId)).toBe(true);
+    expect(ctx.historyService.canUndo()).toBe(true);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events.map((event) => event.type)).toEqual([
+      "WorldUpdated",
+      "HistoryChanged"
+    ]);
+    expect(ctx.eventBus.events.at(-1)?.payload).toEqual({ canUndo: true, canRedo: false });
+  });
+
   it("clears redo stack when a new command is executed after undo", async () => {
     const addResult = await prepareAddCommand("Delta", { x: 3, y: 4 });
     const feature = addResult.addedFeature;
@@ -441,6 +573,89 @@ describe("HistoryService integration", () => {
     expect(worldAfterRedo.features).toHaveLength(1);
     expect(ctx.historyService.canUndo()).toBe(true);
     expect(ctx.historyService.canRedo()).toBe(false);
+  });
+
+  it("does not record failed editTime vertex movement", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    const world = await ctx.worldRepository.getWorld();
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 1, y: 0 },
+      { id: "v3", x: 0, y: 1 }
+    ];
+    const shapeAtAnchor = {
+      type: "Polygon",
+      rings: [
+        {
+          id: "ring-1",
+          vertexIds: ["v1", "v2", "v3"],
+          ringType: "territory",
+          parentId: null
+        }
+      ]
+    };
+    const placement = { layerId: "layer-0", parentId: "0", childIds: [] };
+    world.features = [
+      new Polygon(
+        "poly-anchor-failure",
+        [
+          new Property(t1000, "Poly", "", {}, t1000, t1200),
+          new Property(t1200, "Poly", "", {}, t1200, null)
+        ],
+        "layer-0",
+        "0",
+        [],
+        [
+          {
+            id: "ring-1",
+            vertexIds: ["v1", "v2", "v3"],
+            ringType: "territory",
+            parentId: null
+          }
+        ],
+        [
+          new FeatureAnchor({
+            id: "anchor-1",
+            timeRange: { start: t1000, end: t1200 },
+            property: { name: "Poly", description: "", attributes: {} },
+            shape: shapeAtAnchor,
+            placement
+          }),
+          new FeatureAnchor({
+            id: "anchor-2",
+            timeRange: { start: t1200, end: null },
+            property: { name: "Poly", description: "", attributes: {} },
+            shape: shapeAtAnchor,
+            placement
+          })
+        ]
+      )
+    ];
+    ctx.geometryService.isPolygonSelfIntersecting.mockImplementationOnce(() => true);
+
+    await expect(
+      ctx.historyService.executeAndRecord(async () => {
+        await ctx.editFeatureUseCase.moveVertices(
+          [{ vertexId: "v2", newPosition: { x: 2, y: 2 } }],
+          { editTime: t1100 }
+        );
+      }, "moveVertices", {})
+    ).rejects.toThrow(/自己交差/);
+
+    const worldAfterFailure = await ctx.worldRepository.getWorld();
+    const featureAfterFailure = worldAfterFailure.features.find((feature) => feature.id === "poly-anchor-failure");
+    expect(featureAfterFailure.anchors).toHaveLength(2);
+    expect(featureAfterFailure.getAnchorAt(t1100).shape.rings[0].vertexIds).toEqual(["v1", "v2", "v3"]);
+    expect(worldAfterFailure.vertices).toEqual([
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 1, y: 0 },
+      { id: "v3", x: 0, y: 1 }
+    ]);
+    expect(ctx.historyService.canUndo()).toBe(false);
+    expect(ctx.historyService.canRedo()).toBe(false);
+    expect(ctx.eventBus.events).toEqual([]);
   });
 
   it("updates properties and restores them via undo/redo", async () => {

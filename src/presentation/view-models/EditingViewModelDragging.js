@@ -147,18 +147,58 @@ async function endVerticesDrag(options = {}) {
 
     if (significantMovement) {
       try {
-        const moveResult = await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase);
-        
-        const payload = { updates: historyPayloadUpdates };
-        const command = new MoveVerticesCommand(payload, this._editFeatureUseCase, this._historyService._serializer, this._historyService._worldRepository);
+        const moveOptions = options?.editTime ? { editTime: options.editTime } : undefined;
+        const moveResult = moveOptions
+          ? await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase, moveOptions)
+          : await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase);
+
+        let payload = { updates: historyPayloadUpdates };
+        const featureChangesRaw = Array.isArray(moveResult?.historyPatch?.featureChanges)
+          ? moveResult.historyPatch.featureChanges
+          : [];
+        const addedVerticesRaw = Array.isArray(moveResult?.historyPatch?.addedVertices)
+          ? moveResult.historyPatch.addedVertices
+          : [];
+
+        if (featureChangesRaw.length > 0) {
+          const featureChanges = featureChangesRaw
+            .map(change => ({
+              featureId: change.featureId,
+              beforeFeatureData: this._historyService._serializer.serialize(change.beforeFeature),
+              afterFeatureData: this._historyService._serializer.serialize(change.afterFeature)
+            }))
+            .filter(change => change.beforeFeatureData && change.afterFeatureData);
+
+          const addedVertices = addedVerticesRaw
+            .map(vertex => this._historyService._serializer.serialize(new Vertex(vertex.id, vertex.x, vertex.y)))
+            .filter(Boolean);
+
+          if (featureChanges.length > 0) {
+            payload = {
+              featureChanges,
+              addedVertices
+            };
+          }
+        }
+
+        const command = new MoveVerticesCommand(
+          payload,
+          this._editFeatureUseCase,
+          this._historyService._serializer,
+          this._historyService._worldRepository
+        );
         this._historyService._stackManager.pushUndo(command);
         this._historyService._notifyHistoryChanged();
 
-        const shareResult = await this._applyVertexSharingAfterDrag(dragInfoCopy, options);
-        if (shareResult.shared) {
+        if (moveResult?.requiresWorldRefresh) {
           this._eventBus.publish('WorldUpdated');
-        } else if (moveResult && moveResult.updatedVertices) {
-          moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
+        } else {
+          const shareResult = await this._applyVertexSharingAfterDrag(dragInfoCopy, options);
+          if (shareResult.shared) {
+            this._eventBus.publish('WorldUpdated');
+          } else if (moveResult && moveResult.updatedVertices) {
+            moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
+          }
         }
       } catch (error) {
         console.error('複数頂点の移動確定に失敗しました', error);

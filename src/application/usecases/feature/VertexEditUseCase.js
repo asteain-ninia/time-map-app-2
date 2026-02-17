@@ -4,6 +4,8 @@ import { Point } from '../../../domain/entities/Point';
 import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon'; // Polygon をインポート
 import { Vertex } from '../../../domain/entities/Vertex'; // Vertex をインポート
+import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
+import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
 import { applyVertexSliding } from '../../services/VertexSlideService.js';
 
@@ -197,7 +199,23 @@ export class VertexEditUseCase {
    * @param {Object} newPosition - 新しい位置 { x, y }
    * @returns {Promise<Object>} 更新情報 { vertex, affectedFeatures }
    */
-  async moveVertex(vertexId, newPosition) {
+  async moveVertex(vertexId, newPosition, options = undefined) {
+    if (options?.editTime instanceof TimePoint) {
+      const moveResult = await this.moveVertices([{ vertexId, newPosition }], options);
+      const movedVertex = Array.isArray(moveResult.updatedVertices)
+        ? moveResult.updatedVertices.find(vertex => vertex.id === vertexId) || moveResult.updatedVertices[0] || null
+        : null;
+      const vertex = movedVertex
+        ? { id: movedVertex.id, x: movedVertex.x, y: movedVertex.y }
+        : null;
+      return {
+        vertex,
+        affectedFeatures: moveResult.affectedFeatures || [],
+        requiresWorldRefresh: moveResult.requiresWorldRefresh === true,
+        historyPatch: moveResult.historyPatch || null
+      };
+    }
+
     const world = await this._worldRepository.getWorld();
     const vertexIndex = world.vertices.findIndex(v => v.id === vertexId);
     if (vertexIndex === -1) throw new Error(`Vertex not found with ID: ${vertexId}`);
@@ -267,7 +285,11 @@ export class VertexEditUseCase {
    * @param {Array<{ vertexId: string, newPosition: {x: number, y: number} }>} vertexUpdates - 移動する頂点の情報配列
    * @returns {Promise<Object>} 更新情報 { updatedVertices: Object[], affectedFeatures: Object[] }
    */
-  async moveVertices(vertexUpdates) {
+  async moveVertices(vertexUpdates, options = undefined) {
+    if (options?.editTime instanceof TimePoint) {
+      return this._moveVerticesAtTime(vertexUpdates, options.editTime);
+    }
+
     const world = await this._worldRepository.getWorld();
     const originalVerticesData = new Map(); // { vertexRef, x, y }
     const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
@@ -381,6 +403,409 @@ export class VertexEditUseCase {
     const affectedFeatures = world.features.filter(f => finalAffectedFeatureIds.has(f.id));
 
     return { updatedVertices, affectedFeatures };
+  }
+
+  async _moveVerticesAtTime(vertexUpdates, editTime) {
+    if (!Array.isArray(vertexUpdates) || vertexUpdates.length === 0) {
+      return { updatedVertices: [], affectedFeatures: [], requiresWorldRefresh: false };
+    }
+
+    const world = await this._worldRepository.getWorld();
+    const verticesMap = new Map(world.vertices.map(vertex => [vertex.id, vertex]));
+
+    const desiredPositions = new Map();
+    const originalPositions = new Map();
+    for (const update of vertexUpdates) {
+      const vertex = verticesMap.get(update.vertexId);
+      if (!vertex || !update?.newPosition) {
+        continue;
+      }
+      originalPositions.set(update.vertexId, { x: vertex.x, y: vertex.y });
+      desiredPositions.set(update.vertexId, { x: update.newPosition.x, y: update.newPosition.y });
+    }
+
+    if (desiredPositions.size === 0) {
+      return { updatedVertices: [], affectedFeatures: [], requiresWorldRefresh: false };
+    }
+
+    const adjustedPositions = applyVertexSliding({
+      world,
+      geometryService: this._geometryService,
+      movedVertexIds: new Set(desiredPositions.keys()),
+      desiredPositions,
+      originalPositions
+    });
+
+    const movedVertexIds = new Set(desiredPositions.keys());
+    const affectedFeatureEntries = [];
+    const replacementTargets = new Set();
+
+    world.features.forEach((feature, index) => {
+      if (!this._featureUsesAnyVertexAtTime(feature, movedVertexIds, editTime)) {
+        return;
+      }
+      const usedVertexIds = this._collectFeatureVertexIdsAtTime(feature, editTime)
+        .filter(vertexId => movedVertexIds.has(vertexId));
+      if (usedVertexIds.length === 0) {
+        return;
+      }
+      usedVertexIds.forEach(vertexId => replacementTargets.add(vertexId));
+      affectedFeatureEntries.push({ index, feature });
+    });
+
+    if (affectedFeatureEntries.length === 0 || replacementTargets.size === 0) {
+      return { updatedVertices: [], affectedFeatures: [], requiresWorldRefresh: false };
+    }
+
+    const existingVertexIds = new Set(world.vertices.map(vertex => vertex.id));
+    const replacementMap = new Map();
+    const addedVertices = [];
+    for (const sourceVertexId of replacementTargets) {
+      const targetPosition = adjustedPositions.get(sourceVertexId) || originalPositions.get(sourceVertexId);
+      if (!targetPosition) {
+        continue;
+      }
+      const newVertexId = this._generateUniqueId('vertex', existingVertexIds);
+      existingVertexIds.add(newVertexId);
+      replacementMap.set(sourceVertexId, newVertexId);
+      addedVertices.push({ id: newVertexId, x: targetPosition.x, y: targetPosition.y });
+    }
+
+    if (replacementMap.size === 0 || addedVertices.length === 0) {
+      return { updatedVertices: [], affectedFeatures: [], requiresWorldRefresh: false };
+    }
+
+    const updatedFeatures = [...world.features];
+    const historyFeatureChanges = [];
+    const updatedPolygons = [];
+
+    for (const entry of affectedFeatureEntries) {
+      const beforeFeature = entry.feature;
+      const afterFeature = this._buildFeatureForAnchorScopedVertexMove(
+        beforeFeature,
+        editTime,
+        replacementMap
+      );
+      if (!afterFeature || afterFeature === beforeFeature) {
+        continue;
+      }
+      updatedFeatures[entry.index] = afterFeature;
+      historyFeatureChanges.push({
+        featureId: afterFeature.id,
+        beforeFeature,
+        afterFeature
+      });
+      if (afterFeature instanceof Polygon) {
+        updatedPolygons.push(afterFeature);
+      }
+    }
+
+    if (historyFeatureChanges.length === 0) {
+      return { updatedVertices: [], affectedFeatures: [], requiresWorldRefresh: false };
+    }
+
+    const candidateWorld = {
+      ...world,
+      features: updatedFeatures,
+      vertices: [...world.vertices, ...addedVertices]
+    };
+
+    const selfIntersectionError = this._validatePolygonsSelfIntersectionAtTime(
+      updatedPolygons,
+      candidateWorld.vertices,
+      editTime
+    );
+    const constraintError = this._validatePolygonConstraints(
+      updatedPolygons,
+      candidateWorld,
+      [...movedVertexIds, ...replacementMap.values()]
+    );
+
+    if (selfIntersectionError || constraintError) {
+      throw selfIntersectionError || constraintError;
+    }
+
+    world.features = updatedFeatures;
+    world.vertices = candidateWorld.vertices;
+    await this._worldRepository.saveWorld(world);
+
+    return {
+      updatedVertices: addedVertices,
+      affectedFeatures: historyFeatureChanges.map(change => change.afterFeature),
+      requiresWorldRefresh: true,
+      historyPatch: {
+        featureChanges: historyFeatureChanges,
+        addedVertices
+      }
+    };
+  }
+
+  _featureUsesAnyVertexAtTime(feature, vertexIds, timePoint) {
+    if (!feature || !(vertexIds instanceof Set) || vertexIds.size === 0) {
+      return false;
+    }
+    const featureVertexIds = this._collectFeatureVertexIdsAtTime(feature, timePoint);
+    return featureVertexIds.some(vertexId => vertexIds.has(vertexId));
+  }
+
+  _collectFeatureVertexIdsAtTime(feature, timePoint) {
+    if (!feature) {
+      return [];
+    }
+    if (feature instanceof Point) {
+      const vertexId = typeof feature.getVertexIdAt === 'function'
+        ? feature.getVertexIdAt(timePoint)
+        : feature.vertexId;
+      return typeof vertexId === 'string' ? [vertexId] : [];
+    }
+    if (feature instanceof Line) {
+      const vertexIds = typeof feature.getVertexIdsAt === 'function'
+        ? feature.getVertexIdsAt(timePoint)
+        : feature.vertexIds;
+      return Array.isArray(vertexIds) ? [...vertexIds] : [];
+    }
+    if (feature instanceof Polygon) {
+      const rings = typeof feature.getRingsAt === 'function'
+        ? feature.getRingsAt(timePoint)
+        : feature.rings;
+      if (!Array.isArray(rings)) {
+        return [];
+      }
+      const ids = [];
+      rings.forEach(ring => {
+        if (Array.isArray(ring?.vertexIds)) {
+          ring.vertexIds.forEach(vertexId => ids.push(vertexId));
+        }
+      });
+      return ids;
+    }
+    return [];
+  }
+
+  _buildFeatureForAnchorScopedVertexMove(feature, editTime, replacementMap) {
+    if (!feature || !(replacementMap instanceof Map) || replacementMap.size === 0) {
+      return feature;
+    }
+    const hasAnchors = Array.isArray(feature.anchors) && feature.anchors.length > 0;
+    if (!hasAnchors) {
+      return this._buildLegacyFeatureForVertexReplacement(feature, editTime, replacementMap);
+    }
+
+    const anchors = [...feature.anchors];
+    let targetAnchorIndex = anchors.findIndex(anchor => anchor.startTime.equals(editTime));
+    let splitInserted = false;
+
+    if (targetAnchorIndex === -1) {
+      const activeIndex = anchors.findIndex(anchor => anchor.isActiveAt(editTime));
+      if (activeIndex === -1) {
+        return feature;
+      }
+      const sourceAnchor = anchors[activeIndex];
+      if (!sourceAnchor.startTime.equals(editTime)) {
+        const anchorIds = new Set(anchors.map(anchor => anchor.id));
+        const splitAnchor = new FeatureAnchor({
+          id: this._generateUniqueId('anchor', anchorIds),
+          timeRange: { start: editTime, end: sourceAnchor.endTime },
+          property: {
+            name: sourceAnchor.name,
+            description: sourceAnchor.description,
+            attributes: sourceAnchor.getAttributes()
+          },
+          shape: sourceAnchor.shape,
+          placement: sourceAnchor.placement
+        });
+        anchors.splice(
+          activeIndex,
+          1,
+          sourceAnchor.withTimeRange(sourceAnchor.startTime, editTime),
+          splitAnchor
+        );
+        targetAnchorIndex = activeIndex + 1;
+        splitInserted = true;
+      } else {
+        targetAnchorIndex = activeIndex;
+      }
+    }
+
+    const targetAnchor = anchors[targetAnchorIndex];
+    if (!targetAnchor) {
+      return feature;
+    }
+
+    const replacedShape = this._replaceAnchorShapeVertexIds(feature, targetAnchor, replacementMap, editTime);
+    const shapeChanged = JSON.stringify(targetAnchor.shape || {}) !== JSON.stringify(replacedShape || {});
+    if (!shapeChanged && !splitInserted) {
+      return feature;
+    }
+
+    anchors[targetAnchorIndex] = targetAnchor.withShape(replacedShape);
+    return this._rebuildFeatureWithAnchors(feature, anchors);
+  }
+
+  _buildLegacyFeatureForVertexReplacement(feature, editTime, replacementMap) {
+    if (feature instanceof Point) {
+      const vertexId = typeof feature.getVertexIdAt === 'function'
+        ? feature.getVertexIdAt(editTime)
+        : feature.vertexId;
+      const replaced = replacementMap.get(vertexId);
+      if (!replaced) {
+        return feature;
+      }
+      return feature.withVertexIds([replaced]);
+    }
+    if (feature instanceof Line) {
+      const currentVertexIds = typeof feature.getVertexIdsAt === 'function'
+        ? feature.getVertexIdsAt(editTime)
+        : feature.vertexIds;
+      if (!Array.isArray(currentVertexIds)) {
+        return feature;
+      }
+      const nextVertexIds = currentVertexIds.map(vertexId => replacementMap.get(vertexId) || vertexId);
+      if (JSON.stringify(currentVertexIds) === JSON.stringify(nextVertexIds)) {
+        return feature;
+      }
+      return feature.withVertexIds(nextVertexIds);
+    }
+    if (feature instanceof Polygon) {
+      let polygon = feature;
+      let changed = false;
+      const rings = Array.isArray(feature.rings) ? feature.rings : [];
+      rings.forEach(ring => {
+        if (!Array.isArray(ring?.vertexIds)) {
+          return;
+        }
+        const nextVertexIds = ring.vertexIds.map(vertexId => replacementMap.get(vertexId) || vertexId);
+        if (JSON.stringify(ring.vertexIds) === JSON.stringify(nextVertexIds)) {
+          return;
+        }
+        polygon = polygon.withUpdatedRingVertices(ring.id, nextVertexIds);
+        changed = true;
+      });
+      return changed ? polygon : feature;
+    }
+    return feature;
+  }
+
+  _replaceAnchorShapeVertexIds(feature, anchor, replacementMap, editTime) {
+    if (feature instanceof Point) {
+      const currentVertexId = anchor?.shape?.type === 'Point' && typeof anchor.shape.vertexId === 'string'
+        ? anchor.shape.vertexId
+        : (typeof feature.getVertexIdAt === 'function' ? feature.getVertexIdAt(editTime) : feature.vertexId);
+      return {
+        type: 'Point',
+        vertexId: replacementMap.get(currentVertexId) || currentVertexId
+      };
+    }
+
+    if (feature instanceof Line) {
+      const currentVertexIds = anchor?.shape?.type === 'LineString' && Array.isArray(anchor.shape.vertexIds)
+        ? [...anchor.shape.vertexIds]
+        : (typeof feature.getVertexIdsAt === 'function' ? feature.getVertexIdsAt(editTime) : feature.vertexIds || []);
+      return {
+        type: 'LineString',
+        vertexIds: currentVertexIds.map(vertexId => replacementMap.get(vertexId) || vertexId)
+      };
+    }
+
+    if (feature instanceof Polygon) {
+      const currentRings = anchor?.shape?.type === 'Polygon' && Array.isArray(anchor.shape.rings)
+        ? anchor.shape.rings
+        : (typeof feature.getRingsAt === 'function' ? feature.getRingsAt(editTime) : feature.rings || []);
+      return {
+        type: 'Polygon',
+        rings: currentRings.map(ring => ({
+          id: ring.id,
+          vertexIds: Array.isArray(ring.vertexIds)
+            ? ring.vertexIds.map(vertexId => replacementMap.get(vertexId) || vertexId)
+            : [],
+          ringType: ring.ringType,
+          parentId: ring.parentId ?? null
+        }))
+      };
+    }
+
+    return anchor?.shape || {};
+  }
+
+  _rebuildFeatureWithAnchors(feature, anchors) {
+    if (feature instanceof Point) {
+      const latestVertexId = typeof feature.getVertexIdAt === 'function'
+        ? feature.getVertexIdAt(null)
+        : feature.vertexId;
+      return new Point(feature.id, [latestVertexId], feature.properties, feature.layerId, anchors);
+    }
+    if (feature instanceof Line) {
+      const latestVertexIds = typeof feature.getVertexIdsAt === 'function'
+        ? feature.getVertexIdsAt(null)
+        : feature.vertexIds;
+      return new Line(feature.id, latestVertexIds, feature.properties, feature.layerId, anchors);
+    }
+    if (feature instanceof Polygon) {
+      const latestPlacement = typeof feature.getPlacementAt === 'function'
+        ? feature.getPlacementAt(null)
+        : { parentId: feature.parentId, childIds: feature.childIds };
+      const latestRings = typeof feature.getRingsAt === 'function'
+        ? feature.getRingsAt(null)
+        : feature.rings;
+      const clonedRings = Array.isArray(latestRings)
+        ? latestRings.map(ring => ({
+            id: ring.id,
+            vertexIds: [...ring.vertexIds],
+            ringType: ring.ringType,
+            parentId: ring.parentId ?? null
+          }))
+        : [];
+      return new Polygon(
+        feature.id,
+        feature.properties,
+        feature.layerId,
+        latestPlacement.parentId,
+        latestPlacement.childIds || [],
+        clonedRings,
+        anchors
+      );
+    }
+    return feature;
+  }
+
+  _validatePolygonsSelfIntersectionAtTime(polygons, vertices, timePoint) {
+    if (!(timePoint instanceof TimePoint) || !Array.isArray(polygons) || polygons.length === 0) {
+      return null;
+    }
+    const vertexMap = new Map((vertices || []).map(vertex => [vertex.id, vertex]));
+
+    for (const polygon of polygons) {
+      if (!(polygon instanceof Polygon) || !polygon.existsAt(timePoint)) {
+        continue;
+      }
+      const rings = typeof polygon.getRingsAt === 'function'
+        ? polygon.getRingsAt(timePoint)
+        : polygon.rings;
+      for (const ring of rings || []) {
+        if (!Array.isArray(ring?.vertexIds) || ring.vertexIds.length < 3) {
+          continue;
+        }
+        const ringVertices = ring.vertexIds.map(vertexId => {
+          const vertexData = vertexMap.get(vertexId);
+          return vertexData ? new Vertex(vertexData.id, vertexData.x, vertexData.y) : null;
+        }).filter(Boolean);
+        if (ringVertices.length !== ring.vertexIds.length) {
+          return new Error(`頂点移動後のリング ${ring.id} に不足頂点があります。`);
+        }
+        if (this._geometryService.isPolygonSelfIntersecting(ringVertices)) {
+          return new Error(`頂点移動によりポリゴン ${polygon.id} のリング ${ring.id} が自己交差しました。`);
+        }
+      }
+    }
+    return null;
+  }
+
+  _generateUniqueId(type, existingIds) {
+    let candidate = this._generateId(type);
+    while (existingIds.has(candidate)) {
+      candidate = this._generateId(type);
+    }
+    return candidate;
   }
 
   /**
