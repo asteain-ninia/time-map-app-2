@@ -1,7 +1,9 @@
 // Created by Codex
 import { describe, expect, it } from "vitest";
 import { MapViewInteractionLogic } from "../../src/presentation/views/map/MapViewInteractionLogic.js";
+import { Point } from "../../src/domain/entities/Point.js";
 import { Line } from "../../src/domain/entities/Line.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
@@ -44,9 +46,10 @@ const geometryService = {
 
 const createProperty = () => new Property(new TimePoint(0), "test", "");
 
-const createViewModel = (world, features) => ({
+const createViewModel = (world, features, currentTime = new TimePoint(0)) => ({
   getWorld: () => world,
-  getFeatures: () => features
+  getFeatures: () => features,
+  getCurrentTime: () => currentTime
 });
 
 describe("MapViewInteractionLogic", () => {
@@ -104,5 +107,54 @@ describe("MapViewInteractionLogic", () => {
     expect(edge.segmentEndVertexId).toBe("v2");
     expect(edge.projectionPoint.x).toBe(5);
     expect(edge.projectionPoint.y).toBe(0);
+  });
+
+  it("finds vertices based on the current-time anchor geometry", () => {
+    const t1000 = new TimePoint(1000);
+    const t2000 = new TimePoint(2000);
+    const point = new Point(
+      "point-1",
+      ["v-new"],
+      [
+        new Property(t1000, "Past", "", {}, t1000, t2000),
+        new Property(t2000, "Future", "", {}, t2000, null)
+      ],
+      "layer-1",
+      [
+        new FeatureAnchor({
+          id: "anchor-1000",
+          timeRange: { start: t1000, end: t2000 },
+          property: { name: "Past", description: "", attributes: {} },
+          shape: { type: "Point", vertexId: "v-old" },
+          placement: { layerId: "layer-1" }
+        }),
+        new FeatureAnchor({
+          id: "anchor-2000",
+          timeRange: { start: t2000, end: null },
+          property: { name: "Future", description: "", attributes: {} },
+          shape: { type: "Point", vertexId: "v-new" },
+          placement: { layerId: "layer-1" }
+        })
+      ]
+    );
+
+    const world = {
+      vertices: [
+        { id: "v-old", x: 0, y: 0 },
+        { id: "v-new", x: 10, y: 0 }
+      ]
+    };
+    const viewModel = createViewModel(world, [point], t1000);
+    const logic = new MapViewInteractionLogic(
+      viewModel,
+      {},
+      geometryService,
+      () => 4,
+      () => 360
+    );
+
+    const closest = logic.findClosestVertex({ x: 0.5, y: 0.1 });
+    expect(closest).not.toBeNull();
+    expect(closest.id).toBe("v-old");
   });
 });

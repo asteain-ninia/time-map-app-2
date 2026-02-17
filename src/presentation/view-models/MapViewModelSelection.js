@@ -2,6 +2,55 @@ import { Point as DomainPoint } from '../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 
+export function getCurrentTimeForSelection(viewModel) {
+  if (!viewModel || typeof viewModel.getCurrentTime !== 'function') {
+    return null;
+  }
+  return viewModel.getCurrentTime();
+}
+
+export function getFeatureRingsAtTime(feature, timePoint) {
+  if (!(feature instanceof DomainPolygon)) {
+    return [];
+  }
+  if (typeof feature.getRingsAt === 'function') {
+    const ringsAtTime = feature.getRingsAt(timePoint);
+    return Array.isArray(ringsAtTime) ? ringsAtTime : [];
+  }
+  return Array.isArray(feature.rings) ? feature.rings : [];
+}
+
+export function getFeatureVertexIdsAtTime(feature, timePoint) {
+  if (feature instanceof DomainPolygon) {
+    const ids = new Set();
+    const rings = getFeatureRingsAtTime(feature, timePoint);
+    rings.forEach(ring => {
+      if (Array.isArray(ring.vertexIds)) {
+        ring.vertexIds.forEach(id => ids.add(id));
+      }
+    });
+    return Array.from(ids);
+  }
+
+  if (feature instanceof DomainLine && typeof feature.getVertexIdsAt === 'function') {
+    const vertexIds = feature.getVertexIdsAt(timePoint);
+    return Array.isArray(vertexIds) ? vertexIds : [];
+  }
+
+  if (feature instanceof DomainPoint && typeof feature.getVertexIdAt === 'function') {
+    const vertexId = feature.getVertexIdAt(timePoint);
+    return typeof vertexId === 'string' ? [vertexId] : [];
+  }
+
+  if (Array.isArray(feature?.vertexIds)) {
+    return feature.vertexIds;
+  }
+  if (typeof feature?.vertexId === 'string') {
+    return [feature.vertexId];
+  }
+  return [];
+}
+
 export function selectFeature(viewModel, featureId, addToSelection = false) {
   if (!viewModel._world) return;
 
@@ -60,6 +109,7 @@ export function selectFeature(viewModel, featureId, addToSelection = false) {
 
 export function selectVertex(viewModel, vertexId, addToSelection = false) {
   if (!viewModel._world || !viewModel._world.vertices) return;
+  const currentTime = getCurrentTimeForSelection(viewModel);
 
   const vertex = viewModel._world.vertices.find(v => v.id === vertexId);
   if (!vertex) {
@@ -72,12 +122,8 @@ export function selectVertex(viewModel, vertexId, addToSelection = false) {
   }
 
   const isVertexVisible = viewModel._features.some(f => {
-    if (f instanceof DomainPolygon) {
-      return f.rings?.some(ring => ring.vertexIds.includes(vertexId));
-    } else if (f instanceof DomainLine || f instanceof DomainPoint) {
-      return f.vertexIds?.includes(vertexId);
-    }
-    return false;
+    const ids = getFeatureVertexIdsAtTime(f, currentTime);
+    return ids.includes(vertexId);
   });
   if (!isVertexVisible) {
     console.warn(`Vertex ${vertexId} is not part of any currently visible feature. Selection denied.`);
@@ -162,17 +208,13 @@ export function analyzeVertexSelection(viewModel, vertexIds) {
 export function findOwningFeatureIdsForVertex(viewModel, vertexId) {
   const ownerIds = [];
   if (!vertexId) return ownerIds;
+  const currentTime = getCurrentTimeForSelection(viewModel);
 
   for (const feature of viewModel._features) {
     if (!feature) continue;
-    if (feature instanceof DomainPolygon) {
-      if (feature.rings?.some(ring => ring.vertexIds.includes(vertexId))) {
-        ownerIds.push(feature.id);
-      }
-    } else if (feature instanceof DomainLine || feature instanceof DomainPoint) {
-      if (Array.isArray(feature.vertexIds) && feature.vertexIds.includes(vertexId)) {
-        ownerIds.push(feature.id);
-      }
+    const ids = getFeatureVertexIdsAtTime(feature, currentTime);
+    if (ids.includes(vertexId)) {
+      ownerIds.push(feature.id);
     }
   }
 

@@ -98,10 +98,10 @@ export class MapViewRendererHelper {
     const visibleFeatures = this._viewModel.getFeatures();
     const viewport = this._viewportManager.getViewport();
     const world = this._viewModel.getWorld();
-    const currentTime = this._viewModel.getCurrentTime();
+    const currentTime = this._getCurrentTime();
     if (!world || !world.vertices || !viewport) return;
     const draggingVerticesInfo = this._editingViewModel.getDraggingVerticesInfo(); // Map<string, {originalPosition, currentPosition}>
-    const visibleVertexIds = this._collectVisibleVertexIds(visibleFeatures);
+    const visibleVertexIds = this._collectVisibleVertexIds(visibleFeatures, currentTime);
 
     this.renderSplitOverlayOnly();
 
@@ -116,7 +116,7 @@ export class MapViewRendererHelper {
       return;
     }
 
-    const sharedVertexIds = this._collectSharedVertexIds(visibleFeatures);
+    const sharedVertexIds = this._collectSharedVertexIds(visibleFeatures, currentTime);
     const verticesMap = new Map(world.vertices.map(v => [v.id, v])); // {id, x, y} のマップ
 
     const worldWidth = this._renderer.getWorldWidth();
@@ -142,15 +142,18 @@ export class MapViewRendererHelper {
 
     const renderFeatureSelection = (feature) => {
         const style = editingStyles.selectedOutline;
+        const featureVertexIds = this._getFeatureVertexIdsAtTime(feature, currentTime);
+        const featureRings = this._getFeatureRingsAtTime(feature, currentTime);
         for (const offsetX of finalOffsets) {
             if (feature instanceof DomainPoint) {
-                const vData = verticesMap.get(feature.vertexId);
+                const pointVertexId = featureVertexIds[0] || null;
+                const vData = pointVertexId ? verticesMap.get(pointVertexId) : null;
                 if (vData && !selectedVertexIds.has(vData.id) && !draggingVerticesInfo.has(vData.id)) {
                     const elem = this._renderer.drawPoint(vData.x + offsetX, vData.y, editingStyles.selectedPointOutline, viewport);
                     if (elem) this._selectionElements.push(elem);
                 }
             } else if (feature instanceof DomainLine) {
-                const linePoints = feature.vertexIds.map(id => {
+                const linePoints = featureVertexIds.map(id => {
                     const v = verticesMap.get(id);
                     return v ? { x: v.x + offsetX, y: v.y } : null;
                 }).filter(Boolean);
@@ -158,7 +161,7 @@ export class MapViewRendererHelper {
                     const elem = this._renderer.drawLine(linePoints, style, viewport);
                     if (elem) this._selectionElements.push(elem);
                 }
-                feature.vertexIds.forEach(id => {
+                featureVertexIds.forEach(id => {
                     const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
                     if (vData) {
                         const markerStyle = getVertexMarkerStyle(id);
@@ -167,15 +170,15 @@ export class MapViewRendererHelper {
                     }
                 });
             } else if (feature instanceof DomainPolygon) {
-                if (feature.rings && Array.isArray(feature.rings)) {
+                if (featureRings && featureRings.length > 0) {
                     if (editingStyles.selectedPolygonFill && editingStyles.selectedPolygonFill.fill !== 'none') {
-                        const loopSets = buildPolygonFillLoopSets(feature, verticesMap, offsetX);
+                        const loopSets = buildPolygonFillLoopSets({ rings: featureRings }, verticesMap, offsetX);
                         for (const loops of loopSets) {
                             const fillElem = this._renderer.drawPolygonLoops(loops, editingStyles.selectedPolygonFill, viewport);
                             if (fillElem) this._selectionElements.push(fillElem);
                         }
                     }
-                    feature.rings.forEach(ring => {
+                    featureRings.forEach(ring => {
                          const ringPoints = ring.vertexIds.map(id => {
                              const v = verticesMap.get(id);
                              return v ? { x: v.x + offsetX, y: v.y } : null;
@@ -207,10 +210,12 @@ export class MapViewRendererHelper {
         const feature = visibleFeatures.find(f => f.id === featureId);
         if (!feature || !feature.existsAt(currentTime)) return;
         const style = editingStyles.highlightOutline;
+        const featureVertexIds = this._getFeatureVertexIdsAtTime(feature, currentTime);
+        const featureRings = this._getFeatureRingsAtTime(feature, currentTime);
 
         for (const offsetX of finalOffsets) {
             if (feature instanceof DomainLine) {
-                const linePoints = feature.vertexIds.map(id => {
+                const linePoints = featureVertexIds.map(id => {
                     const v = verticesMap.get(id);
                     return v ? { x: v.x + offsetX, y: v.y } : null;
                 }).filter(Boolean);
@@ -219,15 +224,15 @@ export class MapViewRendererHelper {
                     if (elem) this._selectionElements.push(elem);
                 }
             } else if (feature instanceof DomainPolygon) {
-                if (feature.rings && Array.isArray(feature.rings)) {
+                if (featureRings && featureRings.length > 0) {
                     if (editingStyles.highlightPolygonFill && editingStyles.highlightPolygonFill.fill !== 'none') {
-                        const loopSets = buildPolygonFillLoopSets(feature, verticesMap, offsetX);
+                        const loopSets = buildPolygonFillLoopSets({ rings: featureRings }, verticesMap, offsetX);
                         for (const loops of loopSets) {
                             const fillElem = this._renderer.drawPolygonLoops(loops, editingStyles.highlightPolygonFill, viewport);
                             if (fillElem) this._selectionElements.push(fillElem);
                         }
                     }
-                    feature.rings.forEach(ring => {
+                    featureRings.forEach(ring => {
                         const ringPoints = ring.vertexIds.map(id => {
                             const v = verticesMap.get(id);
                             return v ? { x: v.x + offsetX, y: v.y } : null;
@@ -242,7 +247,7 @@ export class MapViewRendererHelper {
 
             if (selectedVertexIds.size > 0 || draggingVerticesInfo.size > 0) {
                 if (feature instanceof DomainLine) {
-                    feature.vertexIds.forEach(id => {
+                    featureVertexIds.forEach(id => {
                         const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
                         if (vData) {
                             const markerStyle = getVertexMarkerStyle(id);
@@ -251,8 +256,8 @@ export class MapViewRendererHelper {
                         }
                     });
                 } else if (feature instanceof DomainPolygon) {
-                    if (feature.rings && Array.isArray(feature.rings)) {
-                        feature.rings.forEach(ring => {
+                    if (featureRings && featureRings.length > 0) {
+                        featureRings.forEach(ring => {
                             ring.vertexIds.forEach(id => {
                                 const vData = getOriginalVertexPosIfNeitherSelectedNorDragged(id);
                                 if (vData) {
@@ -308,6 +313,7 @@ export class MapViewRendererHelper {
 
     const world = this._viewModel.getWorld();
     const viewport = this._viewportManager.getViewport();
+    const currentTime = this._getCurrentTime();
     if (!world || !world.vertices) return; // verticesの存在チェック追加
     const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
     const worldWidth = this._renderer.getWorldWidth();
@@ -357,10 +363,9 @@ export class MapViewRendererHelper {
       affectedFeatures = new Map(); // 重複を避けるためにMapを使用
       // 1. 通常のドラッグ対象の地物を探す
       world.features.forEach(f => {
+        const featureVertexIds = this._getFeatureVertexIdsAtTime(f, currentTime);
         const isAffected = draggedVertexIdsArray.some(draggedId => {
-          const isPolygon = f instanceof DomainPolygon;
-          return (f.vertexIds && f.vertexIds.includes(draggedId)) ||
-                 (isPolygon && f.rings?.some(ring => ring.vertexIds.includes(draggedId)));
+          return featureVertexIds.includes(draggedId);
         });
         if (isAffected) {
           affectedFeatures.set(f.id, f);
@@ -393,9 +398,11 @@ export class MapViewRendererHelper {
 
     affectedFeatures.forEach(feature => {
         const style = editingStyles.dragOutline;
+        const featureVertexIds = this._getFeatureVertexIdsAtTime(feature, currentTime);
+        const featureRings = this._getFeatureRingsAtTime(feature, currentTime);
         for (const offsetX of finalOffsets) {
             if (feature instanceof DomainLine) {
-                let originalVertexIds = [...feature.vertexIds];
+                let originalVertexIds = [...featureVertexIds];
                 if (pendingVertexAdditionInfo && pendingVertexAdditionInfo.featureId === feature.id) {
                     const { segmentStartVertexId, segmentEndVertexId, newVertexId } = pendingVertexAdditionInfo;
                     const startIndex = originalVertexIds.indexOf(segmentStartVertexId);
@@ -411,8 +418,8 @@ export class MapViewRendererHelper {
                     if (elem) this._dragPreviewElements.push(elem);
                 }
             } else if (feature instanceof DomainPolygon) {
-                if (feature.rings && Array.isArray(feature.rings)) {
-                    feature.rings.forEach(ring => {
+                if (featureRings && featureRings.length > 0) {
+                    featureRings.forEach(ring => {
                         let originalVertexIds = [...ring.vertexIds];
                         if (pendingVertexAdditionInfo && pendingVertexAdditionInfo.featureId === feature.id && pendingVertexAdditionInfo.ringId === ring.id) {
                             const { segmentStartVertexId, segmentEndVertexId, newVertexId } = pendingVertexAdditionInfo;
@@ -670,22 +677,60 @@ export class MapViewRendererHelper {
     // this._editingViewModel.clearTemporaryElements();
   }
 
-  _collectVisibleVertexIds(features) {
+  _getCurrentTime() {
+    if (!this._viewModel || typeof this._viewModel.getCurrentTime !== 'function') {
+      return null;
+    }
+    return this._viewModel.getCurrentTime();
+  }
+
+  _getFeatureRingsAtTime(feature, timePoint = this._getCurrentTime()) {
+    if (!(feature instanceof DomainPolygon)) {
+      return [];
+    }
+    if (typeof feature.getRingsAt === 'function') {
+      const ringsAtTime = feature.getRingsAt(timePoint);
+      return Array.isArray(ringsAtTime) ? ringsAtTime : [];
+    }
+    return Array.isArray(feature.rings) ? feature.rings : [];
+  }
+
+  _getFeatureVertexIdsAtTime(feature, timePoint = this._getCurrentTime()) {
+    if (feature instanceof DomainPolygon) {
+      const ids = new Set();
+      const rings = this._getFeatureRingsAtTime(feature, timePoint);
+      rings.forEach(ring => {
+        if (Array.isArray(ring.vertexIds)) {
+          ring.vertexIds.forEach(id => ids.add(id));
+        }
+      });
+      return Array.from(ids);
+    }
+    if (feature instanceof DomainLine && typeof feature.getVertexIdsAt === 'function') {
+      const lineVertexIds = feature.getVertexIdsAt(timePoint);
+      return Array.isArray(lineVertexIds) ? lineVertexIds : [];
+    }
+    if (feature instanceof DomainPoint && typeof feature.getVertexIdAt === 'function') {
+      const pointVertexId = feature.getVertexIdAt(timePoint);
+      return typeof pointVertexId === 'string' ? [pointVertexId] : [];
+    }
+    if (Array.isArray(feature?.vertexIds)) {
+      return feature.vertexIds;
+    }
+    if (typeof feature?.vertexId === 'string') {
+      return [feature.vertexId];
+    }
+    return [];
+  }
+
+  _collectVisibleVertexIds(features, timePoint = this._getCurrentTime()) {
     const ids = new Set();
     if (!features || features.length === 0) {
       return ids;
     }
     for (const feature of features) {
       if (!feature) continue;
-      if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
-        feature.rings.forEach(ring => {
-          if (Array.isArray(ring.vertexIds)) ring.vertexIds.forEach(id => ids.add(id));
-        });
-      } else if (feature instanceof DomainLine && Array.isArray(feature.vertexIds)) {
-        feature.vertexIds.forEach(id => ids.add(id));
-      } else if (feature instanceof DomainPoint) {
-        if (feature.vertexId) ids.add(feature.vertexId);
-      }
+      this._getFeatureVertexIdsAtTime(feature, timePoint).forEach(id => ids.add(id));
     }
     return ids;
   }
@@ -710,7 +755,7 @@ export class MapViewRendererHelper {
     return Math.max(0, rawLimit);
   }
 
-  _collectSharedVertexIds(features) {
+  _collectSharedVertexIds(features, timePoint = this._getCurrentTime()) {
     const usage = new Map();
     if (!features || features.length === 0) {
       return new Set();
@@ -718,16 +763,7 @@ export class MapViewRendererHelper {
 
     features.forEach(feature => {
       if (!feature) return;
-      const ids = new Set();
-      if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
-        feature.rings.forEach(ring => {
-          if (Array.isArray(ring.vertexIds)) ring.vertexIds.forEach(id => ids.add(id));
-        });
-      } else if (feature instanceof DomainLine && Array.isArray(feature.vertexIds)) {
-        feature.vertexIds.forEach(id => ids.add(id));
-      } else if (feature instanceof DomainPoint && Array.isArray(feature.vertexIds)) {
-        feature.vertexIds.forEach(id => ids.add(id));
-      }
+      const ids = new Set(this._getFeatureVertexIdsAtTime(feature, timePoint));
       ids.forEach(id => {
         const count = usage.get(id) || 0;
         usage.set(id, count + 1);

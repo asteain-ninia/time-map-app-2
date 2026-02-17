@@ -35,6 +35,55 @@ export class MapViewInteractionLogic {
     this._indexInvalidated = true;
   }
 
+  _getCurrentTime() {
+    if (!this._viewModel || typeof this._viewModel.getCurrentTime !== 'function') {
+      return null;
+    }
+    return this._viewModel.getCurrentTime();
+  }
+
+  _getPolygonRingsAtCurrentTime(polygon, timePoint = this._getCurrentTime()) {
+    if (!(polygon instanceof DomainPolygon)) {
+      return [];
+    }
+    if (typeof polygon.getRingsAt === 'function') {
+      const ringsAtTime = polygon.getRingsAt(timePoint);
+      return Array.isArray(ringsAtTime) ? ringsAtTime : [];
+    }
+    return Array.isArray(polygon.rings) ? polygon.rings : [];
+  }
+
+  _getFeatureVertexIdsAtCurrentTime(feature, timePoint = this._getCurrentTime()) {
+    if (feature instanceof DomainPolygon) {
+      const ids = new Set();
+      const rings = this._getPolygonRingsAtCurrentTime(feature, timePoint);
+      rings.forEach(ring => {
+        if (Array.isArray(ring.vertexIds)) {
+          ring.vertexIds.forEach(id => ids.add(id));
+        }
+      });
+      return Array.from(ids);
+    }
+
+    if (feature instanceof DomainLine && typeof feature.getVertexIdsAt === 'function') {
+      const vertexIds = feature.getVertexIdsAt(timePoint);
+      return Array.isArray(vertexIds) ? vertexIds : [];
+    }
+
+    if (feature instanceof DomainPoint && typeof feature.getVertexIdAt === 'function') {
+      const vertexId = feature.getVertexIdAt(timePoint);
+      return typeof vertexId === 'string' ? [vertexId] : [];
+    }
+
+    if (Array.isArray(feature?.vertexIds)) {
+      return feature.vertexIds;
+    }
+    if (typeof feature?.vertexId === 'string') {
+      return [feature.vertexId];
+    }
+    return [];
+  }
+
   /**
    * クリックされたワールド座標に最も近い**表示中の**頂点を探す
    * @param {object} worldPoint - ワールド座標 {x, y}
@@ -74,20 +123,14 @@ export class MapViewInteractionLogic {
   _findClosestVertexByScan(worldPoint) {
     const world = this._viewModel.getWorld();
     const features = this._viewModel.getFeatures(); // 表示中の地物を取得
+    const currentTime = this._getCurrentTime();
     if (!world || !world.vertices || features.length === 0) {
       return null;
     }
 
     const visibleVertexIds = new Set();
-    features.forEach(f => {
-      if (f instanceof DomainPoint || f instanceof DomainLine) {
-          if (f.vertexIds) f.vertexIds.forEach(id => visibleVertexIds.add(id));
-      } else if (f instanceof DomainPolygon) {
-          // リングベースで頂点IDを収集
-          if (f.rings) {
-              f.rings.forEach(ring => ring.vertexIds.forEach(id => visibleVertexIds.add(id)));
-          }
-      }
+    features.forEach(feature => {
+      this._getFeatureVertexIdsAtCurrentTime(feature, currentTime).forEach(id => visibleVertexIds.add(id));
     });
 
     if (visibleVertexIds.size === 0) return null;
@@ -162,6 +205,7 @@ export class MapViewInteractionLogic {
   _findClosestEdgeByScan(worldPoint) {
     const features = this._viewModel.getFeatures(); // 表示中の地物のみ
     const world = this._viewModel.getWorld();
+    const currentTime = this._getCurrentTime();
     if (!features || features.length === 0 || !world || !world.vertices) {
       return null;
     }
@@ -175,11 +219,12 @@ export class MapViewInteractionLogic {
 
     for (const feature of features) {
       if (feature instanceof DomainLine) {
-        if (!feature.vertexIds || feature.vertexIds.length < 2) continue;
+        const lineVertexIds = this._getFeatureVertexIdsAtCurrentTime(feature, currentTime);
+        if (!lineVertexIds || lineVertexIds.length < 2) continue;
 
-        for (let i = 0; i < feature.vertexIds.length - 1; i++) {
-          const vStartId = feature.vertexIds[i];
-          const vEndId = feature.vertexIds[i + 1];
+        for (let i = 0; i < lineVertexIds.length - 1; i++) {
+          const vStartId = lineVertexIds[i];
+          const vEndId = lineVertexIds[i + 1];
           const vStartOriginal = verticesMap.get(vStartId);
           const vEndOriginal = verticesMap.get(vEndId);
 
@@ -207,9 +252,10 @@ export class MapViewInteractionLogic {
           }
         }
       } else if (feature instanceof DomainPolygon) {
-        if (!feature.rings || feature.rings.length === 0) continue;
+        const rings = this._getPolygonRingsAtCurrentTime(feature, currentTime);
+        if (!rings || rings.length === 0) continue;
 
-        for (const ring of feature.rings) {
+        for (const ring of rings) {
           if (!ring.vertexIds || ring.vertexIds.length < 2) continue; // リングは通常3頂点以上だが、線分としては2頂点必要
 
           for (let i = 0; i < ring.vertexIds.length; i++) {
@@ -254,6 +300,7 @@ export class MapViewInteractionLogic {
   findClosestFeature(worldPoint) {
       const world = this._viewModel.getWorld();
       const features = this._viewModel.getFeatures();
+      const currentTime = this._getCurrentTime();
       if (!features || features.length === 0 || !world || !world.vertices) {
           return null;
       }
@@ -292,7 +339,8 @@ export class MapViewInteractionLogic {
            if (!feature || typeof feature !== 'object') continue;
 
            if (feature instanceof DomainPoint) {
-               const featureVerticesOriginal = getVerticesByIds(feature.vertexIds);
+               const featureVertexIds = this._getFeatureVertexIdsAtCurrentTime(feature, currentTime);
+               const featureVerticesOriginal = getVerticesByIds(featureVertexIds);
                if (featureVerticesOriginal?.length === 1) {
                    let minDistanceSqOverall = Infinity;
                    for (const offsetX of offsets) {
@@ -307,7 +355,8 @@ export class MapViewInteractionLogic {
                    }
                }
           } else if (feature instanceof DomainLine) {
-               const featureVerticesOriginal = getVerticesByIds(feature.vertexIds);
+               const featureVertexIds = this._getFeatureVertexIdsAtCurrentTime(feature, currentTime);
+               const featureVerticesOriginal = getVerticesByIds(featureVertexIds);
                if (featureVerticesOriginal?.length >= 2) {
                     let minSegmentDistSqOverall = Infinity;
                     for (const offsetX of offsets) {
@@ -329,8 +378,8 @@ export class MapViewInteractionLogic {
                }
           } else if (feature instanceof DomainPolygon) {
               // ポリゴンの包含関係と境界近接をチェック
-              const locationInfo = this.locatePointInPolygon(worldPoint, feature, verticesMap); // これは既にオフセットを考慮
-              const isNearBoundary = this.isPointNearPolygonBoundary(worldPoint, feature, verticesMap); // これもオフセットを考慮
+              const locationInfo = this.locatePointInPolygon(worldPoint, feature, verticesMap, currentTime); // これは既にオフセットを考慮
+              const isNearBoundary = this.isPointNearPolygonBoundary(worldPoint, feature, verticesMap, currentTime); // これもオフセットを考慮
 
               // locatePointInPolygon の結果に基づいて候補を分類
               if (locationInfo.type === 'inside_outer') {
@@ -338,7 +387,7 @@ export class MapViewInteractionLogic {
                   candidatesInside.push({ feature, nestingLevel: locationInfo.nestingLevel });
               } else if (locationInfo.type !== 'inside_hole' && isNearBoundary) {
                   // 穴内部でなく、境界線に近い場合 (typeがoutsideで境界に近い場合など)
-                  const distanceSq = this._calculateDistanceToPolygon(worldPoint, feature, verticesMap); // これもオフセットを考慮
+                  const distanceSq = this._calculateDistanceToPolygon(worldPoint, feature, verticesMap, currentTime); // これもオフセットを考慮
                    if (distanceSq < clickToleranceSq) { // 念のため再チェック
                        candidatesNearby.push({ feature, distanceSq });
                    }
@@ -411,8 +460,9 @@ export class MapViewInteractionLogic {
    * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
    * @returns {boolean}
    */
-  isPointNearPolygonBoundary(point, polygon, verticesMap) {
-        if (!polygon || !Array.isArray(polygon.rings)) return false;
+  isPointNearPolygonBoundary(point, polygon, verticesMap, timePoint = this._getCurrentTime()) {
+        const rings = this._getPolygonRingsAtCurrentTime(polygon, timePoint);
+        if (!rings || rings.length === 0) return false;
 
         const worldWidth = this._getWorldWidthFunc();
         const offsets = [0, -worldWidth, worldWidth];
@@ -424,7 +474,7 @@ export class MapViewInteractionLogic {
         }).filter(Boolean) || [];
 
         for (const offsetX of offsets) {
-            for (const ring of polygon.rings) {
+            for (const ring of rings) {
                 if (ring.vertexIds && ring.vertexIds.length >= 2) {
                     const ringVerticesWithOffset = getVerticesWithOffset(ring.vertexIds, offsetX);
                     // GeometryServiceの isPointOnPolygonBoundary を使う
@@ -444,10 +494,11 @@ export class MapViewInteractionLogic {
    * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
    * @returns {boolean}
    */
-  isPointInsidePolygon(point, polygon, verticesMap) {
-        if (!polygon || !Array.isArray(polygon.rings)) return false;
+  isPointInsidePolygon(point, polygon, verticesMap, timePoint = this._getCurrentTime()) {
+        const rings = this._getPolygonRingsAtCurrentTime(polygon, timePoint);
+        if (!rings || rings.length === 0) return false;
         // リングベースの位置判定ヘルパーを使用 (これは既にオフセットを考慮する)
-        const location = this.locatePointInPolygon(point, polygon, verticesMap);
+        const location = this.locatePointInPolygon(point, polygon, verticesMap, timePoint);
         // 'inside_outer' (外周リングの内側かつ穴の外側) の場合に true
         return location.type === 'inside_outer';
   }
@@ -459,8 +510,9 @@ export class MapViewInteractionLogic {
     * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
     * @returns {number} 最短距離の二乗
     */
-   _calculateDistanceToPolygon(point, polygon, verticesMap) {
-       if (!polygon || !Array.isArray(polygon.rings)) return Infinity;
+   _calculateDistanceToPolygon(point, polygon, verticesMap, timePoint = this._getCurrentTime()) {
+       const rings = this._getPolygonRingsAtCurrentTime(polygon, timePoint);
+       if (!rings || rings.length === 0) return Infinity;
 
        const worldWidth = this._getWorldWidthFunc();
        const offsets = [0, -worldWidth, worldWidth];
@@ -473,13 +525,13 @@ export class MapViewInteractionLogic {
 
        for (const offsetX of offsets) {
            // このオフセットでのポリゴンが点を含んでいれば距離0
-           const locationInfoForOffset = this.locatePointInPolygonForSpecificOffset(point, polygon, verticesMap, offsetX);
+           const locationInfoForOffset = this.locatePointInPolygonForSpecificOffset(point, polygon, verticesMap, offsetX, timePoint);
            if (locationInfoForOffset.type === 'inside_outer') {
                return 0; // 内部なら距離0
            }
 
            let minDistanceForOffsetSq = Infinity;
-           polygon.rings.forEach(ring => {
+           rings.forEach(ring => {
                const ringVertices = getVerticesWithOffset(ring.vertexIds, offsetX);
                 if (ringVertices.length < 2) return;
                 // ポリゴンを閉じるために最初の頂点を最後に追加 (GeometryService.isPointOnPolygonBoundaryが期待する形式に合わせる場合)
@@ -506,8 +558,9 @@ export class MapViewInteractionLogic {
     * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
     * @returns {{type: 'outside' | 'inside_outer' | 'inside_hole', ringId: string | null, nestingLevel: number}}
     */
-   locatePointInPolygon(point, polygon, verticesMap) {
-     if (!polygon || !Array.isArray(polygon.rings)) {
+   locatePointInPolygon(point, polygon, verticesMap, timePoint = this._getCurrentTime()) {
+     const rings = this._getPolygonRingsAtCurrentTime(polygon, timePoint);
+     if (!rings || rings.length === 0) {
        return { type: 'outside', ringId: null, nestingLevel: 0 };
      }
 
@@ -524,7 +577,7 @@ export class MapViewInteractionLogic {
      for (const offsetX of offsets) {
          // このオフセットでの境界判定
          let isOnBoundaryWithOffset = false;
-         for (const ring of polygon.rings) {
+         for (const ring of rings) {
              const ringVerticesWithOffset = getVerticesWithOffset(ring.vertexIds, offsetX);
              if (ringVerticesWithOffset.length >=2 && this._geometryService.isPointOnPolygonBoundary(point, ringVerticesWithOffset, this._getClickToleranceSq())) {
                  isOnBoundaryWithOffset = true;
@@ -539,7 +592,7 @@ export class MapViewInteractionLogic {
          }
 
          const insideRingsForThisOffset = [];
-         for (const ring of polygon.rings) {
+         for (const ring of rings) {
            const vertsWithOffset = getVerticesWithOffset(ring.vertexIds, offsetX);
            if (vertsWithOffset.length >= 3 &&
                this._geometryService.isPointInPolygon(point, vertsWithOffset, false)) { // includeBoundary=false で厳密な内部判定
@@ -580,7 +633,11 @@ export class MapViewInteractionLogic {
     * @returns {{type: 'outside' | 'inside_outer' | 'inside_hole', ringId: string | null, nestingLevel: number}}
     * @private
     */
-   locatePointInPolygonForSpecificOffset(point, polygon, verticesMap, offsetX) {
+   locatePointInPolygonForSpecificOffset(point, polygon, verticesMap, offsetX, timePoint = this._getCurrentTime()) {
+        const rings = this._getPolygonRingsAtCurrentTime(polygon, timePoint);
+        if (!rings || rings.length === 0) {
+          return { type: 'outside', ringId: null, nestingLevel: 0 };
+        }
         const getVertices = (ids) => ids?.map(id => {
              const v = verticesMap.get(id);
              return v ? {x: v.x + offsetX, y: v.y } : null; // 指定されたoffsetXを適用
@@ -588,7 +645,7 @@ export class MapViewInteractionLogic {
 
         // 境界判定
         let isOnBoundary = false;
-        for (const ring of polygon.rings) {
+        for (const ring of rings) {
             const ringVertices = getVertices(ring.vertexIds);
             if (ringVertices.length >=2 && this._geometryService.isPointOnPolygonBoundary(point, ringVertices, this._getClickToleranceSq())) {
                 isOnBoundary = true;
@@ -598,7 +655,7 @@ export class MapViewInteractionLogic {
         if (isOnBoundary) return { type: 'outside', ringId: null, nestingLevel: 0 }; // 境界はoutside
 
         const insideRings = [];
-        for (const ring of polygon.rings) {
+        for (const ring of rings) {
             const verts = getVertices(ring.vertexIds);
             // GeometryService の isPointInPolygon を使用 (includeBoundary=false)
             if (verts.length >= 3 && this._geometryService.isPointInPolygon(point, verts, false)) {
@@ -633,8 +690,8 @@ export class MapViewInteractionLogic {
     * @param {Map<string, {id:string, x:number, y:number}>} verticesMap - 頂点マップ
     * @returns {{type: 'outside' | 'inside_outer' | 'inside_hole', ringId: string | null, nestingLevel: number}}
     */
-   getPointLocationInPolygon(point, polygon, verticesMap) {
-       return this.locatePointInPolygon(point, polygon, verticesMap);
+   getPointLocationInPolygon(point, polygon, verticesMap, timePoint = this._getCurrentTime()) {
+       return this.locatePointInPolygon(point, polygon, verticesMap, timePoint);
    }
 
   _ensureSpatialIndex() {
@@ -691,9 +748,10 @@ export class MapViewInteractionLogic {
     const offsets = getWorldOffsets(worldWidth);
     const visibleVertexIds = new Set();
     const fallbackFeatures = [];
+    const currentTime = this._getCurrentTime();
 
     features.forEach(feature => {
-      const vertexIds = collectFeatureVertexIds(feature);
+      const vertexIds = collectFeatureVertexIds(feature, currentTime);
       vertexIds.forEach(id => visibleVertexIds.add(id));
 
       const boundsInfo = computeBoundsFromVertexIds(vertexIds, verticesMap);
@@ -712,7 +770,7 @@ export class MapViewInteractionLogic {
       }
 
       if (feature instanceof DomainLine) {
-        const ids = Array.isArray(feature.vertexIds) ? feature.vertexIds : [];
+        const ids = this._getFeatureVertexIdsAtCurrentTime(feature, currentTime);
         for (let i = 0; i < ids.length - 1; i++) {
           const startId = ids[i];
           const endId = ids[i + 1];
@@ -735,8 +793,8 @@ export class MapViewInteractionLogic {
           });
         }
       } else if (feature instanceof DomainPolygon) {
-        if (!Array.isArray(feature.rings)) return;
-        feature.rings.forEach(ring => {
+        const rings = this._getPolygonRingsAtCurrentTime(feature, currentTime);
+        rings.forEach(ring => {
           const ids = Array.isArray(ring.vertexIds) ? ring.vertexIds : [];
           if (ids.length < 2) return;
           for (let i = 0; i < ids.length; i++) {
@@ -801,16 +859,36 @@ function getWorldOffsets(worldWidth) {
   return [0];
 }
 
-function collectFeatureVertexIds(feature) {
+function collectFeatureVertexIds(feature, timePoint = null) {
   const ids = new Set();
-  if (feature instanceof DomainPolygon && Array.isArray(feature.rings)) {
-    feature.rings.forEach(ring => {
+  if (feature instanceof DomainPolygon) {
+    const rings = typeof feature.getRingsAt === 'function'
+      ? feature.getRingsAt(timePoint)
+      : feature.rings;
+    if (!Array.isArray(rings)) {
+      return Array.from(ids);
+    }
+    rings.forEach(ring => {
       if (Array.isArray(ring.vertexIds)) {
         ring.vertexIds.forEach(id => ids.add(id));
       }
     });
-  } else if ((feature instanceof DomainLine || feature instanceof DomainPoint) && Array.isArray(feature.vertexIds)) {
-    feature.vertexIds.forEach(id => ids.add(id));
+  } else if (feature instanceof DomainLine) {
+    const lineVertexIds = typeof feature.getVertexIdsAt === 'function'
+      ? feature.getVertexIdsAt(timePoint)
+      : feature.vertexIds;
+    if (Array.isArray(lineVertexIds)) {
+      lineVertexIds.forEach(id => ids.add(id));
+    }
+  } else if (feature instanceof DomainPoint) {
+    const pointVertexId = typeof feature.getVertexIdAt === 'function'
+      ? feature.getVertexIdAt(timePoint)
+      : feature.vertexId;
+    if (typeof pointVertexId === 'string') {
+      ids.add(pointVertexId);
+    } else if (Array.isArray(feature.vertexIds)) {
+      feature.vertexIds.forEach(id => ids.add(id));
+    }
   }
   return Array.from(ids);
 }

@@ -354,6 +354,56 @@ describe("MapViewModel", () => {
     expect(viewModel.getSelectedFeatureIds().size).toBe(0);
     expect(viewModel.getFeatures()).toHaveLength(0);
   });
+
+  it("selects only the current-time anchor vertex for point features", async () => {
+    let currentTime = new TimePoint(1000);
+    const shiftingPoint = new Point(
+      "feature-point-shift",
+      ["v-new"],
+      [
+        new Property(new TimePoint(1000), "Past", "", {}, new TimePoint(1000), new TimePoint(2000)),
+        new Property(new TimePoint(2000), "Future", "", {}, new TimePoint(2000), null)
+      ],
+      "layer-visible",
+      [
+        createAnchor({
+          id: "anchor-point-1000",
+          startYear: 1000,
+          endYear: 2000,
+          name: "Past",
+          vertexId: "v-old",
+          layerId: "layer-visible"
+        }),
+        createAnchor({
+          id: "anchor-point-2000",
+          startYear: 2000,
+          endYear: null,
+          name: "Future",
+          vertexId: "v-new",
+          layerId: "layer-visible"
+        })
+      ]
+    );
+
+    const worldFactory = () => ({
+      features: [shiftingPoint],
+      vertices: [
+        { id: "v-old", x: 0, y: 0 },
+        { id: "v-new", x: 1, y: 1 }
+      ],
+      layers: [{ id: "layer-visible", visible: true }],
+      metadata: { settings: { sliderMin: 0, sliderMax: 3000 } }
+    });
+
+    const { viewModel } = setupViewModel(worldFactory, () => currentTime);
+    await viewModel.loadWorld();
+
+    viewModel.selectVertex("v-old");
+    expect([...viewModel.getSelectedVertexIds()]).toEqual(["v-old"]);
+
+    viewModel.selectVertex("v-new");
+    expect([...viewModel.getSelectedVertexIds()]).toEqual([]);
+  });
 });
 
 const createNavigateTimeUseCase = () => ({

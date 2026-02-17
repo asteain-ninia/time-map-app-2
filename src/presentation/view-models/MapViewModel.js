@@ -1,8 +1,5 @@
 // src/presentation/view-models/MapViewModel.js
 
-import { Point as DomainPoint } from '../../domain/entities/Point.js';
-import { Line as DomainLine } from '../../domain/entities/Line.js';
-import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { UpdateProjectSettingsUseCase } from '../../application/usecases/UpdateProjectSettingsUseCase.js'; // 型チェック用
 import {
   applyDefaultPropertyTimeRange,
@@ -29,6 +26,7 @@ import {
   analyzeVertexSelection as analyzeVertexSelectionState,
   clearSelection as clearSelectionState,
   findOwningFeatureIdsForVertex as findOwningFeatureIdsForVertexState,
+  getFeatureVertexIdsAtTime,
   hoverFeature as hoverFeatureState,
   hoverVertex as hoverVertexState,
   selectFeature as selectFeatureState,
@@ -170,12 +168,8 @@ export class MapViewModel {
             if (currentVertexIds.has(id)) {
                 // この頂点が現在表示中の地物のいずれかに属しているかチェック (リングベース対応)
                  const vertexIsVisible = this._features.some(f => {
-                     if (f instanceof DomainPolygon) {
-                         return f.rings?.some(ring => ring.vertexIds.includes(id));
-                     } else if (f instanceof DomainLine || f instanceof DomainPoint) {
-                         return f.vertexIds?.includes(id);
-                     }
-                     return false;
+                     const ids = getFeatureVertexIdsAtTime(f, currentTime);
+                     return ids.includes(id);
                  });
                  if (vertexIsVisible) {
                     existingSelectedVertexIds.add(id);
@@ -419,9 +413,7 @@ export class MapViewModel {
                 (typeof f.getLayerIdAt === 'function'
                   ? f.getLayerIdAt(this._navigateTimeUseCase.getCurrentTime())
                   : f.layerId) !== layerId && // このレイヤー以外で
-                // リングベースで頂点が含まれるかチェック
-                ( (f instanceof DomainPolygon && f.rings?.some(r => r.vertexIds.includes(vertexId))) ||
-                  ((f instanceof DomainLine || f instanceof DomainPoint) && f.vertexIds?.includes(vertexId)) )
+                getFeatureVertexIdsAtTime(f, this._navigateTimeUseCase.getCurrentTime()).includes(vertexId)
             );
 
             if (belongsToOtherVisibleLayerFeature) {
