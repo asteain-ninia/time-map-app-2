@@ -5,6 +5,9 @@
 // ・executeとreverseメソッドは、対応するUseCaseのメソッドを呼び出すロジックを実装する。
 // ・このコメントは削除しないでください。
 
+import { FeatureAnchor } from '../../../../domain/value-objects/FeatureAnchor.js';
+import { Property } from '../../../../domain/value-objects/Property.js';
+
 /**
  * プロパティ更新操作をカプセル化するコマンド
  */
@@ -30,9 +33,10 @@ export class UpdatePropertiesCommand {
    * @returns {Promise<Object>} イベント発行のための情報
    */
   async execute() {
-    const { featureId, newProperties } = this._payload;
-    const newPropsInstances = newProperties.map(pPlain => this._serializer.deserialize(pPlain)).filter(Boolean);
-    const updateResult = await this._editFeatureUseCase.updateFeature(featureId, { properties: newPropsInstances });
+    const { featureId } = this._payload;
+    const timelineData = this._payload.newAnchors || this._payload.newProperties || [];
+    const updatePayload = this._buildTimelineUpdatePayload(timelineData);
+    const updateResult = await this._editFeatureUseCase.updateFeature(featureId, updatePayload);
     const updatedFeature = updateResult.feature;
     return { updatedFeature };
   }
@@ -42,10 +46,31 @@ export class UpdatePropertiesCommand {
    * @returns {Promise<Object>} イベント発行のための情報
    */
   async reverse() {
-    const { featureId, oldProperties } = this._payload;
-    const oldPropsInstances = oldProperties.map(pPlain => this._serializer.deserialize(pPlain)).filter(Boolean);
-    const updateResult = await this._editFeatureUseCase.updateFeature(featureId, { properties: oldPropsInstances });
+    const { featureId } = this._payload;
+    const timelineData = this._payload.oldAnchors || this._payload.oldProperties || [];
+    const updatePayload = this._buildTimelineUpdatePayload(timelineData);
+    const updateResult = await this._editFeatureUseCase.updateFeature(featureId, updatePayload);
     const revertedFeature = updateResult.feature;
     return { updatedFeature: revertedFeature };
+  }
+
+  _buildTimelineUpdatePayload(serializedTimeline) {
+    const deserialized = (serializedTimeline || [])
+      .map(entry => this._serializer.deserialize(entry))
+      .filter(Boolean);
+
+    if (deserialized.length === 0) {
+      return { properties: [] };
+    }
+
+    if (deserialized.every(entry => entry instanceof FeatureAnchor)) {
+      return { anchors: deserialized };
+    }
+
+    if (deserialized.every(entry => entry instanceof Property)) {
+      return { properties: deserialized };
+    }
+
+    throw new Error('履歴タイムラインの形式が不正です。');
   }
 }

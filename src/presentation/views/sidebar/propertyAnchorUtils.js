@@ -1,3 +1,4 @@
+import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
 import { Property } from '../../../domain/value-objects/Property.js';
 
 export function getPropertyStartAnchor(property) {
@@ -48,6 +49,10 @@ function clonePropertyWithEndTime(property, endTime) {
   );
 }
 
+function cloneAnchorWithEndTime(anchor, endTime) {
+  return anchor.withTimeRange(anchor.startTime, endTime);
+}
+
 function isSameTimePoint(left, right) {
   if (!left || !right) {
     return false;
@@ -60,6 +65,7 @@ export function buildAnchorDeletionPlan(properties, targetAnchorKey) {
   if (sorted.length <= 1) {
     throw new Error('最後の履歴アンカーは削除できません。');
   }
+  const isAnchorTimeline = sorted.every(entry => entry instanceof FeatureAnchor);
 
   const deleteIndex = sorted.findIndex(property =>
     getAnchorKey(getPropertyStartAnchor(property)) === targetAnchorKey
@@ -83,9 +89,13 @@ export function buildAnchorDeletionPlan(properties, targetAnchorKey) {
       (deletedStart && isSameTimePoint(previousEnd, deletedStart));
 
     if (shouldBridge) {
-      remaining[previousIndex] = clonePropertyWithEndTime(previous, nextStart || null);
+      remaining[previousIndex] = isAnchorTimeline
+        ? cloneAnchorWithEndTime(previous, nextStart || null)
+        : clonePropertyWithEndTime(previous, nextStart || null);
     } else if (previousEnd && nextStart && nextStart.isBefore(previousEnd)) {
-      remaining[previousIndex] = clonePropertyWithEndTime(previous, nextStart);
+      remaining[previousIndex] = isAnchorTimeline
+        ? cloneAnchorWithEndTime(previous, nextStart)
+        : clonePropertyWithEndTime(previous, nextStart);
     }
   }
 
@@ -94,13 +104,24 @@ export function buildAnchorDeletionPlan(properties, targetAnchorKey) {
     const next = remaining[index + 1];
     const nextStart = getPropertyStartAnchor(next);
     if (current.endTime && nextStart && nextStart.isBefore(current.endTime)) {
-      remaining[index] = clonePropertyWithEndTime(current, nextStart);
+      remaining[index] = isAnchorTimeline
+        ? cloneAnchorWithEndTime(current, nextStart)
+        : clonePropertyWithEndTime(current, nextStart);
     }
   }
 
   const selectionIndex = Math.min(deleteIndex, remaining.length - 1);
   const selectionProperty = remaining[selectionIndex];
   const nextSelectionKey = getAnchorKey(getPropertyStartAnchor(selectionProperty));
+
+  if (isAnchorTimeline) {
+    return {
+      updatedAnchors: remaining,
+      updatedProperties: remaining.map(anchor => anchor.toPropertyProjection()),
+      removedAnchor: deleted,
+      nextSelectionKey
+    };
+  }
 
   return {
     updatedProperties: remaining,

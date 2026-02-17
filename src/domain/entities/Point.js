@@ -106,6 +106,26 @@ export class Point extends Feature {
   }
 
   /**
+   * 新しい履歴アンカーの配列で新インスタンスを作成
+   * @param {FeatureAnchor[]} anchors - 新しい履歴アンカー配列
+   * @returns {Point} 新しい点情報オブジェクト
+   */
+  withAnchors(anchors) {
+    const normalizedAnchors = Feature._normalizeAnchors(this._id, anchors);
+    if (normalizedAnchors.length === 0) {
+      throw new Error(`Point.withAnchors expects at least one anchor. (id: ${this._id})`);
+    }
+    const latestAnchor = normalizedAnchors[normalizedAnchors.length - 1];
+    const latestVertexId = latestAnchor?.shape?.type === 'Point' && typeof latestAnchor.shape?.vertexId === 'string'
+      ? latestAnchor.shape.vertexId
+      : this.getVertexIdAt(null);
+    const layerId = typeof latestAnchor?.placement?.layerId === 'string'
+      ? latestAnchor.placement.layerId
+      : this._layerId;
+    return new Point(this._id, [latestVertexId], this._properties, layerId, normalizedAnchors);
+  }
+
+  /**
    * 新しいプロパティの配列で新インスタンスを作成
    * @param {Property[]} properties - 新しいプロパティの配列
    * @returns {Point} 新しい点情報オブジェクト
@@ -119,7 +139,7 @@ export class Point extends Feature {
       buildPointShape(this._vertexIds[0]),
       buildPointPlacement(this._layerId)
     );
-    return new Point(this._id, this._vertexIds, normalized, this._layerId, nextAnchors);
+    return this.withAnchors(nextAnchors);
   }
 
   /**

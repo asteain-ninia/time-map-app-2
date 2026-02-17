@@ -101,19 +101,24 @@ export class NavigateTimeUseCase {
     const current = this._currentTime;
     let nextTime = null;
 
-    // すべてののプロパティを検索して現在より未来の最も近い時間点を見つける
+    // すべての履歴アンカーを検索して現在より未来の最も近い時間点を見つける
     for (const feature of features) {
-      for (const prop of feature.properties) {
-        if (prop.timePoint.isBefore(current)) {
+      const timelineEntries = this._getTimelineEntries(feature);
+      for (const entry of timelineEntries) {
+        const startTime = this._getEntryStartTime(entry);
+        if (!(startTime instanceof TimePoint)) {
+          continue;
+        }
+        if (startTime.isBefore(current)) {
           continue; // 過去の時間点はスキップ
         }
 
-        if (prop.timePoint.equals(current)) {
+        if (startTime.equals(current)) {
           continue; // 現在と同じ時間点はスキップ
         }
 
-        if (nextTime === null || prop.timePoint.isBefore(nextTime)) {
-          nextTime = prop.timePoint;
+        if (nextTime === null || startTime.isBefore(nextTime)) {
+          nextTime = startTime;
         }
       }
     }
@@ -134,19 +139,24 @@ export class NavigateTimeUseCase {
     const current = this._currentTime;
     let prevTime = null;
 
-    // すべてののプロパティを検索して現在より過去の最も近い時間点を見つける
+    // すべての履歴アンカーを検索して現在より過去の最も近い時間点を見つける
     for (const feature of features) {
-      for (const prop of feature.properties) {
-        if (current.isBefore(prop.timePoint)) {
+      const timelineEntries = this._getTimelineEntries(feature);
+      for (const entry of timelineEntries) {
+        const startTime = this._getEntryStartTime(entry);
+        if (!(startTime instanceof TimePoint)) {
+          continue;
+        }
+        if (current.isBefore(startTime)) {
           continue; // 未来の時間点はスキップ
         }
 
-        if (prop.timePoint.equals(current)) {
+        if (startTime.equals(current)) {
           continue; // 現在と同じ時間点はスキップ
         }
 
-        if (prevTime === null || prevTime.isBefore(prop.timePoint)) {
-          prevTime = prop.timePoint;
+        if (prevTime === null || prevTime.isBefore(startTime)) {
+          prevTime = startTime;
         }
       }
     }
@@ -164,5 +174,25 @@ export class NavigateTimeUseCase {
 
   getDaysInMonth(year, month) {
     return this._timeService.getDaysInMonth(year, month);
+  }
+
+  _getTimelineEntries(feature) {
+    if (!feature || typeof feature !== 'object') {
+      return [];
+    }
+    if (Array.isArray(feature.anchors) && feature.anchors.length > 0) {
+      return feature.anchors;
+    }
+    if (Array.isArray(feature.properties)) {
+      return feature.properties;
+    }
+    return [];
+  }
+
+  _getEntryStartTime(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return null;
+    }
+    return entry.startTime || entry.timePoint || null;
   }
 }

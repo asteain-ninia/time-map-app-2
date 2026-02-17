@@ -75,6 +75,29 @@ export class Line extends Feature {
   }
 
   /**
+   * 新しい履歴アンカーの配列で新インスタンスを作成
+   * @param {FeatureAnchor[]} anchors - 新しい履歴アンカー配列
+   * @returns {Line} 新しい線情報オブジェクト
+   */
+  withAnchors(anchors) {
+    const normalizedAnchors = Feature._normalizeAnchors(this._id, anchors);
+    if (normalizedAnchors.length === 0) {
+      throw new Error(`Line.withAnchors expects at least one anchor. (id: ${this._id})`);
+    }
+    const latestAnchor = normalizedAnchors[normalizedAnchors.length - 1];
+    const latestVertexIds = latestAnchor?.shape?.type === 'LineString' && Array.isArray(latestAnchor.shape?.vertexIds)
+      ? [...latestAnchor.shape.vertexIds]
+      : this.getVertexIdsAt(null);
+    if (latestVertexIds.length < 2) {
+      throw new Error(`Line.withAnchors requires at least two vertexIds. (id: ${this._id})`);
+    }
+    const layerId = typeof latestAnchor?.placement?.layerId === 'string'
+      ? latestAnchor.placement.layerId
+      : this._layerId;
+    return new Line(this._id, latestVertexIds, this._properties, layerId, normalizedAnchors);
+  }
+
+  /**
    * 新しいプロパティの配列で新インスタンスを作成
    * @param {Property[]} properties - 新しいプロパティの配列
    * @returns {Line} 新しい線情報オブジェクト
@@ -88,7 +111,7 @@ export class Line extends Feature {
       buildLineShape(this._vertexIds),
       buildLinePlacement(this._layerId)
     );
-    return new Line(this._id, this._vertexIds, normalized, this._layerId, nextAnchors);
+    return this.withAnchors(nextAnchors);
   }
 
   /**

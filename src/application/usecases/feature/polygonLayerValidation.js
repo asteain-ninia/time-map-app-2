@@ -3,10 +3,13 @@ import { Property } from '../../../domain/value-objects/Property.js';
 import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
 
 function getPropertyStartAnchor(property) {
-  if (!(property instanceof Property)) {
+  if (!property || typeof property !== 'object') {
     return null;
   }
-  return property.startTime || property.timePoint || null;
+  if (property instanceof Property) {
+    return property.startTime || property.timePoint || null;
+  }
+  return property.startTime || null;
 }
 
 function compareTimePoints(left, right) {
@@ -20,17 +23,20 @@ function collectValidationTimePoints(polygons) {
   const unique = new Map();
 
   for (const polygon of polygons) {
-    if (!(polygon instanceof Polygon) || !Array.isArray(polygon.properties)) {
+    if (!(polygon instanceof Polygon)) {
       continue;
     }
+    const timelineEntries = Array.isArray(polygon.anchors) && polygon.anchors.length > 0
+      ? polygon.anchors
+      : (Array.isArray(polygon.properties) ? polygon.properties : []);
 
-    for (const property of polygon.properties) {
-      const start = getPropertyStartAnchor(property);
+    for (const entry of timelineEntries) {
+      const start = getPropertyStartAnchor(entry);
       if (start instanceof TimePoint) {
         unique.set(`${start.year}:${start.month ?? 'null'}:${start.day ?? 'null'}`, start);
       }
 
-      const end = property instanceof Property ? property.endTime : null;
+      const end = entry instanceof Property ? entry.endTime : entry?.endTime ?? null;
       if (end instanceof TimePoint) {
         unique.set(`${end.year}:${end.month ?? 'null'}:${end.day ?? 'null'}`, end);
       }

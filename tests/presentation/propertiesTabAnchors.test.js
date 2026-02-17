@@ -199,10 +199,10 @@ describe('PropertiesTabView anchor UI', () => {
     deleteAnchorButton.click();
     await flushAsync();
 
-    const [, updatedProperties] = editingViewModel.updateFeatureProperties.mock.calls[0];
-    expect(Array.isArray(updatedProperties)).toBe(true);
-    expect(updatedProperties.map(property => property.startTime.year)).toEqual([1000, 1300]);
-    expect(updatedProperties[0].endTime.equals(new TimePoint(1300))).toBe(true);
+    const [, updatedAnchors] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    expect(Array.isArray(updatedAnchors)).toBe(true);
+    expect(updatedAnchors.map(anchor => anchor.startTime.year)).toEqual([1000, 1300]);
+    expect(updatedAnchors[0].endTime.equals(new TimePoint(1300))).toBe(true);
   });
 
   it('keeps gap when deleting anchor after an explicit non-bridging end time', async () => {
@@ -220,9 +220,9 @@ describe('PropertiesTabView anchor UI', () => {
     getButtonByText(parent, '選択アンカー削除').click();
     await flushAsync();
 
-    const [, updatedProperties] = editingViewModel.updateFeatureProperties.mock.calls[0];
-    expect(updatedProperties[0].endTime.equals(new TimePoint(1050))).toBe(true);
-    expect(updatedProperties[1].startTime.equals(new TimePoint(1300))).toBe(true);
+    const [, updatedAnchors] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    expect(updatedAnchors[0].endTime.equals(new TimePoint(1050))).toBe(true);
+    expect(updatedAnchors[1].startTime.equals(new TimePoint(1300))).toBe(true);
   });
 
   it('deletes first anchor', async () => {
@@ -240,8 +240,8 @@ describe('PropertiesTabView anchor UI', () => {
     getButtonByText(parent, '選択アンカー削除').click();
     await flushAsync();
 
-    const [, updatedProperties] = editingViewModel.updateFeatureProperties.mock.calls[0];
-    expect(updatedProperties.map(property => property.startTime.year)).toEqual([1100, 1300]);
+    const [, updatedAnchors] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    expect(updatedAnchors.map(anchor => anchor.startTime.year)).toEqual([1100, 1300]);
   });
 
   it('deletes last anchor and normalizes previous end time to open-ended', async () => {
@@ -259,9 +259,9 @@ describe('PropertiesTabView anchor UI', () => {
     getButtonByText(parent, '選択アンカー削除').click();
     await flushAsync();
 
-    const [, updatedProperties] = editingViewModel.updateFeatureProperties.mock.calls[0];
-    expect(updatedProperties.map(property => property.startTime.year)).toEqual([1000, 1100]);
-    expect(updatedProperties[1].endTime).toBeNull();
+    const [, updatedAnchors] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    expect(updatedAnchors.map(anchor => anchor.startTime.year)).toEqual([1000, 1100]);
+    expect(updatedAnchors[1].endTime).toBeNull();
   });
 
   it('shows save failure message when timeline validation rejects end time', async () => {

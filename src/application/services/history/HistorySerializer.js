@@ -154,6 +154,8 @@ export class HistorySerializer {
           parentId: ring.parentId
         })) : []
       };
+    } else if (object instanceof FeatureAnchor) {
+      return this._serializeFeatureAnchor(object);
     } else if (object instanceof Property) {
       return serializeProperty(object);
     } else if (object instanceof TimePoint) {
@@ -202,6 +204,8 @@ export class HistorySerializer {
         case 'Property':
           // _deserializePropertyFromData は _constructorName を期待しないため、data をそのまま渡す
           return this._deserializePropertyFromData(data);
+        case 'FeatureAnchor':
+          return this._deserializeFeatureAnchorFromData(data);
         case 'Point':
           const pointProps = (data.properties || []).map(pData => this.deserialize(pData)).filter(p => p instanceof Property);
           const pointAnchors = (data.anchors || [])

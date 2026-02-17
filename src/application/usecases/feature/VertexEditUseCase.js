@@ -728,6 +728,10 @@ export class VertexEditUseCase {
   }
 
   _rebuildFeatureWithAnchors(feature, anchors) {
+    if (feature && typeof feature.withAnchors === 'function') {
+      return feature.withAnchors(anchors);
+    }
+
     if (feature instanceof Point) {
       const latestVertexId = typeof feature.getVertexIdAt === 'function'
         ? feature.getVertexIdAt(null)

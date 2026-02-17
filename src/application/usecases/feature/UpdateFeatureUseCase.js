@@ -6,6 +6,7 @@ import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon';
 import { Property } from '../../../domain/value-objects/Property';
 import { TimePoint } from '../../../domain/value-objects/TimePoint';
+import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor';
 import { IPolygonEditService } from '../../services/IPolygonEditService.js';
 import { WorldRepository } from '../../WorldRepository.js'; // 型チェック用 (循環参照注意)
 import {
@@ -90,29 +91,35 @@ export class UpdateFeatureUseCase {
     let newlyAddedVerticesDataForHistory = [];
     const conflictResolvedFeatureIds = new Set();
 
-    if (updates.propertyEdit && updates.properties) {
-      throw new Error('propertyEdit と properties は同時に指定できません。');
+    const timelineEditPayload = updates.anchorEdit || updates.propertyEdit || null;
+    const timelineReplacePayload = updates.anchors || updates.properties || null;
+    if (updates.anchorEdit && updates.propertyEdit) {
+      throw new Error('anchorEdit と propertyEdit は同時に指定できません。');
+    }
+    if (updates.anchors && updates.properties) {
+      throw new Error('anchors と properties は同時に指定できません。');
+    }
+    if (timelineEditPayload && timelineReplacePayload) {
+      throw new Error('時間軸編集と履歴全量置換は同時に指定できません。');
     }
 
     // プロパティ更新
-    if (updates.propertyEdit) {
-      const mergedProperties = this._buildPropertiesForEditTime(updatedFeature, updates.propertyEdit);
-      if (updatedFeature && typeof updatedFeature.withProperties === 'function') {
-        updatedFeature = updatedFeature.withProperties(mergedProperties);
+    if (timelineEditPayload) {
+      const mergedAnchors = this._buildAnchorsForEditTime(updatedFeature, timelineEditPayload);
+      updatedFeature = this._applyAnchorsToFeature(updatedFeature, mergedAnchors, featureId);
+    } else if (timelineReplacePayload) {
+      let normalizedAnchors;
+      if (Array.isArray(updates.anchors)) {
+        normalizedAnchors = this._normalizeAndValidateAnchorTimeline(updates.anchors);
+      } else if (Array.isArray(updates.properties)) {
+        if (updates.properties.length === 0 || !updates.properties.every(prop => prop instanceof Property)) {
+          throw new Error("Invalid properties format for UpdateFeatureUseCase: must be a non-empty array of Property instances. Received:" + JSON.stringify(updates.properties));
+        }
+        normalizedAnchors = this._buildAnchorsFromProperties(updatedFeature, updates.properties);
       } else {
-        throw new Error(`Invalid feature object or missing withProperties method for ID: ${featureId}`);
+        throw new Error('履歴更新の形式が不正です。');
       }
-    } else if (updates.properties) {
-      // updates.properties が Property インスタンス配列であることをバリデーション
-      if (!Array.isArray(updates.properties) || updates.properties.length === 0 || !updates.properties.every(prop => prop instanceof Property)) {
-        throw new Error("Invalid properties format for UpdateFeatureUseCase: must be a non-empty array of Property instances. Received:" + JSON.stringify(updates.properties));
-      }
-      const normalizedProperties = this._normalizeAndValidatePropertyTimeline(updates.properties);
-      if (updatedFeature && typeof updatedFeature.withProperties === 'function') {
-        updatedFeature = updatedFeature.withProperties(normalizedProperties);
-      } else {
-        throw new Error(`Invalid feature object or missing withProperties method for ID: ${featureId}`);
-      }
+      updatedFeature = this._applyAnchorsToFeature(updatedFeature, normalizedAnchors, featureId);
     }
 
     // ジオメトリ更新
@@ -215,11 +222,11 @@ export class UpdateFeatureUseCase {
 
     if (updatedFeature instanceof Polygon) {
       try {
-        if (updates.propertyEdit) {
+        if (timelineEditPayload) {
           const resolvedIds = this._resolvePropertyEditConflictsOrThrow(
             updatedFeature,
             world,
-            updates.propertyEdit.conflictResolutions
+            timelineEditPayload.conflictResolutions
           );
           resolvedIds.forEach(id => conflictResolvedFeatureIds.add(id));
           const refreshedFeature = world.features.find(feature => feature.id === featureId);
@@ -264,88 +271,185 @@ export class UpdateFeatureUseCase {
     };
 }
 
-  _buildPropertiesForEditTime(feature, propertyEdit) {
-    if (!propertyEdit || typeof propertyEdit !== 'object') {
-      throw new Error('propertyEdit の形式が不正です。');
+  _buildAnchorsForEditTime(feature, anchorEdit) {
+    if (!anchorEdit || typeof anchorEdit !== 'object') {
+      throw new Error('anchorEdit の形式が不正です。');
     }
 
-    const editTime = propertyEdit.editTime;
+    const editTime = anchorEdit.editTime;
     if (!(editTime instanceof TimePoint)) {
       throw new Error('編集時刻は TimePoint で指定してください。');
     }
 
-    if (propertyEdit.startTime !== undefined && propertyEdit.startTime !== null) {
-      if (!(propertyEdit.startTime instanceof TimePoint)) {
+    if (anchorEdit.startTime !== undefined && anchorEdit.startTime !== null) {
+      if (!(anchorEdit.startTime instanceof TimePoint)) {
         throw new Error('存在開始は TimePoint で指定してください。');
       }
-      if (!propertyEdit.startTime.equals(editTime)) {
+      if (!anchorEdit.startTime.equals(editTime)) {
         throw new Error('存在開始はタイムラインの現在時刻と一致させてください。');
       }
     }
 
-    let existing = Array.isArray(feature.properties) ? [...feature.properties] : [];
+    let existing = this._getFeatureAnchors(feature);
     if (existing.length === 0) {
       throw new Error('編集対象の履歴アンカーが存在しません。');
     }
+    existing = this._normalizeAndValidateAnchorTimeline(existing);
 
-    existing = this._normalizeAndValidatePropertyTimeline(existing);
-
-    const exactAnchorIndex = existing.findIndex(property => {
-      const start = this._getPropertyStartAnchor(property);
-      return start instanceof TimePoint && start.equals(editTime);
-    });
-
-    const activeProperty = typeof feature.getPropertyAt === 'function'
-      ? feature.getPropertyAt(editTime)
+    const exactAnchorIndex = existing.findIndex(anchor => anchor.startTime.equals(editTime));
+    const activeAnchor = typeof feature.getAnchorAt === 'function'
+      ? feature.getAnchorAt(editTime)
       : null;
-    if (exactAnchorIndex === -1 && !(activeProperty instanceof Property)) {
+    if (exactAnchorIndex === -1 && !(activeAnchor instanceof FeatureAnchor)) {
       throw new Error('編集時刻で有効な履歴アンカーが見つかりません。');
     }
 
     const activeAnchorIndex = exactAnchorIndex !== -1
       ? exactAnchorIndex
-      : this._findActiveAnchorIndex(existing, activeProperty, editTime);
-    const baseProperty = exactAnchorIndex !== -1 ? existing[exactAnchorIndex] : activeProperty;
-    const nextFutureAnchorStart = this._findNextFutureAnchorStart(existing, editTime);
-    const hasExplicitEndTime = Object.prototype.hasOwnProperty.call(propertyEdit, 'endTime');
-    const requestedEndTime = hasExplicitEndTime ? propertyEdit.endTime : baseProperty.endTime;
-    const normalizedEndTime = this._normalizePropertyEndTime(editTime, requestedEndTime, nextFutureAnchorStart);
+      : this._findActiveAnchorIndex(existing, activeAnchor, editTime);
+    if (activeAnchorIndex === -1) {
+      throw new Error('編集時刻で有効な履歴アンカーが見つかりません。');
+    }
 
-    const mergedProperty = new Property(
-      editTime,
-      typeof propertyEdit.name === 'string' ? propertyEdit.name : baseProperty.name,
-      typeof propertyEdit.description === 'string' ? propertyEdit.description : baseProperty.description,
-      baseProperty.getAttributes(),
-      editTime,
-      normalizedEndTime
-    );
+    const baseAnchor = exactAnchorIndex !== -1 ? existing[exactAnchorIndex] : existing[activeAnchorIndex];
+    const nextFutureAnchorStart = this._findNextFutureAnchorStart(existing, editTime);
+    const hasExplicitEndTime = Object.prototype.hasOwnProperty.call(anchorEdit, 'endTime');
+    const requestedEndTime = hasExplicitEndTime ? anchorEdit.endTime : baseAnchor.endTime;
+    const normalizedEndTime = this._normalizeAnchorEndTime(editTime, requestedEndTime, nextFutureAnchorStart);
+
+    const mergedAnchor = new FeatureAnchor({
+      id: exactAnchorIndex !== -1
+        ? baseAnchor.id
+        : this._buildGeneratedAnchorId(feature.id, editTime, existing),
+      timeRange: { start: editTime, end: normalizedEndTime },
+      property: {
+        name: typeof anchorEdit.name === 'string' ? anchorEdit.name : baseAnchor.name,
+        description: typeof anchorEdit.description === 'string' ? anchorEdit.description : baseAnchor.description,
+        attributes: baseAnchor.getAttributes()
+      },
+      shape: baseAnchor.shape,
+      placement: baseAnchor.placement
+    });
 
     const merged = [...existing];
     if (exactAnchorIndex === -1) {
-      merged.push(mergedProperty);
-      if (activeAnchorIndex !== -1) {
-        const sourceProperty = merged[activeAnchorIndex];
-        const sourceStart = this._getPropertyStartAnchor(sourceProperty);
-        if (
-          sourceStart instanceof TimePoint &&
-          sourceStart.isBefore(editTime) &&
-          (!sourceProperty.endTime || editTime.isBefore(sourceProperty.endTime))
-        ) {
-          merged[activeAnchorIndex] = new Property(
-            sourceProperty.timePoint,
-            sourceProperty.name,
-            sourceProperty.description,
-            sourceProperty.getAttributes(),
-            sourceProperty.startTime || sourceProperty.timePoint,
-            editTime
-          );
-        }
+      merged.push(mergedAnchor);
+      const sourceAnchor = merged[activeAnchorIndex];
+      if (
+        sourceAnchor.startTime.isBefore(editTime) &&
+        (!sourceAnchor.endTime || editTime.isBefore(sourceAnchor.endTime))
+      ) {
+        merged[activeAnchorIndex] = sourceAnchor.withTimeRange(sourceAnchor.startTime, editTime);
       }
     } else {
-      merged[exactAnchorIndex] = mergedProperty;
+      merged[exactAnchorIndex] = mergedAnchor;
     }
 
-    return this._normalizeAndValidatePropertyTimeline(merged);
+    return this._normalizeAndValidateAnchorTimeline(merged);
+  }
+
+  _applyAnchorsToFeature(feature, anchors, featureId) {
+    if (!feature || typeof feature.withAnchors !== 'function') {
+      throw new Error(`Invalid feature object or missing withAnchors method for ID: ${featureId}`);
+    }
+    return feature.withAnchors(anchors);
+  }
+
+  _getFeatureAnchors(feature) {
+    if (Array.isArray(feature.anchors) && feature.anchors.length > 0) {
+      return [...feature.anchors];
+    }
+
+    const properties = Array.isArray(feature.properties) ? [...feature.properties] : [];
+    if (properties.length === 0) {
+      return [];
+    }
+
+    const normalizedProperties = this._normalizeAndValidatePropertyTimeline(properties);
+    const fallbackShape = this._buildFallbackShape(feature);
+    const fallbackPlacement = this._buildFallbackPlacement(feature);
+    return normalizedProperties.map((property, index) => FeatureAnchor.fromProperty(
+      property,
+      fallbackShape,
+      fallbackPlacement,
+      `anchor-${feature.id}-${index + 1}`
+    ));
+  }
+
+  _buildAnchorsFromProperties(feature, properties) {
+    const normalizedProperties = this._normalizeAndValidatePropertyTimeline(properties);
+    const existingAnchors = this._getFeatureAnchors(feature);
+    const fallbackShape = this._buildFallbackShape(feature);
+    const fallbackPlacement = this._buildFallbackPlacement(feature);
+
+    if (existingAnchors.length > 0) {
+      const synced = Feature._syncAnchorsWithProperties(
+        feature.id,
+        existingAnchors,
+        normalizedProperties,
+        fallbackShape,
+        fallbackPlacement
+      );
+      return this._normalizeAndValidateAnchorTimeline(synced);
+    }
+
+    const created = normalizedProperties.map((property, index) => FeatureAnchor.fromProperty(
+      property,
+      fallbackShape,
+      fallbackPlacement,
+      `anchor-${feature.id}-${index + 1}`
+    ));
+    return this._normalizeAndValidateAnchorTimeline(created);
+  }
+
+  _buildFallbackShape(feature) {
+    if (feature instanceof Point) {
+      const vertexId = typeof feature.getVertexIdAt === 'function'
+        ? feature.getVertexIdAt(null)
+        : feature.vertexId;
+      return { type: 'Point', vertexId };
+    }
+    if (feature instanceof Line) {
+      const vertexIds = typeof feature.getVertexIdsAt === 'function'
+        ? feature.getVertexIdsAt(null)
+        : feature.vertexIds;
+      return { type: 'LineString', vertexIds: Array.isArray(vertexIds) ? [...vertexIds] : [] };
+    }
+    if (feature instanceof Polygon) {
+      const rings = typeof feature.getRingsAt === 'function'
+        ? feature.getRingsAt(null)
+        : feature.rings;
+      return {
+        type: 'Polygon',
+        rings: this._clonePolygonRings(rings)
+      };
+    }
+    return {};
+  }
+
+  _buildFallbackPlacement(feature) {
+    if (feature instanceof Polygon) {
+      const placement = typeof feature.getPlacementAt === 'function'
+        ? feature.getPlacementAt(null)
+        : { layerId: feature.layerId, parentId: feature.parentId, childIds: feature.childIds };
+      return {
+        layerId: typeof placement.layerId === 'string' ? placement.layerId : feature.layerId,
+        parentId: typeof placement.parentId === 'string' ? placement.parentId : '0',
+        childIds: Array.isArray(placement.childIds) ? [...placement.childIds] : []
+      };
+    }
+    return { layerId: feature.layerId };
+  }
+
+  _clonePolygonRings(rings) {
+    return Array.isArray(rings)
+      ? rings.map(ring => ({
+          id: ring.id,
+          vertexIds: Array.isArray(ring.vertexIds) ? [...ring.vertexIds] : [],
+          ringType: ring.ringType,
+          parentId: ring.parentId ?? null
+        }))
+      : [];
   }
 
   _getPropertyStartAnchor(property) {
@@ -369,39 +473,47 @@ export class UpdateFeatureUseCase {
     return 0;
   }
 
-  _findNextFutureAnchorStart(properties, editTime) {
-    for (const property of properties) {
-      const start = this._getPropertyStartAnchor(property);
-      if (start instanceof TimePoint && editTime.isBefore(start)) {
-        return start;
+  _compareAnchorStartTimes(left, right) {
+    if (!(left instanceof FeatureAnchor) || !(right instanceof FeatureAnchor)) {
+      return 0;
+    }
+    if (left.startTime.equals(right.startTime)) {
+      return 0;
+    }
+    return left.startTime.isBefore(right.startTime) ? -1 : 1;
+  }
+
+  _findNextFutureAnchorStart(anchors, editTime) {
+    for (const anchor of anchors) {
+      if (editTime.isBefore(anchor.startTime)) {
+        return anchor.startTime;
       }
     }
     return null;
   }
 
-  _findActiveAnchorIndex(properties, activeProperty, editTime) {
-    const byReference = properties.findIndex(property => property === activeProperty);
+  _findActiveAnchorIndex(anchors, activeAnchor, editTime) {
+    const byReference = anchors.findIndex(anchor =>
+      anchor === activeAnchor ||
+      (activeAnchor instanceof FeatureAnchor && anchor.id === activeAnchor.id)
+    );
     if (byReference !== -1) {
       return byReference;
     }
 
-    for (let index = 0; index < properties.length; index += 1) {
-      const property = properties[index];
-      const start = this._getPropertyStartAnchor(property);
-      if (!(start instanceof TimePoint)) {
-        continue;
-      }
-      if (editTime.isBefore(start)) {
+    for (let index = 0; index < anchors.length; index += 1) {
+      const anchor = anchors[index];
+      if (editTime.isBefore(anchor.startTime)) {
         break;
       }
-      if (property instanceof Property && property.isActiveAt(editTime)) {
+      if (anchor instanceof FeatureAnchor && anchor.isActiveAt(editTime)) {
         return index;
       }
     }
     return -1;
   }
 
-  _normalizePropertyEndTime(editTime, requestedEndTime, nextFutureAnchorStart) {
+  _normalizeAnchorEndTime(editTime, requestedEndTime, nextFutureAnchorStart) {
     if (requestedEndTime !== null && requestedEndTime !== undefined) {
       if (!(requestedEndTime instanceof TimePoint)) {
         throw new Error('存在終了は TimePoint で指定してください。');
@@ -419,6 +531,69 @@ export class UpdateFeatureUseCase {
       return nextFutureAnchorStart;
     }
     return null;
+  }
+
+  _normalizeAndValidateAnchorTimeline(anchors) {
+    const sorted = [...anchors];
+    sorted.sort((left, right) => this._compareAnchorStartTimes(left, right));
+
+    const seenAnchors = [];
+    for (let index = 0; index < sorted.length; index += 1) {
+      const anchor = sorted[index];
+      if (!(anchor instanceof FeatureAnchor)) {
+        throw new Error('履歴アンカーが FeatureAnchor ではありません。');
+      }
+
+      const start = anchor.startTime;
+      if (!(start instanceof TimePoint)) {
+        throw new Error('履歴アンカーの開始時刻が不正です。');
+      }
+      if (seenAnchors.some(existing => existing.equals(start))) {
+        throw new Error('同一時刻の歴史の錨が重複しています。');
+      }
+
+      const endTime = anchor.endTime;
+      if (endTime !== null && endTime !== undefined) {
+        if (!(endTime instanceof TimePoint)) {
+          throw new Error('存在終了は TimePoint で指定してください。');
+        }
+        if (!start.isBefore(endTime)) {
+          throw new Error('存在終了は開始時刻より後に設定してください。');
+        }
+      }
+
+      const nextAnchor = sorted[index + 1];
+      if (nextAnchor) {
+        if (!(nextAnchor instanceof FeatureAnchor)) {
+          throw new Error('履歴アンカーが FeatureAnchor ではありません。');
+        }
+        if (endTime instanceof TimePoint && nextAnchor.startTime.isBefore(endTime)) {
+          throw new Error('存在終了は次の歴史の錨の開始時刻を超えられません。');
+        }
+      }
+
+      seenAnchors.push(start);
+    }
+
+    return sorted;
+  }
+
+  _buildGeneratedAnchorId(featureId, startTime, existingAnchors) {
+    const month = startTime.month ?? 'null';
+    const day = startTime.day ?? 'null';
+    const base = `anchor-${featureId}-${startTime.year}-${month}-${day}`;
+    const usedIds = new Set((existingAnchors || []).map(anchor => anchor.id));
+    if (!usedIds.has(base)) {
+      return base;
+    }
+
+    let suffix = 1;
+    let candidate = `${base}-${suffix}`;
+    while (usedIds.has(candidate)) {
+      suffix += 1;
+      candidate = `${base}-${suffix}`;
+    }
+    return candidate;
   }
 
   _normalizeAndValidatePropertyTimeline(properties) {
@@ -550,45 +725,38 @@ export class UpdateFeatureUseCase {
       throw new Error(`競合解決対象の地物が見つかりません: ${featureId}`);
     }
     const feature = world.features[featureIndex];
-    if (!feature || typeof feature.withProperties !== 'function') {
+    if (!feature || typeof feature.withAnchors !== 'function') {
       throw new Error(`競合解決対象の地物が更新できません: ${featureId}`);
     }
 
-    const properties = this._normalizeAndValidatePropertyTimeline(feature.properties || []);
-    const activePropertyIndex = properties.findIndex(property => property.isActiveAt(cutoffTime));
-    if (activePropertyIndex === -1) {
+    const anchors = this._normalizeAndValidateAnchorTimeline(this._getFeatureAnchors(feature));
+    const activeAnchorIndex = anchors.findIndex(anchor => anchor.isActiveAt(cutoffTime));
+    if (activeAnchorIndex === -1) {
       return false;
     }
 
-    const activeProperty = properties[activePropertyIndex];
-    const start = this._getPropertyStartAnchor(activeProperty);
+    const activeAnchor = anchors[activeAnchorIndex];
+    const start = activeAnchor.startTime;
     if (!(start instanceof TimePoint)) {
       throw new Error(`地物 ${featureId} の履歴アンカー開始時刻が不正です。`);
     }
 
-    const nextProperties = [...properties];
+    const nextAnchors = [...anchors];
 
     if (start.equals(cutoffTime)) {
-      if (nextProperties.length <= 1) {
+      if (nextAnchors.length <= 1) {
         throw new Error(`地物 ${featureId} の履歴アンカーが空になるため、この競合解決方針は適用できません。`);
       }
-      nextProperties.splice(activePropertyIndex, 1);
+      nextAnchors.splice(activeAnchorIndex, 1);
     } else {
-      if (activeProperty.endTime instanceof TimePoint && activeProperty.endTime.equals(cutoffTime)) {
+      if (activeAnchor.endTime instanceof TimePoint && activeAnchor.endTime.equals(cutoffTime)) {
         return false;
       }
-      nextProperties[activePropertyIndex] = new Property(
-        activeProperty.timePoint,
-        activeProperty.name,
-        activeProperty.description,
-        activeProperty.getAttributes(),
-        activeProperty.startTime || activeProperty.timePoint,
-        cutoffTime
-      );
+      nextAnchors[activeAnchorIndex] = activeAnchor.withTimeRange(activeAnchor.startTime, cutoffTime);
     }
 
-    const normalizedTimeline = this._normalizeAndValidatePropertyTimeline(nextProperties);
-    world.features[featureIndex] = feature.withProperties(normalizedTimeline);
+    const normalizedTimeline = this._normalizeAndValidateAnchorTimeline(nextAnchors);
+    world.features[featureIndex] = feature.withAnchors(normalizedTimeline);
     return true;
   }
 

@@ -1,4 +1,5 @@
 import { Polygon } from '../../../domain/entities/Polygon.js';
+import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
 import { Property } from '../../../domain/value-objects/Property.js';
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
 
@@ -63,22 +64,26 @@ export class SplitPolygonUseCase {
     const updatedRings = this._buildRingsFromPlan(ringsToKeepPlan, resolveVertexId);
     const newRings = this._buildRingsFromPlan(ringsToCreatePlan, resolveVertexId);
 
-    const updatedPolygon = new Polygon(
-      originalPolygon.id,
-      originalPolygon.properties,
-      originalPolygon.layerId,
-      originalPolygon.parentId,
-      originalPolygon.childIds,
-      updatedRings
-    );
+    const updatedPolygon = this._buildUpdatedPolygonWithAnchors(originalPolygon, updatedRings);
     const newPolygonId = this._generateId('polygon');
+    const newAnchor = FeatureAnchor.fromProperty(
+      newProperty,
+      this._buildPolygonShape(newRings),
+      {
+        layerId: originalPolygon.layerId,
+        parentId: originalPolygon.parentId,
+        childIds: []
+      },
+      `anchor-${newPolygonId}-1`
+    );
     const newPolygon = new Polygon(
       newPolygonId,
       [newProperty],
       originalPolygon.layerId,
       originalPolygon.parentId,
       [],
-      newRings
+      newRings,
+      [newAnchor]
     );
 
     const originalFeaturesSnapshot = world.features.slice();
@@ -164,7 +169,35 @@ export class SplitPolygonUseCase {
       id: ring.id,
       vertexIds: ring.vertexIds,
       ringType: ring.ringType,
-      parentId: ring.parentIndex !== null ? idByIndex.get(ring.parentIndex) : null
+        parentId: ring.parentIndex !== null ? idByIndex.get(ring.parentIndex) : null
     }));
+  }
+
+  _buildUpdatedPolygonWithAnchors(originalPolygon, updatedRings) {
+    if (Array.isArray(originalPolygon.anchors) && originalPolygon.anchors.length > 0) {
+      const nextShape = this._buildPolygonShape(updatedRings);
+      const nextAnchors = originalPolygon.anchors.map(anchor => anchor.withShape(nextShape));
+      return originalPolygon.withAnchors(nextAnchors);
+    }
+    return new Polygon(
+      originalPolygon.id,
+      originalPolygon.properties,
+      originalPolygon.layerId,
+      originalPolygon.parentId,
+      originalPolygon.childIds,
+      updatedRings
+    );
+  }
+
+  _buildPolygonShape(rings) {
+    return {
+      type: 'Polygon',
+      rings: (rings || []).map(ring => ({
+        id: ring.id,
+        vertexIds: [...ring.vertexIds],
+        ringType: ring.ringType,
+        parentId: ring.parentId ?? null
+      }))
+    };
   }
 }

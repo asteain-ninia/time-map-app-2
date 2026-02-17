@@ -1,4 +1,5 @@
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
+import { FeatureAnchor } from '../../domain/value-objects/FeatureAnchor.js';
 import { Property } from '../../domain/value-objects/Property.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { DeleteFeatureCommand } from '../../application/services/history/commands/DeleteFeatureCommand.js';
@@ -145,10 +146,17 @@ async function unlinkSharedVertex(vertexId, featureId) {
 async function updateFeatureProperties(featureId, propertyUpdate) {
   let updatePayload = null;
   if (Array.isArray(propertyUpdate)) {
-    if (propertyUpdate.length === 0 || !propertyUpdate.every(prop => prop instanceof Property)) {
-      throw new Error("Invalid newProperties format. Expected a non-empty array of Property instances.");
+    if (propertyUpdate.length === 0) {
+      throw new Error("Invalid newProperties format. Expected a non-empty timeline array.");
     }
-    updatePayload = { properties: propertyUpdate };
+    const isAnchorArray = propertyUpdate.every(entry => entry instanceof FeatureAnchor);
+    const isPropertyArray = propertyUpdate.every(entry => entry instanceof Property);
+    if (!isAnchorArray && !isPropertyArray) {
+      throw new Error("Invalid newProperties format. Expected an array of FeatureAnchor or Property instances.");
+    }
+    updatePayload = isAnchorArray
+      ? { anchors: propertyUpdate }
+      : { properties: propertyUpdate };
   } else if (propertyUpdate && typeof propertyUpdate === 'object') {
     updatePayload = {
       propertyEdit: {
@@ -177,7 +185,9 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
       }
       oldPropertiesByFeatureId.set(
         feature.id,
-        Array.isArray(feature.properties) ? [...feature.properties] : []
+        Array.isArray(feature.anchors) && feature.anchors.length > 0
+          ? [...feature.anchors]
+          : (Array.isArray(feature.properties) ? [...feature.properties] : [])
       );
     });
 
@@ -191,7 +201,9 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
       .filter(feature => feature && feature.id !== null && feature.id !== undefined)
       .map(feature => {
         const beforeProps = oldPropertiesByFeatureId.get(feature.id) || [];
-        const afterProps = Array.isArray(feature.properties) ? feature.properties : [];
+        const afterProps = Array.isArray(feature.anchors) && feature.anchors.length > 0
+          ? feature.anchors
+          : (Array.isArray(feature.properties) ? feature.properties : []);
         return {
           featureId: feature.id,
           oldProperties: beforeProps.map(property => this._historyService._serializer.serialize(property)),

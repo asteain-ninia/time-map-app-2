@@ -248,6 +248,35 @@ export class Polygon extends Feature {
   }
 
   /**
+   * 新しい履歴アンカーの配列で新インスタンスを作成
+   * @param {FeatureAnchor[]} anchors - 新しい履歴アンカー配列
+   * @returns {Polygon} 新しい面情報オブジェクト
+   */
+  withAnchors(anchors) {
+    const normalizedAnchors = Feature._normalizeAnchors(this._id, anchors);
+    if (normalizedAnchors.length === 0) {
+      throw new Error(`Polygon.withAnchors expects at least one anchor. (id: ${this._id})`);
+    }
+    const latestAnchor = normalizedAnchors[normalizedAnchors.length - 1];
+    const latestShapeRings = latestAnchor?.shape?.type === 'Polygon' && Array.isArray(latestAnchor.shape?.rings)
+      ? cloneRings(latestAnchor.shape.rings)
+      : cloneRings(this.getRingsAt(null));
+    const latestPlacement = latestAnchor?.placement || {};
+    const layerId = typeof latestPlacement.layerId === 'string' ? latestPlacement.layerId : this._layerId;
+    const parentId = typeof latestPlacement.parentId === 'string' ? latestPlacement.parentId : this.getPlacementAt(null).parentId;
+    const childIds = Array.isArray(latestPlacement.childIds) ? [...latestPlacement.childIds] : this.getPlacementAt(null).childIds;
+    return new Polygon(
+      this._id,
+      this._properties,
+      layerId,
+      parentId,
+      childIds,
+      latestShapeRings,
+      normalizedAnchors
+    );
+  }
+
+  /**
    * 新しいプロパティの配列で新インスタンスを作成 (Featureクラスのメソッドをオーバーライド)
    * @param {Property[]} properties - 新しいプロパティの配列
    * @returns {Polygon} 新しい面情報オブジェクト
@@ -263,15 +292,7 @@ export class Polygon extends Feature {
       buildPolygonShape(baseRings),
       buildPolygonPlacement(this._layerId, placement.parentId, placement.childIds)
     );
-    return new Polygon(
-      this._id,
-      normalized,
-      this._layerId,
-      placement.parentId,
-      placement.childIds,
-      baseRings,
-      nextAnchors
-    );
+    return this.withAnchors(nextAnchors);
   }
 
   /**

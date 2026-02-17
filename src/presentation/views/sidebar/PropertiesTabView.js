@@ -114,12 +114,19 @@ export class PropertiesTabView {
     `;
     this._propertiesContainer.appendChild(idRow);
 
-    // 現在時間で有効なPropertyを取得
+    // 現在時間で有効な履歴アンカーを取得
     const currentTime = this._mapViewModel.getCurrentTime();
+    const currentAnchor = typeof feature.getAnchorAt === 'function'
+      ? feature.getAnchorAt(currentTime)
+      : null;
     const currentProperty = typeof feature.getPropertyAt === 'function'
       ? feature.getPropertyAt(currentTime)
       : (feature.properties && feature.properties.length > 0 ? feature.properties[0] : null);
-    const sortedProperties = sortPropertiesByStart(feature.properties || []);
+    const sortedProperties = sortPropertiesByStart(
+      Array.isArray(feature.anchors) && feature.anchors.length > 0
+        ? feature.anchors
+        : (feature.properties || [])
+    );
 
     if (!currentProperty) {
       const noPropertyMsg = document.createElement('p');
@@ -128,7 +135,11 @@ export class PropertiesTabView {
       return;
     }
 
-    const selectedAnchor = selectedPropertyOverride || this._resolveSelectedAnchor(feature, sortedProperties, currentProperty);
+    const selectedAnchor = selectedPropertyOverride || this._resolveSelectedAnchor(
+      feature,
+      sortedProperties,
+      currentAnchor || currentProperty
+    );
     this._renderAnchorSection(feature, sortedProperties, selectedAnchor);
 
     const form = document.createElement('form');
@@ -284,7 +295,11 @@ export class PropertiesTabView {
     }
 
     const editTime = this._mapViewModel.getCurrentTime();
-    const sortedProperties = sortPropertiesByStart(feature.properties || []);
+    const sortedProperties = sortPropertiesByStart(
+      Array.isArray(feature.anchors) && feature.anchors.length > 0
+        ? feature.anchors
+        : (feature.properties || [])
+    );
     const hasExactAnchor = sortedProperties.some(property => {
       const anchor = getPropertyStartAnchor(property);
       return anchor && anchor.equals(editTime);
@@ -323,8 +338,14 @@ export class PropertiesTabView {
     }
 
     try {
-      const deletionPlan = buildAnchorDeletionPlan(feature.properties || [], getAnchorKey(selectedAnchorStart));
-      await this._editingViewModel.updateFeatureProperties(feature.id, deletionPlan.updatedProperties);
+      const deletionSource = Array.isArray(feature.anchors) && feature.anchors.length > 0
+        ? feature.anchors
+        : (feature.properties || []);
+      const deletionPlan = buildAnchorDeletionPlan(deletionSource, getAnchorKey(selectedAnchorStart));
+      const timelinePayload = Array.isArray(deletionPlan.updatedAnchors)
+        ? deletionPlan.updatedAnchors
+        : deletionPlan.updatedProperties;
+      await this._editingViewModel.updateFeatureProperties(feature.id, timelinePayload);
       this._setSelectedAnchorKey(feature.id, deletionPlan.nextSelectionKey);
       alert('履歴アンカーを削除しました。');
     } catch (error) {

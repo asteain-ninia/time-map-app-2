@@ -372,6 +372,27 @@ export class Feature {
   }
 
   /**
+   * 新しい履歴アンカー集合を適用したインスタンスを作成する
+   * 注意: このメソッドはサブクラスでオーバーライドされることを強く推奨します。
+   * @param {FeatureAnchor[]} anchors - 置き換える履歴アンカー集合
+   * @returns {Feature} 新しいFeatureインスタンス (サブクラスでは上書き推奨)
+   */
+  withAnchors(anchors) {
+    console.warn(
+      `Feature.withAnchors (id: ${this._id}) was called on a Feature instance. Subclasses should override this method to return an instance of their own type.`
+    );
+    const normalizedAnchors = Feature._normalizeAnchors(this._id, anchors);
+    if (normalizedAnchors.length === 0) {
+      throw new Error(`Feature.withAnchors (id: ${this._id}) requires at least one FeatureAnchor.`);
+    }
+    const latestAnchor = normalizedAnchors[normalizedAnchors.length - 1];
+    const layerId = typeof latestAnchor?.placement?.layerId === 'string'
+      ? latestAnchor.placement.layerId
+      : this._layerId;
+    return new Feature(this._id, this._vertexIds, this._properties, layerId, normalizedAnchors);
+  }
+
+  /**
    * 新しいプロパティ集合を適用したインスタンスを作成する
    * 注意: このメソッドはサブクラスでオーバーライドされることを強く推奨します。
    *       基底クラスの実装ではサブクラス固有のプロパティが失われる可能性があります。
@@ -386,6 +407,9 @@ export class Feature {
     const nextAnchors = this._anchors.length > 0
       ? Feature._syncAnchorsWithProperties(this._id, this._anchors, normalized, {}, { layerId: this._layerId })
       : null;
+    if (Array.isArray(nextAnchors) && nextAnchors.length > 0) {
+      return this.withAnchors(nextAnchors);
+    }
     return new Feature(this._id, this._vertexIds, normalized, this._layerId, nextAnchors);
   }
 
