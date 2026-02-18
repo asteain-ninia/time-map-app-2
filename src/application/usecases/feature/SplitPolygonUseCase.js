@@ -1,6 +1,7 @@
 import { Polygon } from '../../../domain/entities/Polygon.js';
 import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
 import { Property } from '../../../domain/value-objects/Property.js';
+import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
 
 export class SplitPolygonUseCase {
@@ -11,7 +12,7 @@ export class SplitPolygonUseCase {
     this._generateId = generateId;
   }
 
-  async execute(polygonId, splitPlan, inheritSideIndex, newProperty) {
+  async execute(polygonId, splitPlan, inheritSideIndex, newProperty, editTime) {
     if (!polygonId) {
       throw new Error('分割対象のポリゴンIDが指定されていません。');
     }
@@ -20,6 +21,9 @@ export class SplitPolygonUseCase {
     }
     if (!(newProperty instanceof Property)) {
       throw new Error('新しいプロパティが不正です。');
+    }
+    if (!(editTime instanceof TimePoint)) {
+      throw new Error('分割時刻は TimePoint で指定してください。');
     }
     const inheritIndex = inheritSideIndex === 1 ? 1 : 0;
 
@@ -64,23 +68,32 @@ export class SplitPolygonUseCase {
     const updatedRings = this._buildRingsFromPlan(ringsToKeepPlan, resolveVertexId);
     const newRings = this._buildRingsFromPlan(ringsToCreatePlan, resolveVertexId);
 
-    const updatedPolygon = this._buildUpdatedPolygonWithAnchors(originalPolygon, updatedRings);
-    const newPolygonId = this._generateId('polygon');
-    const newAnchor = FeatureAnchor.fromProperty(
-      newProperty,
-      this._buildPolygonShape(newRings),
-      {
+    const { updatedPolygon, nextFutureAnchorStart } = this._buildUpdatedPolygonWithAnchors(
+      originalPolygon,
+      updatedRings,
+      editTime
+    );
+    const placementAtEditTime = typeof originalPolygon.getPlacementAt === 'function'
+      ? originalPolygon.getPlacementAt(editTime)
+      : {
         layerId: originalPolygon.layerId,
         parentId: originalPolygon.parentId,
-        childIds: []
-      },
-      `anchor-${newPolygonId}-1`
+        childIds: originalPolygon.childIds
+      };
+    const newPolygonId = this._generateId('polygon');
+    const newAnchor = this._buildNewPolygonAnchor(
+      newPolygonId,
+      newProperty,
+      newRings,
+      placementAtEditTime,
+      editTime,
+      nextFutureAnchorStart
     );
     const newPolygon = new Polygon(
       newPolygonId,
       [newProperty],
-      originalPolygon.layerId,
-      originalPolygon.parentId,
+      placementAtEditTime.layerId,
+      placementAtEditTime.parentId,
       [],
       newRings,
       [newAnchor]
@@ -173,20 +186,180 @@ export class SplitPolygonUseCase {
     }));
   }
 
-  _buildUpdatedPolygonWithAnchors(originalPolygon, updatedRings) {
+  _buildUpdatedPolygonWithAnchors(originalPolygon, updatedRings, editTime) {
+    if (!(editTime instanceof TimePoint)) {
+      throw new Error('分割時刻は TimePoint で指定してください。');
+    }
+    if (!originalPolygon.existsAt(editTime)) {
+      throw new Error('指定時刻に存在しない面情報は分割できません。');
+    }
+
     if (Array.isArray(originalPolygon.anchors) && originalPolygon.anchors.length > 0) {
       const nextShape = this._buildPolygonShape(updatedRings);
-      const nextAnchors = originalPolygon.anchors.map(anchor => anchor.withShape(nextShape));
-      return originalPolygon.withAnchors(nextAnchors);
+      const anchors = this._normalizeAnchorTimeline(originalPolygon.anchors);
+      const nextFutureAnchorStart = this._findNextFutureAnchorStart(anchors, editTime);
+      const exactIndex = anchors.findIndex(anchor => anchor.startTime.equals(editTime));
+
+      if (exactIndex !== -1) {
+        const exactAnchor = anchors[exactIndex];
+        const nextAnchors = [...anchors];
+        nextAnchors[exactIndex] = new FeatureAnchor({
+          id: exactAnchor.id,
+          timeRange: {
+            start: editTime,
+            end: this._resolveAnchorEndTime(exactAnchor.endTime, editTime, nextFutureAnchorStart)
+          },
+          property: {
+            name: exactAnchor.name,
+            description: exactAnchor.description,
+            attributes: exactAnchor.getAttributes()
+          },
+          shape: nextShape,
+          placement: exactAnchor.placement
+        });
+        return {
+          updatedPolygon: originalPolygon.withAnchors(this._normalizeAnchorTimeline(nextAnchors)),
+          nextFutureAnchorStart
+        };
+      }
+
+      const activeIndex = anchors.findIndex(anchor => anchor.isActiveAt(editTime));
+      if (activeIndex === -1) {
+        throw new Error('指定時刻で有効な履歴アンカーが見つかりません。');
+      }
+
+      const activeAnchor = anchors[activeIndex];
+      if (!activeAnchor.startTime.isBefore(editTime)) {
+        throw new Error('分割時刻が履歴アンカー境界と矛盾しています。');
+      }
+
+      const nextAnchors = [...anchors];
+      nextAnchors[activeIndex] = activeAnchor.withTimeRange(activeAnchor.startTime, editTime);
+      const splitAnchor = this._createSplitAnchorFromSource(
+        originalPolygon.id,
+        activeAnchor,
+        nextShape,
+        editTime,
+        nextFutureAnchorStart,
+        nextAnchors
+      );
+      nextAnchors.splice(activeIndex + 1, 0, splitAnchor);
+      return {
+        updatedPolygon: originalPolygon.withAnchors(this._normalizeAnchorTimeline(nextAnchors)),
+        nextFutureAnchorStart
+      };
     }
-    return new Polygon(
+
+    return {
+      updatedPolygon: new Polygon(
       originalPolygon.id,
       originalPolygon.properties,
       originalPolygon.layerId,
       originalPolygon.parentId,
       originalPolygon.childIds,
       updatedRings
-    );
+      ),
+      nextFutureAnchorStart: null
+    };
+  }
+
+  _buildNewPolygonAnchor(newPolygonId, newProperty, newRings, placementAtEditTime, editTime, nextFutureAnchorStart) {
+    const endTime = this._resolveAnchorEndTime(newProperty.endTime, editTime, nextFutureAnchorStart);
+    return new FeatureAnchor({
+      id: `anchor-${newPolygonId}-1`,
+      timeRange: { start: editTime, end: endTime },
+      property: {
+        name: newProperty.name,
+        description: newProperty.description,
+        attributes: newProperty.getAttributes()
+      },
+      shape: this._buildPolygonShape(newRings),
+      placement: {
+        layerId: placementAtEditTime.layerId,
+        parentId: placementAtEditTime.parentId,
+        childIds: []
+      }
+    });
+  }
+
+  _createSplitAnchorFromSource(featureId, sourceAnchor, nextShape, editTime, nextFutureAnchorStart, existingAnchors) {
+    const splitAnchorId = this._buildSplitAnchorId(featureId, existingAnchors);
+    return new FeatureAnchor({
+      id: splitAnchorId,
+      timeRange: {
+        start: editTime,
+        end: this._resolveAnchorEndTime(sourceAnchor.endTime, editTime, nextFutureAnchorStart)
+      },
+      property: {
+        name: sourceAnchor.name,
+        description: sourceAnchor.description,
+        attributes: sourceAnchor.getAttributes()
+      },
+      shape: nextShape,
+      placement: sourceAnchor.placement
+    });
+  }
+
+  _buildSplitAnchorId(featureId, existingAnchors) {
+    const usedIds = new Set((existingAnchors || []).map(anchor => anchor.id));
+    let candidate = this._generateId('anchor');
+    while (usedIds.has(candidate)) {
+      candidate = this._generateId('anchor');
+    }
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      return candidate;
+    }
+    return `anchor-${featureId}-split`;
+  }
+
+  _findNextFutureAnchorStart(anchors, editTime) {
+    for (const anchor of anchors) {
+      if (editTime.isBefore(anchor.startTime)) {
+        return anchor.startTime;
+      }
+    }
+    return null;
+  }
+
+  _resolveAnchorEndTime(requestedEndTime, startTime, nextFutureAnchorStart) {
+    if (!(startTime instanceof TimePoint)) {
+      throw new Error('履歴アンカー開始時刻が不正です。');
+    }
+
+    let endTime = null;
+    if (requestedEndTime !== null && requestedEndTime !== undefined) {
+      if (!(requestedEndTime instanceof TimePoint)) {
+        throw new Error('履歴アンカー終了時刻は TimePoint で指定してください。');
+      }
+      if (!startTime.isBefore(requestedEndTime)) {
+        throw new Error('履歴アンカー終了時刻は開始時刻より後に設定してください。');
+      }
+      endTime = requestedEndTime;
+    }
+
+    if (nextFutureAnchorStart instanceof TimePoint) {
+      if (endTime === null || nextFutureAnchorStart.isBefore(endTime)) {
+        endTime = nextFutureAnchorStart;
+      }
+    }
+    return endTime;
+  }
+
+  _normalizeAnchorTimeline(anchors) {
+    const sorted = [...anchors].sort((left, right) => this._compareTimePoints(left.startTime, right.startTime));
+    for (let index = 1; index < sorted.length; index += 1) {
+      if (sorted[index - 1].startTime.equals(sorted[index].startTime)) {
+        throw new Error('同一時刻の履歴アンカーが重複しています。');
+      }
+    }
+    return sorted;
+  }
+
+  _compareTimePoints(left, right) {
+    if (left.equals(right)) {
+      return 0;
+    }
+    return left.isBefore(right) ? -1 : 1;
   }
 
   _buildPolygonShape(rings) {

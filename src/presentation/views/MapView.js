@@ -845,7 +845,11 @@ export class MapView {
   async _confirmSplitWithProperties(inheritSideIndex, properties) {
       try {
           const domainProperty = this._createDomainProperty(properties);
-          await this._editingViewModel.confirmSplit(inheritSideIndex, domainProperty);
+          await this._editingViewModel.confirmSplit(
+            inheritSideIndex,
+            domainProperty,
+            this._viewModel.getCurrentTime()
+          );
           console.log('分割が確定しました。');
       } catch (error) {
           console.error('分割確定に失敗:', error);

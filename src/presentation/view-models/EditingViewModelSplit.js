@@ -45,7 +45,7 @@ function clearSplitPlan() {
   this._splitPlan = null;
 }
 
-async function confirmSplit(inheritSideIndex, newProperty) {
+async function confirmSplit(inheritSideIndex, newProperty, editTime) {
   if (this._mode !== 'edit' || this._tool !== 'split' || !this._targetPolygon || !this._splitPlan) {
     throw new Error('分割確定の条件を満たしていません。');
   }
@@ -66,7 +66,8 @@ async function confirmSplit(inheritSideIndex, newProperty) {
       polygonId,
       this._splitPlan,
       inheritSideIndex,
-      newProperty
+      newProperty,
+      editTime
     );
 
     const payload = {

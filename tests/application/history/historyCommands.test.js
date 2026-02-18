@@ -7,6 +7,7 @@ import { DeleteVerticesCommand } from "../../../src/application/services/history
 import { UpdatePropertiesCommand } from "../../../src/application/services/history/commands/UpdatePropertiesCommand.js";
 import { AddRingCommand } from "../../../src/application/services/history/commands/AddRingCommand.js";
 import { AddVertexToEdgeCommand } from "../../../src/application/services/history/commands/AddVertexToEdgeCommand.js";
+import { SplitPolygonCommand } from "../../../src/application/services/history/commands/SplitPolygonCommand.js";
 import { HistorySerializer } from "../../../src/application/services/history/HistorySerializer.js";
 import { Vertex } from "../../../src/domain/entities/Vertex.js";
 import { Point } from "../../../src/domain/entities/Point.js";
@@ -492,5 +493,75 @@ describe("History commands", () => {
         updatedFeature: expect.any(Line)
       }
     });
+  });
+
+  it("replays and rewinds SplitPolygonCommand with added vertices", async () => {
+    const serializer = new HistorySerializer();
+    const originalPolygon = createPolygon("polygon-origin", [
+      {
+        id: "ring-origin",
+        vertexIds: ["vertex-a", "vertex-b", "vertex-c"],
+        ringType: "territory",
+        parentId: null
+      }
+    ]);
+    const updatedPolygon = createPolygon("polygon-origin", [
+      {
+        id: "ring-origin-next",
+        vertexIds: ["vertex-a", "vertex-new", "vertex-c"],
+        ringType: "territory",
+        parentId: null
+      }
+    ]);
+    const newPolygon = createPolygon("polygon-child", [
+      {
+        id: "ring-child",
+        vertexIds: ["vertex-new", "vertex-b", "vertex-c"],
+        ringType: "territory",
+        parentId: null
+      }
+    ]);
+    const addedVertex = new Vertex("vertex-new", 3, 3);
+
+    const world = {
+      vertices: [
+        { id: "vertex-a", x: 0, y: 0 },
+        { id: "vertex-b", x: 5, y: 0 },
+        { id: "vertex-c", x: 0, y: 5 }
+      ],
+      features: [originalPolygon],
+      layers: []
+    };
+    const worldRepository = {
+      getWorld: vi.fn(async () => world),
+      saveWorld: vi.fn(async () => {})
+    };
+
+    const payload = {
+      polygonId: "polygon-origin",
+      originalPolygonData: serializer.serialize(originalPolygon),
+      updatedPolygonData: serializer.serialize(updatedPolygon),
+      newPolygonData: serializer.serialize(newPolygon),
+      addedVerticesData: [serializer.serialize(addedVertex)]
+    };
+
+    const command = new SplitPolygonCommand(payload, {}, worldRepository, serializer);
+    const executeResult = await command.execute();
+
+    expect(world.vertices.some((vertex) => vertex.id === "vertex-new")).toBe(true);
+    expect(world.features).toHaveLength(2);
+    expect(world.features.find((feature) => feature.id === "polygon-origin")).toBeInstanceOf(Polygon);
+    expect(world.features.find((feature) => feature.id === "polygon-child")).toBeInstanceOf(Polygon);
+    expect(executeResult.updatedFeature).toBeInstanceOf(Polygon);
+    expect(executeResult.addedFeature).toBeInstanceOf(Polygon);
+
+    const reverseResult = await command.reverse();
+    expect(world.features).toHaveLength(1);
+    expect(world.features[0]).toBeInstanceOf(Polygon);
+    expect(world.features[0].id).toBe("polygon-origin");
+    expect(world.vertices.some((vertex) => vertex.id === "vertex-new")).toBe(false);
+    expect(reverseResult.updatedFeature).toBeInstanceOf(Polygon);
+    expect(reverseResult.deletedFeatureId).toBe("polygon-child");
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(3);
   });
 });
