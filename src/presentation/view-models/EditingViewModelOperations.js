@@ -1,12 +1,91 @@
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { FeatureAnchor } from '../../domain/value-objects/FeatureAnchor.js';
-import { Property } from '../../domain/value-objects/Property.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { DeleteFeatureCommand } from '../../application/services/history/commands/DeleteFeatureCommand.js';
 import { DeleteVerticesCommand } from '../../application/services/history/commands/DeleteVerticesCommand.js';
 import { BatchUpdatePropertiesCommand } from '../../application/services/history/commands/BatchUpdatePropertiesCommand.js';
 import { UpdatePropertiesCommand } from '../../application/services/history/commands/UpdatePropertiesCommand.js';
 import { UnlinkSharedVertexCommand } from '../../application/services/history/commands/UnlinkSharedVertexCommand.js';
+
+function clonePolygonRings(rings) {
+  if (!Array.isArray(rings)) {
+    return [];
+  }
+  return rings.map(ring => ({
+    id: ring.id,
+    vertexIds: Array.isArray(ring.vertexIds) ? [...ring.vertexIds] : [],
+    ringType: ring.ringType,
+    parentId: ring.parentId ?? null
+  }));
+}
+
+function buildFeatureFallbackShape(feature) {
+  const featureType = feature?.constructor?.name;
+  if (featureType === 'Point') {
+    const vertexId = typeof feature.getVertexIdAt === 'function'
+      ? feature.getVertexIdAt(null)
+      : feature.vertexId;
+    return { type: 'Point', vertexId };
+  }
+
+  if (featureType === 'Line') {
+    const vertexIds = typeof feature.getVertexIdsAt === 'function'
+      ? feature.getVertexIdsAt(null)
+      : feature.vertexIds;
+    return {
+      type: 'LineString',
+      vertexIds: Array.isArray(vertexIds) ? [...vertexIds] : []
+    };
+  }
+
+  if (feature instanceof DomainPolygon || featureType === 'Polygon') {
+    const rings = typeof feature.getRingsAt === 'function'
+      ? feature.getRingsAt(null)
+      : feature.rings;
+    return {
+      type: 'Polygon',
+      rings: clonePolygonRings(rings)
+    };
+  }
+  return {};
+}
+
+function buildFeatureFallbackPlacement(feature) {
+  if (feature instanceof DomainPolygon || feature?.constructor?.name === 'Polygon') {
+    return {
+      layerId: feature.layerId,
+      parentId: feature.parentId,
+      childIds: Array.isArray(feature.childIds) ? [...feature.childIds] : []
+    };
+  }
+  return {
+    layerId: feature.layerId
+  };
+}
+
+function getFeatureTimelineAnchors(feature) {
+  if (!feature || feature.id === null || feature.id === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(feature.anchors) && feature.anchors.length > 0) {
+    return [...feature.anchors];
+  }
+
+  const properties = Array.isArray(feature.properties) ? feature.properties : [];
+  if (properties.length === 0) {
+    return [];
+  }
+
+  const fallbackShape = buildFeatureFallbackShape(feature);
+  const fallbackPlacement = buildFeatureFallbackPlacement(feature);
+  return properties.map((property, index) => FeatureAnchor.fromProperty(
+    property,
+    fallbackShape,
+    fallbackPlacement,
+    `anchor-${feature.id}-${index + 1}`
+  ));
+}
 
 /**
  * 地物を削除
@@ -140,23 +219,20 @@ async function unlinkSharedVertex(vertexId, featureId) {
 /**
  * 地物プロパティを更新
  * @param {string} featureId - 更新する地物のID
- * @param {Property[]|Object} propertyUpdate - 新しいプロパティ配列、または時間編集リクエスト
+ * @param {FeatureAnchor[]|Object} propertyUpdate - 新しい履歴アンカー配列、または時間編集リクエスト
  * @returns {Promise<Object>} 更新された地物インスタンス
  */
 async function updateFeatureProperties(featureId, propertyUpdate) {
   let updatePayload = null;
   if (Array.isArray(propertyUpdate)) {
     if (propertyUpdate.length === 0) {
-      throw new Error("Invalid newProperties format. Expected a non-empty timeline array.");
+      throw new Error('Invalid anchors format. Expected a non-empty anchor timeline array.');
     }
     const isAnchorArray = propertyUpdate.every(entry => entry instanceof FeatureAnchor);
-    const isPropertyArray = propertyUpdate.every(entry => entry instanceof Property);
-    if (!isAnchorArray && !isPropertyArray) {
-      throw new Error("Invalid newProperties format. Expected an array of FeatureAnchor or Property instances.");
+    if (!isAnchorArray) {
+      throw new Error('Invalid anchors format. Expected an array of FeatureAnchor instances.');
     }
-    updatePayload = isAnchorArray
-      ? { anchors: propertyUpdate }
-      : { properties: propertyUpdate };
+    updatePayload = { anchors: propertyUpdate };
   } else if (propertyUpdate && typeof propertyUpdate === 'object') {
     updatePayload = {
       propertyEdit: {
@@ -178,16 +254,14 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
     const featureBefore = world.features.find(f => f.id === featureId);
     if (!featureBefore) { throw new Error(`Feature not found: ${featureId}`); }
 
-    const oldPropertiesByFeatureId = new Map();
+    const oldAnchorsByFeatureId = new Map();
     (world.features || []).forEach(feature => {
       if (!feature || feature.id === null || feature.id === undefined) {
         return;
       }
-      oldPropertiesByFeatureId.set(
+      oldAnchorsByFeatureId.set(
         feature.id,
-        Array.isArray(feature.anchors) && feature.anchors.length > 0
-          ? [...feature.anchors]
-          : (Array.isArray(feature.properties) ? [...feature.properties] : [])
+        getFeatureTimelineAnchors(feature)
       );
     });
 
@@ -200,14 +274,12 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
     const updatesPayload = updatedFeatures
       .filter(feature => feature && feature.id !== null && feature.id !== undefined)
       .map(feature => {
-        const beforeProps = oldPropertiesByFeatureId.get(feature.id) || [];
-        const afterProps = Array.isArray(feature.anchors) && feature.anchors.length > 0
-          ? feature.anchors
-          : (Array.isArray(feature.properties) ? feature.properties : []);
+        const beforeAnchors = oldAnchorsByFeatureId.get(feature.id) || [];
+        const afterAnchors = getFeatureTimelineAnchors(feature);
         return {
           featureId: feature.id,
-          oldProperties: beforeProps.map(property => this._historyService._serializer.serialize(property)),
-          newProperties: afterProps.map(property => this._historyService._serializer.serialize(property))
+          oldAnchors: beforeAnchors.map(anchor => this._historyService._serializer.serialize(anchor)),
+          newAnchors: afterAnchors.map(anchor => this._historyService._serializer.serialize(anchor))
         };
       });
 
@@ -221,8 +293,8 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
       : new UpdatePropertiesCommand(
           updatesPayload[0] || {
             featureId,
-            oldProperties: [],
-            newProperties: []
+            oldAnchors: [],
+            newAnchors: []
           },
           this._editFeatureUseCase,
           this._historyService._serializer,

@@ -13,6 +13,7 @@ import { Point } from "../../../src/domain/entities/Point.js";
 import { Line } from "../../../src/domain/entities/Line.js";
 import { Polygon } from "../../../src/domain/entities/Polygon.js";
 import { Property } from "../../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 
 const createProperty = (year = 1900, name = "Name") =>
@@ -296,10 +297,11 @@ describe("History commands", () => {
     expect(reverseResult.updatedFeatures[0].vertexIds).toEqual(originalLine.vertexIds);
   });
 
-  it("updates properties through UpdatePropertiesCommand", async () => {
+  it("updates anchor timeline through UpdatePropertiesCommand", async () => {
     const serializer = new HistorySerializer();
-    const originalProperty = createProperty(1500, "Original");
-    const updatedProperty = createProperty(1500, "Updated");
+    const baseFeature = new Point("feature-prop", ["vertex-prop"], [createProperty(1500, "Original")], "layer-1");
+    const originalAnchor = baseFeature.anchors[0];
+    const updatedAnchor = originalAnchor.withProperty({ name: "Updated" });
 
     const editFeatureUseCase = {
       updateFeature: vi.fn()
@@ -314,26 +316,26 @@ describe("History commands", () => {
 
     const payload = {
       featureId: "feature-prop",
-      oldProperties: [serializer.serialize(originalProperty)],
-      newProperties: [serializer.serialize(updatedProperty)]
+      oldAnchors: [serializer.serialize(originalAnchor)],
+      newAnchors: [serializer.serialize(updatedAnchor)]
     };
 
     const command = new UpdatePropertiesCommand(payload, editFeatureUseCase, serializer, worldRepository);
 
     const executeResult = await command.execute();
     expect(editFeatureUseCase.updateFeature).toHaveBeenNthCalledWith(1, "feature-prop", {
-      properties: [expect.any(Property)]
+      anchors: [expect.any(FeatureAnchor)]
     });
     const executeArgs = editFeatureUseCase.updateFeature.mock.calls[0][1];
-    expect(executeArgs.properties[0].name).toBe("Updated");
+    expect(executeArgs.anchors[0].name).toBe("Updated");
     expect(executeResult).toEqual({ updatedFeature: { id: "feature-prop", phase: "updated" } });
 
     const reverseResult = await command.reverse();
     expect(editFeatureUseCase.updateFeature).toHaveBeenNthCalledWith(2, "feature-prop", {
-      properties: [expect.any(Property)]
+      anchors: [expect.any(FeatureAnchor)]
     });
     const reverseArgs = editFeatureUseCase.updateFeature.mock.calls[1][1];
-    expect(reverseArgs.properties[0].name).toBe("Original");
+    expect(reverseArgs.anchors[0].name).toBe("Original");
     expect(reverseResult).toEqual({ updatedFeature: { id: "feature-prop", phase: "original" } });
   });
 

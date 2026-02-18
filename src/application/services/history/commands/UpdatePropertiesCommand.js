@@ -15,8 +15,10 @@ export class UpdatePropertiesCommand {
   /**
    * @param {Object} payload - 操作に必要なデータ
    * @param {string} payload.featureId - 対象の地物ID
-   * @param {Object[]} payload.oldProperties - 更新前のプロパティ（プレーンオブジェクト）
-   * @param {Object[]} payload.newProperties - 更新後のプロパティ（プレーンオブジェクト）
+   * @param {Object[]} payload.oldAnchors - 更新前の履歴アンカー（プレーンオブジェクト）
+   * @param {Object[]} payload.newAnchors - 更新後の履歴アンカー（プレーンオブジェクト）
+   * @param {Object[]} [payload.oldProperties] - 旧互換: 更新前のプロパティ（プレーンオブジェクト）
+   * @param {Object[]} [payload.newProperties] - 旧互換: 更新後のプロパティ（プレーンオブジェクト）
    * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
    * @param {HistorySerializer} serializer - シリアライザ
    * @param {WorldRepository} worldRepository - ワールドリポジトリ（追加）

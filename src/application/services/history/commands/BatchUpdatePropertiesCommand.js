@@ -7,7 +7,7 @@ import { Property } from '../../../../domain/value-objects/Property.js';
 export class BatchUpdatePropertiesCommand {
   /**
    * @param {Object} payload
-   * @param {{ featureId: string, oldProperties: Object[], newProperties: Object[] }[]} payload.updates
+   * @param {{ featureId: string, oldAnchors: Object[], newAnchors: Object[], oldProperties?: Object[], newProperties?: Object[] }[]} payload.updates
    * @param {EditFeatureUseCase} editFeatureUseCase
    * @param {HistorySerializer} serializer
    * @param {WorldRepository} worldRepository

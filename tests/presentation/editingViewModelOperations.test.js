@@ -26,23 +26,8 @@ const buildContext = ({ world, updatedFeature, updatedFeatures = null, updateErr
   };
 
   const serializer = {
-    serialize: vi.fn((value) => ({
-      name: value?.name ?? "",
-      startYear: value?.startTime?.year ?? null,
-      endYear: value?.endTime?.year ?? null
-    })),
-    deserialize: vi.fn((value) =>
-      new Property(
-        new TimePoint(value?.startYear ?? 0),
-        value?.name ?? "",
-        "",
-        {},
-        new TimePoint(value?.startYear ?? 0),
-        value?.endYear === null || value?.endYear === undefined
-          ? null
-          : new TimePoint(value.endYear)
-      )
-    )
+    serialize: vi.fn((value) => value),
+    deserialize: vi.fn((value) => value)
   };
 
   const historyService = {
@@ -178,10 +163,10 @@ describe("EditingViewModelOperations.updateFeatureProperties", () => {
     await pushedCommand.reverse();
     expect(editFeatureUseCase.updateFeature).toHaveBeenCalledTimes(3);
     expect(editFeatureUseCase.updateFeature).toHaveBeenNthCalledWith(2, "point-b", {
-      properties: [expect.objectContaining({ name: "B-before" })]
+      anchors: [expect.objectContaining({ name: "B-before" })]
     });
     expect(editFeatureUseCase.updateFeature).toHaveBeenNthCalledWith(3, "point-a", {
-      properties: [expect.objectContaining({ name: "A-before" })]
+      anchors: [expect.objectContaining({ name: "A-before" })]
     });
     expect(historyService._notifyHistoryChanged).toHaveBeenCalledTimes(1);
     expect(eventBus.publish).toHaveBeenCalledWith("FeatureUpdated", { feature: afterFeatureA });
