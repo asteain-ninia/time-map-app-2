@@ -5,6 +5,7 @@ import { Point } from "../../src/domain/entities/Point.js";
 import { Vertex } from "../../src/domain/entities/Vertex.js";
 import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 
 const createProperty = (year, name) =>
   new Property(new TimePoint(year), name, "", {}, new TimePoint(year), null);
@@ -19,7 +20,31 @@ const createPropertyWithEnd = (startYear, endYear, name) =>
     endYear === null ? null : new TimePoint(endYear)
   );
 
-describe("UpdateFeatureUseCase property updates", () => {
+const createPointAnchorWithEnd = (startYear, endYear, name) =>
+  new FeatureAnchor({
+    id: `anchor-${startYear}-${name}`,
+    timeRange: {
+      start: new TimePoint(startYear),
+      end: endYear === null ? null : new TimePoint(endYear)
+    },
+    property: {
+      name,
+      description: "",
+      attributes: {}
+    },
+    shape: {
+      type: "Point",
+      vertexId: "v1"
+    },
+    placement: {
+      layerId: "layer-1"
+    }
+  });
+
+const createPointAnchor = (year, name) =>
+  createPointAnchorWithEnd(year, null, name);
+
+describe("UpdateFeatureUseCase anchor updates", () => {
   let world;
   let worldRepository;
   let useCase;
@@ -64,10 +89,10 @@ describe("UpdateFeatureUseCase property updates", () => {
     const initialProperty = createProperty(1, "Initial");
     world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
 
-    const earlier = createProperty(0, "Earlier");
-    const later = createProperty(10, "Later");
+    const earlier = createPointAnchor(0, "Earlier");
+    const later = createPointAnchor(10, "Later");
 
-    const result = await useCase.execute("point-1", { properties: [later, earlier] });
+    const result = await useCase.execute("point-1", { anchors: [later, earlier] });
 
     expect(result.feature.properties).toHaveLength(2);
     expect(result.feature.properties[0].startTime.equals(earlier.startTime)).toBe(true);
@@ -78,63 +103,75 @@ describe("UpdateFeatureUseCase property updates", () => {
     expect(world.features[0].properties).toHaveLength(2);
   });
 
-  it("rejects empty property updates", async () => {
+  it("rejects empty anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
     world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
 
-    await expect(useCase.execute("point-1", { properties: [] })).rejects.toThrow(/non-empty/);
+    await expect(useCase.execute("point-1", { anchors: [] })).rejects.toThrow(/anchors が必要/);
   });
 
-  it("rejects duplicate anchors in properties array updates", async () => {
+  it("rejects deprecated properties payloads", async () => {
     const initialProperty = createProperty(1, "Initial");
     world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
 
-    const duplicateA = createProperty(1000, "A");
-    const duplicateB = createProperty(1000, "B");
+    await expect(
+      useCase.execute("point-1", {
+        properties: [createProperty(2, "Legacy")]
+      })
+    ).rejects.toThrow(/廃止されました/);
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    expect(world.features[0].properties).toHaveLength(1);
+    expect(world.features[0].properties[0].name).toBe("Initial");
+  });
+
+  it("rejects duplicate anchors in anchors updates", async () => {
+    const initialProperty = createProperty(1, "Initial");
+    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+
+    const duplicateA = createPointAnchor(1000, "A");
+    const duplicateB = createPointAnchor(1000, "B");
 
     await expect(
-      useCase.execute("point-1", { properties: [duplicateA, duplicateB] })
+      useCase.execute("point-1", { anchors: [duplicateA, duplicateB] })
     ).rejects.toThrow(/同一時刻の歴史の錨が重複/);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
     expect(world.features[0].properties).toHaveLength(1);
     expect(world.features[0].properties[0].name).toBe("Initial");
   });
 
-  it("rejects overlapping ranges in properties array updates", async () => {
+  it("rejects overlapping ranges in anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
     world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
 
-    const past = createPropertyWithEnd(1000, 1500, "Past");
-    const future = createProperty(1300, "Future");
+    const past = createPointAnchorWithEnd(1000, 1500, "Past");
+    const future = createPointAnchor(1300, "Future");
 
     await expect(
-      useCase.execute("point-1", { properties: [future, past] })
+      useCase.execute("point-1", { anchors: [future, past] })
     ).rejects.toThrow(/次の歴史の錨/);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
     expect(world.features[0].properties[0].name).toBe("Initial");
   });
 
-  it("rejects end times that are not after anchor start in properties array updates", async () => {
+  it("rejects non-FeatureAnchor entries in anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
     world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
 
-    const invalidRange = createPropertyWithEnd(1200, 1200, "Invalid");
-
     await expect(
-      useCase.execute("point-1", { properties: [invalidRange] })
-    ).rejects.toThrow(/開始時刻より後/);
+      useCase.execute("point-1", { anchors: [createPropertyWithEnd(1200, 1300, "Invalid")] })
+    ).rejects.toThrow(/FeatureAnchor/);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
     expect(world.features[0].properties[0].name).toBe("Initial");
   });
 
-  it("allows explicit gaps in properties array updates", async () => {
+  it("allows explicit gaps in anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
     world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
 
-    const past = createPropertyWithEnd(1000, 1100, "Past");
-    const future = createProperty(1300, "Future");
+    const past = createPointAnchorWithEnd(1000, 1100, "Past");
+    const future = createPointAnchor(1300, "Future");
 
-    const result = await useCase.execute("point-1", { properties: [future, past] });
+    const result = await useCase.execute("point-1", { anchors: [future, past] });
 
     expect(result.feature.properties).toHaveLength(2);
     expect(result.feature.properties[0].startTime.equals(new TimePoint(1000))).toBe(true);

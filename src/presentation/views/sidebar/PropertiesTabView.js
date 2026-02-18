@@ -338,14 +338,11 @@ export class PropertiesTabView {
     }
 
     try {
-      const deletionSource = Array.isArray(feature.anchors) && feature.anchors.length > 0
-        ? feature.anchors
-        : (feature.properties || []);
-      const deletionPlan = buildAnchorDeletionPlan(deletionSource, getAnchorKey(selectedAnchorStart));
-      const timelinePayload = Array.isArray(deletionPlan.updatedAnchors)
-        ? deletionPlan.updatedAnchors
-        : deletionPlan.updatedProperties;
-      await this._editingViewModel.updateFeatureProperties(feature.id, timelinePayload);
+      if (!Array.isArray(feature.anchors) || feature.anchors.length === 0) {
+        throw new Error('履歴アンカーが存在しないため削除できません。');
+      }
+      const deletionPlan = buildAnchorDeletionPlan(feature.anchors, getAnchorKey(selectedAnchorStart));
+      await this._editingViewModel.updateFeatureProperties(feature.id, deletionPlan.updatedAnchors);
       this._setSelectedAnchorKey(feature.id, deletionPlan.nextSelectionKey);
       alert('履歴アンカーを削除しました。');
     } catch (error) {

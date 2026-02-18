@@ -339,6 +339,26 @@ describe("History commands", () => {
     expect(reverseResult).toEqual({ updatedFeature: { id: "feature-prop", phase: "original" } });
   });
 
+  it("rejects empty timeline payloads in UpdatePropertiesCommand", async () => {
+    const serializer = new HistorySerializer();
+    const editFeatureUseCase = {
+      updateFeature: vi.fn()
+    };
+    const worldRepository = {
+      getWorld: vi.fn(),
+      saveWorld: vi.fn()
+    };
+    const payload = {
+      featureId: "feature-prop",
+      oldAnchors: [],
+      newAnchors: []
+    };
+
+    const command = new UpdatePropertiesCommand(payload, editFeatureUseCase, serializer, worldRepository);
+    await expect(command.execute()).rejects.toThrow(/履歴タイムラインが空/);
+    expect(editFeatureUseCase.updateFeature).not.toHaveBeenCalled();
+  });
+
   it("adds and removes rings through AddRingCommand", async () => {
     const serializer = new HistorySerializer();
     const addedVertex = new Vertex("vertex-new", 3, 4);

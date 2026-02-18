@@ -1,5 +1,4 @@
 import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
-import { Property } from '../../../domain/value-objects/Property.js';
 
 export function getPropertyStartAnchor(property) {
   if (!property) {
@@ -38,17 +37,6 @@ export function getAnchorKey(timePoint) {
   return `${timePoint.year}|${month}|${day}`;
 }
 
-function clonePropertyWithEndTime(property, endTime) {
-  return new Property(
-    property.timePoint,
-    property.name,
-    property.description,
-    property.getAttributes(),
-    property.startTime || property.timePoint,
-    endTime
-  );
-}
-
 function cloneAnchorWithEndTime(anchor, endTime) {
   return anchor.withTimeRange(anchor.startTime, endTime);
 }
@@ -60,12 +48,14 @@ function isSameTimePoint(left, right) {
   return left.equals(right);
 }
 
-export function buildAnchorDeletionPlan(properties, targetAnchorKey) {
-  const sorted = sortPropertiesByStart(properties);
+export function buildAnchorDeletionPlan(anchors, targetAnchorKey) {
+  const sorted = sortPropertiesByStart(anchors);
   if (sorted.length <= 1) {
     throw new Error('最後の履歴アンカーは削除できません。');
   }
-  const isAnchorTimeline = sorted.every(entry => entry instanceof FeatureAnchor);
+  if (!sorted.every(entry => entry instanceof FeatureAnchor)) {
+    throw new Error('履歴アンカー削除は FeatureAnchor 配列のみ対応しています。');
+  }
 
   const deleteIndex = sorted.findIndex(property =>
     getAnchorKey(getPropertyStartAnchor(property)) === targetAnchorKey
@@ -89,13 +79,9 @@ export function buildAnchorDeletionPlan(properties, targetAnchorKey) {
       (deletedStart && isSameTimePoint(previousEnd, deletedStart));
 
     if (shouldBridge) {
-      remaining[previousIndex] = isAnchorTimeline
-        ? cloneAnchorWithEndTime(previous, nextStart || null)
-        : clonePropertyWithEndTime(previous, nextStart || null);
+      remaining[previousIndex] = cloneAnchorWithEndTime(previous, nextStart || null);
     } else if (previousEnd && nextStart && nextStart.isBefore(previousEnd)) {
-      remaining[previousIndex] = isAnchorTimeline
-        ? cloneAnchorWithEndTime(previous, nextStart)
-        : clonePropertyWithEndTime(previous, nextStart);
+      remaining[previousIndex] = cloneAnchorWithEndTime(previous, nextStart);
     }
   }
 
@@ -104,9 +90,7 @@ export function buildAnchorDeletionPlan(properties, targetAnchorKey) {
     const next = remaining[index + 1];
     const nextStart = getPropertyStartAnchor(next);
     if (current.endTime && nextStart && nextStart.isBefore(current.endTime)) {
-      remaining[index] = isAnchorTimeline
-        ? cloneAnchorWithEndTime(current, nextStart)
-        : clonePropertyWithEndTime(current, nextStart);
+      remaining[index] = cloneAnchorWithEndTime(current, nextStart);
     }
   }
 
@@ -114,18 +98,9 @@ export function buildAnchorDeletionPlan(properties, targetAnchorKey) {
   const selectionProperty = remaining[selectionIndex];
   const nextSelectionKey = getAnchorKey(getPropertyStartAnchor(selectionProperty));
 
-  if (isAnchorTimeline) {
-    return {
-      updatedAnchors: remaining,
-      updatedProperties: remaining.map(anchor => anchor.toPropertyProjection()),
-      removedAnchor: deleted,
-      nextSelectionKey
-    };
-  }
-
   return {
-    updatedProperties: remaining,
-    removedProperty: deleted,
+    updatedAnchors: remaining,
+    removedAnchor: deleted,
     nextSelectionKey
   };
 }

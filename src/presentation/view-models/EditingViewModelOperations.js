@@ -283,6 +283,10 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
         };
       });
 
+    if (updatesPayload.length === 0) {
+      throw new Error('更新対象の履歴アンカーが取得できませんでした。');
+    }
+
     const command = updatesPayload.length > 1
       ? new BatchUpdatePropertiesCommand(
           { updates: updatesPayload },
@@ -291,11 +295,7 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
           this._historyService._worldRepository
         )
       : new UpdatePropertiesCommand(
-          updatesPayload[0] || {
-            featureId,
-            oldAnchors: [],
-            newAnchors: []
-          },
+          updatesPayload[0],
           this._editFeatureUseCase,
           this._historyService._serializer,
           this._historyService._worldRepository

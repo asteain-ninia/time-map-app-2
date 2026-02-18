@@ -6,7 +6,6 @@
 // ・このコメントは削除しないでください。
 
 import { FeatureAnchor } from '../../../../domain/value-objects/FeatureAnchor.js';
-import { Property } from '../../../../domain/value-objects/Property.js';
 
 /**
  * プロパティ更新操作をカプセル化するコマンド
@@ -17,8 +16,6 @@ export class UpdatePropertiesCommand {
    * @param {string} payload.featureId - 対象の地物ID
    * @param {Object[]} payload.oldAnchors - 更新前の履歴アンカー（プレーンオブジェクト）
    * @param {Object[]} payload.newAnchors - 更新後の履歴アンカー（プレーンオブジェクト）
-   * @param {Object[]} [payload.oldProperties] - 旧互換: 更新前のプロパティ（プレーンオブジェクト）
-   * @param {Object[]} [payload.newProperties] - 旧互換: 更新後のプロパティ（プレーンオブジェクト）
    * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
    * @param {HistorySerializer} serializer - シリアライザ
    * @param {WorldRepository} worldRepository - ワールドリポジトリ（追加）
@@ -36,7 +33,7 @@ export class UpdatePropertiesCommand {
    */
   async execute() {
     const { featureId } = this._payload;
-    const timelineData = this._payload.newAnchors || this._payload.newProperties || [];
+    const timelineData = this._payload.newAnchors || [];
     const updatePayload = this._buildTimelineUpdatePayload(timelineData);
     const updateResult = await this._editFeatureUseCase.updateFeature(featureId, updatePayload);
     const updatedFeature = updateResult.feature;
@@ -49,7 +46,7 @@ export class UpdatePropertiesCommand {
    */
   async reverse() {
     const { featureId } = this._payload;
-    const timelineData = this._payload.oldAnchors || this._payload.oldProperties || [];
+    const timelineData = this._payload.oldAnchors || [];
     const updatePayload = this._buildTimelineUpdatePayload(timelineData);
     const updateResult = await this._editFeatureUseCase.updateFeature(featureId, updatePayload);
     const revertedFeature = updateResult.feature;
@@ -62,17 +59,13 @@ export class UpdatePropertiesCommand {
       .filter(Boolean);
 
     if (deserialized.length === 0) {
-      return { properties: [] };
+      throw new Error('履歴タイムラインが空です。oldAnchors/newAnchors を設定してください。');
     }
 
     if (deserialized.every(entry => entry instanceof FeatureAnchor)) {
       return { anchors: deserialized };
     }
 
-    if (deserialized.every(entry => entry instanceof Property)) {
-      return { properties: deserialized };
-    }
-
-    throw new Error('履歴タイムラインの形式が不正です。');
+    throw new Error('履歴タイムラインの形式が不正です。FeatureAnchor のみ許可されています。');
   }
 }

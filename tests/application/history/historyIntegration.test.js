@@ -554,7 +554,7 @@ describe("HistoryService integration", () => {
           throw new Error("forced failure");
         },
         "updateProperties",
-        { featureId: "missing", oldProperties: [], newProperties: [] }
+        { featureId: "missing", oldAnchors: [], newAnchors: [] }
       )
     ).rejects.toThrow("forced failure");
 
@@ -669,19 +669,19 @@ describe("HistoryService integration", () => {
 
     const worldAfterAdd = await ctx.worldRepository.getWorld();
     const storedFeature = worldAfterAdd.features.find((f) => f.id === feature.id);
-    const originalProperty = storedFeature.properties[0];
-    const updatedProperty = createProperty("PropUpdated");
+    const originalAnchor = storedFeature.anchors[0];
+    const updatedAnchor = originalAnchor.withProperty({ name: "PropUpdated" });
     const payload = {
       featureId: storedFeature.id,
-      oldProperties: [ctx.serializer.serialize(originalProperty)],
-      newProperties: [ctx.serializer.serialize(updatedProperty)]
+      oldAnchors: [ctx.serializer.serialize(originalAnchor)],
+      newAnchors: [ctx.serializer.serialize(updatedAnchor)]
     };
 
     ctx.eventBus.events.length = 0;
 
     await ctx.historyService.executeAndRecord(async () => {
       const result = await ctx.editFeatureUseCase.updateFeature(storedFeature.id, {
-        properties: [updatedProperty]
+        anchors: [updatedAnchor]
       });
       return { updatedFeature: result.feature };
     }, "updateProperties", payload);
@@ -699,7 +699,7 @@ describe("HistoryService integration", () => {
     await ctx.historyService.undo();
     const worldAfterUndo = await ctx.worldRepository.getWorld();
     const featureAfterUndo = worldAfterUndo.features.find((f) => f.id === storedFeature.id);
-    expect(featureAfterUndo.properties[0].name).toBe(originalProperty.name);
+    expect(featureAfterUndo.properties[0].name).toBe(originalAnchor.name);
     expect(ctx.historyService.canUndo()).toBe(false);
     expect(ctx.historyService.canRedo()).toBe(true);
     expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
@@ -895,14 +895,14 @@ describe("HistoryService integration", () => {
 
     const duplicatePayload = {
       featureId,
-      oldProperties: [],
-      newProperties: []
+      oldAnchors: [],
+      newAnchors: []
     };
     await ctx.historyService.executeAndRecord(async () => {
       const worldBefore = await ctx.worldRepository.getWorld();
       const featureBefore = worldBefore.features.find((item) => item.id === featureId);
-      duplicatePayload.oldProperties = featureBefore.properties.map((property) =>
-        ctx.serializer.serialize(property)
+      duplicatePayload.oldAnchors = featureBefore.anchors.map((anchor) =>
+        ctx.serializer.serialize(anchor)
       );
 
       const result = await ctx.editFeatureUseCase.updateFeature(featureId, {
@@ -914,32 +914,32 @@ describe("HistoryService integration", () => {
           description: ""
         }
       });
-      duplicatePayload.newProperties = result.feature.properties.map((property) =>
-        ctx.serializer.serialize(property)
+      duplicatePayload.newAnchors = result.feature.anchors.map((anchor) =>
+        ctx.serializer.serialize(anchor)
       );
       return { updatedFeature: result.feature };
     }, "updateProperties", duplicatePayload);
 
     const deletePayload = {
       featureId,
-      oldProperties: [],
-      newProperties: []
+      oldAnchors: [],
+      newAnchors: []
     };
     await ctx.historyService.executeAndRecord(async () => {
       const worldBefore = await ctx.worldRepository.getWorld();
       const featureBefore = worldBefore.features.find((item) => item.id === featureId);
-      deletePayload.oldProperties = featureBefore.properties.map((property) =>
-        ctx.serializer.serialize(property)
+      deletePayload.oldAnchors = featureBefore.anchors.map((anchor) =>
+        ctx.serializer.serialize(anchor)
       );
       const deletionPlan = buildAnchorDeletionPlan(
-        featureBefore.properties,
+        featureBefore.anchors,
         getAnchorKey(new TimePoint(1300))
       );
       const result = await ctx.editFeatureUseCase.updateFeature(featureId, {
-        properties: deletionPlan.updatedProperties
+        anchors: deletionPlan.updatedAnchors
       });
-      deletePayload.newProperties = result.feature.properties.map((property) =>
-        ctx.serializer.serialize(property)
+      deletePayload.newAnchors = result.feature.anchors.map((anchor) =>
+        ctx.serializer.serialize(anchor)
       );
       return { updatedFeature: result.feature };
     }, "updateProperties", deletePayload);
@@ -988,14 +988,14 @@ describe("HistoryService integration", () => {
 
     const duplicatePayload = {
       featureId,
-      oldProperties: [],
-      newProperties: []
+      oldAnchors: [],
+      newAnchors: []
     };
     await ctx.historyService.executeAndRecord(async () => {
       const worldBefore = await ctx.worldRepository.getWorld();
       const featureBefore = worldBefore.features.find((item) => item.id === featureId);
-      duplicatePayload.oldProperties = featureBefore.properties.map((property) =>
-        ctx.serializer.serialize(property)
+      duplicatePayload.oldAnchors = featureBefore.anchors.map((anchor) =>
+        ctx.serializer.serialize(anchor)
       );
 
       const result = await ctx.editFeatureUseCase.updateFeature(featureId, {
@@ -1007,8 +1007,8 @@ describe("HistoryService integration", () => {
           description: ""
         }
       });
-      duplicatePayload.newProperties = result.feature.properties.map((property) =>
-        ctx.serializer.serialize(property)
+      duplicatePayload.newAnchors = result.feature.anchors.map((anchor) =>
+        ctx.serializer.serialize(anchor)
       );
       return { updatedFeature: result.feature };
     }, "updateProperties", duplicatePayload);
@@ -1031,7 +1031,7 @@ describe("HistoryService integration", () => {
             description: ""
           }
         });
-      }, "updateProperties", { featureId, oldProperties: [], newProperties: [] })
+      }, "updateProperties", { featureId, oldAnchors: [], newAnchors: [] })
     ).rejects.toThrow(/次の歴史の錨/);
 
     expect(ctx.eventBus.events).toEqual([]);
