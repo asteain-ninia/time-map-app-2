@@ -101,6 +101,15 @@ const createPolygonAnchor = ({ id, start, end, name, vertexIds }) =>
     }
   });
 
+const createSplitAnchorDraft = (endTime = null) =>
+  new FeatureAnchor({
+    id: "anchor-draft",
+    timeRange: { start: new TimePoint(0), end: endTime },
+    property: { name: "Split Child", description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
+
 const createWorld = (t1000, t2000) => ({
   features: [
     new Polygon(
@@ -237,20 +246,20 @@ describe("SplitPolygon history integration", () => {
   it("records splitPolygon with editTime and restores timeline by undo/redo", async () => {
     const editTime = new TimePoint(1500);
     const payload = {};
-    const splitProperty = new Property(new TimePoint(0), "Split Child", "", {}, new TimePoint(0), null);
+    const splitAnchor = createSplitAnchorDraft();
     let splitResult;
 
     ctx.eventBus.events.length = 0;
     await ctx.historyService.executeAndRecord(async () => {
       const worldBefore = await ctx.worldRepository.getWorld();
       const originalPolygon = worldBefore.features.find((feature) => feature.id === "poly-1");
-      splitResult = await ctx.editFeatureUseCase.splitPolygon(
-        "poly-1",
-        createSplitPlan(),
-        0,
-        splitProperty,
-        editTime
-      );
+        splitResult = await ctx.editFeatureUseCase.splitPolygon(
+          "poly-1",
+          createSplitPlan(),
+          0,
+          splitAnchor,
+          editTime
+        );
       Object.assign(payload, {
         polygonId: "poly-1",
         originalPolygonData: ctx.serializer.serialize(originalPolygon),
@@ -335,7 +344,7 @@ describe("SplitPolygon history integration", () => {
     ctx.layerService.checkExclusivity.mockReturnValue(false);
     const editTime = new TimePoint(1500);
     const payload = {};
-    const splitProperty = new Property(new TimePoint(0), "Split Child", "", {}, new TimePoint(0), null);
+    const splitAnchor = createSplitAnchorDraft();
 
     await expect(
       ctx.historyService.executeAndRecord(async () => {
@@ -345,7 +354,7 @@ describe("SplitPolygon history integration", () => {
           "poly-1",
           createSplitPlan(),
           0,
-          splitProperty,
+          splitAnchor,
           editTime
         );
         Object.assign(payload, {

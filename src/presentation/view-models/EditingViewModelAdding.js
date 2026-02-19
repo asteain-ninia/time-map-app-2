@@ -1,4 +1,4 @@
-import { Property } from '../../domain/value-objects/Property.js';
+import { FeatureAnchor } from '../../domain/value-objects/FeatureAnchor.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { AddFeatureCommand } from '../../application/services/history/commands/AddFeatureCommand.js';
 import { AddRingCommand } from '../../application/services/history/commands/AddRingCommand.js';
@@ -173,23 +173,23 @@ function getAddingPoints() {
 
 /**
  * 地物の追加を確定
- * @param {Property[]} properties - プロパティ (Property インスタンスの配列、要素数1を期待)
+ * @param {FeatureAnchor[]} anchors - 履歴アンカー草案（FeatureAnchor インスタンスの配列、要素数1を期待）
  * @param {string} layerId - レイヤーID
  * @returns {Promise<Object>} 追加された地物インスタンス
  */
-async function confirmAddFeature(properties, layerId) {
+async function confirmAddFeature(anchors, layerId) {
   if (this._mode !== 'add' || !this._tool || this._addingPoints.length === 0) {
     throw new Error('地物の追加状態ではありません');
   }
-  if (!Array.isArray(properties) || properties.length !== 1 || !(properties[0] instanceof Property)) {
-    throw new Error("Invalid properties format. Expected a single Property instance in an array for confirmAddFeature.");
+  if (!Array.isArray(anchors) || anchors.length !== 1 || !(anchors[0] instanceof FeatureAnchor)) {
+    throw new Error("Invalid anchors format. Expected a single FeatureAnchor instance in an array for confirmAddFeature.");
   }
 
   const geometryData = { vertices: [...this._addingPoints] };
   const featureType = this._tool;
   
   try {
-    const feature = await this._editFeatureUseCase.addFeature(featureType, properties, geometryData, layerId);
+    const feature = await this._editFeatureUseCase.addFeature(featureType, anchors, geometryData, layerId);
 
     const payload = {
       featureId: feature.id,

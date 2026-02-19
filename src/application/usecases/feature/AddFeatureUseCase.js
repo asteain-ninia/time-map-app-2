@@ -1,11 +1,9 @@
 // src/application/usecases/feature/AddFeatureUseCase.js
 
-import { Feature } from '../../../domain/entities/Feature';
 import { Point } from '../../../domain/entities/Point';
 import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon';
-import { Property } from '../../../domain/value-objects/Property';
-import { Vertex } from '../../../domain/entities/Vertex'; // 比較用
+import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor';
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
 
 /**
@@ -32,16 +30,14 @@ export class AddFeatureUseCase {
   /**
    * 新しい地理オブジェクトを追加
    * @param {string} featureType - オブジェクトタイプ ('point', 'line', 'polygon')
-   * @param {Property[]} properties - プロパティ情報 (Propertyインスタンスの配列、要素数1を期待)
+   * @param {FeatureAnchor[]} anchors - 履歴アンカー（FeatureAnchorインスタンスの配列、要素数1を期待）
    * @param {Object} geometry - 形状情報 { vertices?: {x,y}[], vertexIds?: string[], holesVertexIds?: string[][], parentId?: string, isMultiPolygon?: boolean, subPolygons?: object[] }
    * @param {string} layerId - レイヤーID
    * @returns {Promise<Feature>} 追加されたオブジェクト
    */
-  async execute(featureType, properties, geometry, layerId) {
-    // properties が要素数1の Property インスタンスの配列であることをバリデーション
-    if (!Array.isArray(properties) || properties.length !== 1 || !(properties[0] instanceof Property)) {
-      console.error("AddFeatureUseCase: properties must be an array containing a single Property instance. Received:", properties);
-      throw new Error("Invalid properties format for AddFeatureUseCase. Expected a single Property instance in an array.");
+  async execute(featureType, anchors, geometry, layerId) {
+    if (!Array.isArray(anchors) || anchors.length !== 1 || !(anchors[0] instanceof FeatureAnchor)) {
+      throw new Error("Invalid anchors format for AddFeatureUseCase. Expected a single FeatureAnchor instance in an array.");
     }
     const world = await this._worldRepository.getWorld();
     const existingVertexIds = new Set(world.vertices.map(vertex => vertex.id));
@@ -51,7 +47,6 @@ export class AddFeatureUseCase {
     const processedGeometry = this._processGeometry(geometry, world); // vertexIds を生成
 
     let feature;
-    // properties は検証済みの要素数1の Property[] 配列
 
     try {
       switch (featureType) {
@@ -59,17 +54,41 @@ export class AddFeatureUseCase {
           if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length !== 1) {
             throw new Error("Point geometry must have exactly one vertexId.");
           }
-          // Point.create のシグネチャ (id, properties, geometry, layerId) に合わせる
-          const pointGeometry = { vertexId: processedGeometry.vertexIds[0] };
-          feature = Point.create(featureId, properties, pointGeometry, layerId); // 修正: properties を直接使用
+          const pointVertexId = processedGeometry.vertexIds[0];
+          const pointAnchors = this._createAnchorsForNewFeature(
+            featureId,
+            anchors,
+            { type: 'Point', vertexId: pointVertexId },
+            { layerId }
+          );
+          feature = new Point(
+            featureId,
+            [pointVertexId],
+            pointAnchors.map(anchor => anchor.toPropertyProjection()),
+            layerId,
+            pointAnchors
+          );
           break;
         case 'line':
           if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 2) {
             throw new Error("Line geometry must have at least two vertexIds.");
           }
-          // Line.create のシグネチャ (id, properties, geometry, layerId) に合わせる
-          const lineGeometry = { vertexIds: processedGeometry.vertexIds };
-          feature = Line.create(featureId, properties, lineGeometry, layerId); // 修正: properties を直接使用
+          {
+            const lineVertexIds = [...processedGeometry.vertexIds];
+            const lineAnchors = this._createAnchorsForNewFeature(
+              featureId,
+              anchors,
+              { type: 'LineString', vertexIds: [...lineVertexIds] },
+              { layerId }
+            );
+            feature = new Line(
+              featureId,
+              lineVertexIds,
+              lineAnchors.map(anchor => anchor.toPropertyProjection()),
+              layerId,
+              lineAnchors
+            );
+          }
           break;
         case 'polygon':
           if (!processedGeometry.vertexIds || processedGeometry.vertexIds.length < 3) {
@@ -109,14 +128,36 @@ export class AddFeatureUseCase {
             }
           }
 
-          feature = new Polygon(
+          {
+            const parentId = processedGeometry.parentId || "0";
+            const polygonAnchors = this._createAnchorsForNewFeature(
               featureId,
-              properties, // 修正: properties を直接使用
+              anchors,
+              {
+                type: 'Polygon',
+                rings: rings.map(ring => ({
+                  id: ring.id,
+                  vertexIds: [...ring.vertexIds],
+                  ringType: ring.ringType,
+                  parentId: ring.parentId
+                }))
+              },
+              {
+                layerId,
+                parentId,
+                childIds: []
+              }
+            );
+            feature = new Polygon(
+              featureId,
+              polygonAnchors.map(anchor => anchor.toPropertyProjection()),
               layerId,
-              processedGeometry.parentId || "0",
-              [], // 新規作成なので childIds は空
-              rings
-          );
+              parentId,
+              [],
+              rings,
+              polygonAnchors
+            );
+          }
 
           ensurePolygonLayerConstraints(feature, world, this._layerService, this._geometryService);
           break;
@@ -131,6 +172,23 @@ export class AddFeatureUseCase {
     world.features.push(feature);
     await this._worldRepository.saveWorld(world);
     return feature;
+  }
+
+  _createAnchorsForNewFeature(featureId, anchors, shape, placement) {
+    return anchors.map((anchor, index) => new FeatureAnchor({
+      id: `anchor-${featureId}-${index + 1}`,
+      timeRange: {
+        start: anchor.startTime,
+        end: anchor.endTime ?? null
+      },
+      property: {
+        name: anchor.name,
+        description: anchor.description,
+        attributes: anchor.getAttributes()
+      },
+      shape,
+      placement
+    }));
   }
 
   _revertNewVertices(world, existingVertexIds) {

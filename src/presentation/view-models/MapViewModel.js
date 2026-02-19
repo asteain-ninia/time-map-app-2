@@ -637,7 +637,7 @@ export class MapViewModel {
    * 地物を追加 (Deprecated: UseCase 経由で行うべき)
    * @deprecated Use EditingViewModel.confirmAddFeature which calls EditFeatureUseCase.addFeature
    */
-  async addFeature(featureType, properties, geometry, layerId) {
+  async addFeature(featureType, anchors, geometry, layerId) {
     console.warn("MapViewModel.addFeature is deprecated. Feature addition should be handled via EditingViewModel and EditFeatureUseCase.");
     return null; // 何も実行しない
   }

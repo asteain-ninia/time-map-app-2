@@ -6,6 +6,7 @@ import { LayerService } from "../../src/domain/services/LayerService.js";
 import { Layer } from "../../src/domain/entities/Layer.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
 import { Vertex } from "../../src/domain/entities/Vertex.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
@@ -18,6 +19,20 @@ const createPropertyWithRange = (startYear, endYear, name = "Polygon") => new Pr
   new TimePoint(startYear),
   endYear === null ? null : new TimePoint(endYear)
 );
+const toCreationAnchor = (property) => new FeatureAnchor({
+  id: "anchor-draft",
+  timeRange: {
+    start: property.startTime || property.timePoint,
+    end: property.endTime || null
+  },
+  property: {
+    name: property.name,
+    description: property.description,
+    attributes: property.getAttributes()
+  },
+  shape: {},
+  placement: {}
+});
 
 const makeWorldRepository = (world) => ({
   getWorld: vi.fn(async () => world),
@@ -90,7 +105,7 @@ describe("Polygon layer validation integration", () => {
     await expect(
       useCase.execute(
         "polygon",
-        [createProperty("New")],
+        [toCreationAnchor(createProperty("New"))],
         { vertices: [
           { x: 5, y: 5 },
           { x: 15, y: 5 },
@@ -141,7 +156,7 @@ describe("Polygon layer validation integration", () => {
 
     const added = await useCase.execute(
       "polygon",
-      [createPropertyWithRange(1200, null, "Later")],
+      [toCreationAnchor(createPropertyWithRange(1200, null, "Later"))],
       { vertices: [
         { x: 5, y: 5 },
         { x: 15, y: 5 },
@@ -582,7 +597,7 @@ describe("Polygon layer validation integration", () => {
 
     const result = await useCase.execute(
       "polygon",
-      [createProperty("Enclave")],
+      [toCreationAnchor(createProperty("Enclave"))],
       { vertices: [
         { x: 2.5, y: 2.5 },
         { x: 3.5, y: 2.5 },

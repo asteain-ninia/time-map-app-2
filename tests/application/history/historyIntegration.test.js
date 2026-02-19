@@ -14,6 +14,14 @@ import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.j
 import { buildAnchorDeletionPlan, getAnchorKey } from "../../../src/presentation/views/sidebar/propertyAnchorUtils.js";
 
 const createProperty = (name = "Name") => new Property(new TimePoint(0), name, "", {});
+const createAddAnchor = (name = "Name", startTime = new TimePoint(0), endTime = null) =>
+  new FeatureAnchor({
+    id: "anchor-draft",
+    timeRange: { start: startTime, end: endTime },
+    property: { name, description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 class DeterministicIdGenerationService extends IdGenerationService {
   constructor() {
@@ -168,7 +176,7 @@ describe("HistoryService integration", () => {
     const addResult = await ctx.historyService.executeAndRecord(async () => {
       const feature = await ctx.editFeatureUseCase.addFeature(
         "point",
-        [createProperty(name)],
+        [createAddAnchor(name)],
         { vertices: [coordinates] },
         "layer-0"
       );
@@ -190,7 +198,7 @@ describe("HistoryService integration", () => {
     { x: 5, y: 0 },
     { x: 10, y: 0 }
   ]) => {
-    return ctx.editFeatureUseCase.addFeature("line", [createProperty(name)], { vertices }, "layer-0");
+    return ctx.editFeatureUseCase.addFeature("line", [createAddAnchor(name)], { vertices }, "layer-0");
   };
 
   it("adds a feature and restores it via undo/redo", async () => {
@@ -659,10 +667,10 @@ describe("HistoryService integration", () => {
   });
 
   it("updates properties and restores them via undo/redo", async () => {
-    const baseProperty = createProperty("PropBase");
+    const baseAnchor = createAddAnchor("PropBase");
     const feature = await ctx.editFeatureUseCase.addFeature(
       "point",
-      [baseProperty],
+      [baseAnchor],
       { vertices: [{ x: 0, y: 0 }] },
       "layer-0"
     );
@@ -887,7 +895,7 @@ describe("HistoryService integration", () => {
     );
     const feature = await ctx.editFeatureUseCase.addFeature(
       "point",
-      [initialProperty],
+      [createAddAnchor(initialProperty.name, initialProperty.startTime, initialProperty.endTime)],
       { vertices: [{ x: 2, y: 2 }] },
       "layer-0"
     );
@@ -980,7 +988,7 @@ describe("HistoryService integration", () => {
     );
     const feature = await ctx.editFeatureUseCase.addFeature(
       "point",
-      [initialProperty],
+      [createAddAnchor(initialProperty.name, initialProperty.startTime, initialProperty.endTime)],
       { vertices: [{ x: 2, y: 2 }] },
       "layer-0"
     );
@@ -1052,7 +1060,7 @@ describe("HistoryService integration", () => {
   it("records legacy add entries via addHistoryEntry without throwing", async () => {
     const feature = await ctx.editFeatureUseCase.addFeature(
       "point",
-      [createProperty("LegacyPoint")],
+      [createAddAnchor("LegacyPoint")],
       { vertices: [{ x: 3, y: 4 }] },
       "layer-0"
     );

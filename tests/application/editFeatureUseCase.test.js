@@ -1,7 +1,7 @@
 // Tests authored by Codex.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EditFeatureUseCase } from "../../src/application/usecases/EditFeatureUseCase.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 const makeWorld = () => ({
@@ -10,7 +10,14 @@ const makeWorld = () => ({
   layers: [{ id: "layer-0", order: 0 }]
 });
 
-const createProperty = (name = "Name") => new Property(new TimePoint(0), name, "", {});
+const createAnchor = (name = "Name") =>
+  new FeatureAnchor({
+    id: "anchor-draft",
+    timeRange: { start: new TimePoint(0), end: null },
+    property: { name, description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 describe("EditFeatureUseCase", () => {
   let world;
@@ -75,13 +82,13 @@ describe("EditFeatureUseCase", () => {
 
   it("dispatches to AddFeatureUseCase for creation", async () => {
     const { useCase, addFeatureUseCase } = createUseCaseWithStubs();
-    const property = createProperty("Point");
+    const anchor = createAnchor("Point");
 
-    const result = await useCase.addFeature("point", [property], { vertexIds: ["v1"] }, "layer-0");
+    const result = await useCase.addFeature("point", [anchor], { vertexIds: ["v1"] }, "layer-0");
 
     expect(addFeatureUseCase.execute).toHaveBeenCalledWith(
       "point",
-      [property],
+      [anchor],
       { vertexIds: ["v1"] },
       "layer-0"
     );

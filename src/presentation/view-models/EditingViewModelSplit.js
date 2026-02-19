@@ -1,4 +1,4 @@
-import { Property } from '../../domain/value-objects/Property.js';
+import { FeatureAnchor } from '../../domain/value-objects/FeatureAnchor.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { SplitPolygonCommand } from '../../application/services/history/commands/SplitPolygonCommand.js';
 
@@ -45,12 +45,12 @@ function clearSplitPlan() {
   this._splitPlan = null;
 }
 
-async function confirmSplit(inheritSideIndex, newProperty, editTime) {
+async function confirmSplit(inheritSideIndex, newAnchor, editTime) {
   if (this._mode !== 'edit' || this._tool !== 'split' || !this._targetPolygon || !this._splitPlan) {
     throw new Error('分割確定の条件を満たしていません。');
   }
-  if (!(newProperty instanceof Property)) {
-    throw new Error('分割に必要なプロパティが不正です。');
+  if (!(newAnchor instanceof FeatureAnchor)) {
+    throw new Error('分割に必要な履歴アンカーが不正です。');
   }
 
   const polygonId = this._targetPolygon.id;
@@ -66,7 +66,7 @@ async function confirmSplit(inheritSideIndex, newProperty, editTime) {
       polygonId,
       this._splitPlan,
       inheritSideIndex,
-      newProperty,
+      newAnchor,
       editTime
     );
 

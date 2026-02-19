@@ -90,8 +90,8 @@ export class EditFeatureUseCase {
     return this._worldRepository;
   }
 
-  async addFeature(featureType, properties, geometry, layerId) {
-    return this._addFeatureUseCase.execute(featureType, properties, geometry, layerId);
+  async addFeature(featureType, anchors, geometry, layerId) {
+    return this._addFeatureUseCase.execute(featureType, anchors, geometry, layerId);
   }
 
   async updateFeature(featureId, updates) {
@@ -145,8 +145,8 @@ export class EditFeatureUseCase {
 
   // --- ポリゴン固有操作 (リングベース移行後は PolygonEditService へ委譲) ---
 
-  async splitPolygon(polygonId, splitPlan, inheritSideIndex, newProperty, editTime) {
-    return this._splitPolygonUseCase.execute(polygonId, splitPlan, inheritSideIndex, newProperty, editTime);
+  async splitPolygon(polygonId, splitPlan, inheritSideIndex, newAnchor, editTime) {
+    return this._splitPolygonUseCase.execute(polygonId, splitPlan, inheritSideIndex, newAnchor, editTime);
   }
 
   async changePolygonParent(polygonId, newParentId) {

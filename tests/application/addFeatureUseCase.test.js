@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddFeatureUseCase } from "../../src/application/usecases/feature/AddFeatureUseCase.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 describe("AddFeatureUseCase", () => {
@@ -82,8 +82,14 @@ describe("AddFeatureUseCase", () => {
       getVerticesFromIds
     );
 
-    const property = new Property(new TimePoint(0), "Polygon", "", {});
-    const result = await useCase.execute("polygon", [property], { vertices: [] }, "layer-0");
+    const anchor = new FeatureAnchor({
+      id: "anchor-draft",
+      timeRange: { start: new TimePoint(0), end: null },
+      property: { name: "Polygon", description: "", attributes: {} },
+      shape: {},
+      placement: {}
+    });
+    const result = await useCase.execute("polygon", [anchor], { vertices: [] }, "layer-0");
 
     expect(result).toBeInstanceOf(Object);
     expect(world.features).toHaveLength(1);

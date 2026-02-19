@@ -1,5 +1,5 @@
 // src/presentation/views/MapView.js
-import { Property } from '../../domain/value-objects/Property.js';
+import { FeatureAnchor } from '../../domain/value-objects/FeatureAnchor.js';
 import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { buildPolygonSplitPlan } from '../../domain/services/PolygonSplitService.js';
@@ -844,10 +844,10 @@ export class MapView {
 
   async _confirmSplitWithProperties(inheritSideIndex, properties) {
       try {
-          const domainProperty = this._createDomainProperty(properties);
+          const domainAnchor = this._createDomainProperty(properties);
           await this._editingViewModel.confirmSplit(
             inheritSideIndex,
-            domainProperty,
+            domainAnchor,
             this._viewModel.getCurrentTime()
           );
           console.log('分割が確定しました。');
@@ -1076,21 +1076,27 @@ export class MapView {
       : (rangeForFallback?.end || null);
     const propertyTimePoint = startTp || correctTimePoint;
     const { name, description } = properties;
-    return new Property(
-        propertyTimePoint,
+    return new FeatureAnchor({
+      id: 'anchor-draft',
+      timeRange: {
+        start: propertyTimePoint,
+        end: endTp
+      },
+      property: {
         name,
         description,
-        {},
-        startTp,
-        endTp
-    );
+        attributes: {}
+      },
+      shape: {},
+      placement: {}
+    });
   }
 
   async _confirmAddFeatureWithProperties(properties, layerId) {
     try {
-        const domainProperty = this._createDomainProperty(properties);
+        const domainAnchor = this._createDomainProperty(properties);
         // EditingViewModelに地物追加確定を依頼
-        await this._editingViewModel.confirmAddFeature([domainProperty], layerId);
+        await this._editingViewModel.confirmAddFeature([domainAnchor], layerId);
         console.log('地物の追加が確定しました。');
     } catch (error) {
         console.error('地物の追加確定に失敗:', error);

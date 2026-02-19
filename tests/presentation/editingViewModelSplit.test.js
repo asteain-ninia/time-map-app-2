@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { splitMethods } from "../../src/presentation/view-models/EditingViewModelSplit.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { SplitPolygonCommand } from "../../src/application/services/history/commands/SplitPolygonCommand.js";
 
-const createDomainProperty = () =>
-  new Property(new TimePoint(1000), "Split", "", {}, new TimePoint(1000), null);
+const createDomainAnchor = () =>
+  new FeatureAnchor({
+    id: "anchor-draft",
+    timeRange: { start: new TimePoint(1000), end: null },
+    property: { name: "Split", description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 const buildContext = ({ splitResult, splitError = null }) => {
   const world = {
@@ -59,11 +65,11 @@ describe("EditingViewModelSplit.confirmSplit", () => {
       addedVerticesData: [{ id: "v-new", x: 1, y: 2 }]
     };
     const { context, editFeatureUseCase, historyService, eventBus } = buildContext({ splitResult });
-    const property = createDomainProperty();
+    const anchor = createDomainAnchor();
     const editTime = new TimePoint(1500);
     const splitPlan = context._splitPlan;
 
-    const result = await splitMethods.confirmSplit.call(context, 1, property, editTime);
+    const result = await splitMethods.confirmSplit.call(context, 1, anchor, editTime);
 
     expect(result).toBe(splitResult);
     expect(editFeatureUseCase.splitPolygon).toHaveBeenCalledTimes(1);
@@ -71,7 +77,7 @@ describe("EditingViewModelSplit.confirmSplit", () => {
       "poly-1",
       splitPlan,
       1,
-      property,
+      anchor,
       editTime
     );
     expect(historyService._stackManager.pushUndo).toHaveBeenCalledTimes(1);
@@ -89,11 +95,11 @@ describe("EditingViewModelSplit.confirmSplit", () => {
       splitResult: null,
       splitError
     });
-    const property = createDomainProperty();
+    const anchor = createDomainAnchor();
     const editTime = new TimePoint(1500);
 
     await expect(
-      splitMethods.confirmSplit.call(context, 0, property, editTime)
+      splitMethods.confirmSplit.call(context, 0, anchor, editTime)
     ).rejects.toThrow("split failed");
 
     expect(editFeatureUseCase.splitPolygon).toHaveBeenCalledTimes(1);

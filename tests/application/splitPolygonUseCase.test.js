@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { SplitPolygonUseCase } from "../../src/application/usecases/feature/SplitPolygonUseCase.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 class InMemoryWorldRepository {
@@ -97,6 +96,15 @@ const createSplitPlan = () => ({
   ]
 });
 
+const createNewAnchorDraft = (name = "Split-Child", end = null) =>
+  new FeatureAnchor({
+    id: "anchor-draft",
+    timeRange: { start: new TimePoint(0), end },
+    property: { name, description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
+
 const createWorldWithAnchoredPolygon = (anchors) => ({
   features: [
     new Polygon(
@@ -142,10 +150,10 @@ describe("SplitPolygonUseCase", () => {
       createLayerServiceStub(),
       createIdGenerator()
     );
-    const newProperty = new Property(new TimePoint(0), "Split-Child", "", {}, new TimePoint(0), null);
+    const newAnchor = createNewAnchorDraft();
 
     await expect(
-      useCase.execute("poly-1", createSplitPlan(), 0, newProperty, 1500)
+      useCase.execute("poly-1", createSplitPlan(), 0, newAnchor, 1500)
     ).rejects.toThrow(/TimePoint/);
   });
 
@@ -160,10 +168,10 @@ describe("SplitPolygonUseCase", () => {
       createLayerServiceStub(),
       createIdGenerator()
     );
-    const newProperty = new Property(new TimePoint(0), "Split-Child", "", {}, new TimePoint(0), null);
+    const newAnchor = createNewAnchorDraft();
 
     await expect(
-      useCase.execute("poly-1", createSplitPlan(), 0, newProperty, new TimePoint(1300))
+      useCase.execute("poly-1", createSplitPlan(), 0, newAnchor, new TimePoint(1300))
     ).rejects.toThrow(/存在しない面情報/);
   });
 
@@ -181,8 +189,8 @@ describe("SplitPolygonUseCase", () => {
     );
 
     const editTime = new TimePoint(1500);
-    const newProperty = new Property(new TimePoint(0), "Split-Child", "", {}, new TimePoint(0), null);
-    const result = await useCase.execute("poly-1", createSplitPlan(), 0, newProperty, editTime);
+    const newAnchor = createNewAnchorDraft();
+    const result = await useCase.execute("poly-1", createSplitPlan(), 0, newAnchor, editTime);
 
     expect(result.updatedPolygon.anchors.map(anchor => anchor.startTime.year)).toEqual([1000, 1500, 2000]);
     expect(result.updatedPolygon.anchors[0].endTime.year).toBe(1500);
@@ -213,8 +221,8 @@ describe("SplitPolygonUseCase", () => {
     );
 
     const editTime = new TimePoint(1500);
-    const newProperty = new Property(new TimePoint(0), "Split-Child", "", {}, new TimePoint(0), null);
-    const result = await useCase.execute("poly-1", createSplitPlan(), 0, newProperty, editTime);
+    const newAnchor = createNewAnchorDraft();
+    const result = await useCase.execute("poly-1", createSplitPlan(), 0, newAnchor, editTime);
 
     expect(result.updatedPolygon.anchors.map(anchor => anchor.startTime.year)).toEqual([1000, 1500, 2000]);
     expect(result.updatedPolygon.anchors[0].endTime.year).toBe(1500);
@@ -238,16 +246,9 @@ describe("SplitPolygonUseCase", () => {
     );
 
     const editTime = new TimePoint(1500);
-    const newProperty = new Property(
-      new TimePoint(0),
-      "Split-Child",
-      "",
-      {},
-      new TimePoint(0),
-      new TimePoint(2500)
-    );
+    const newAnchor = createNewAnchorDraft("Split-Child", new TimePoint(2500));
 
-    const result = await useCase.execute("poly-1", createSplitPlan(), 0, newProperty, editTime);
+    const result = await useCase.execute("poly-1", createSplitPlan(), 0, newAnchor, editTime);
     expect(result.updatedPolygon.getAnchorAt(editTime).endTime.year).toBe(1800);
     expect(result.newPolygon.anchors[0].endTime.year).toBe(1800);
   });

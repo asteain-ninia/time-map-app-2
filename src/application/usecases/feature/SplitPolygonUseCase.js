@@ -1,6 +1,5 @@
 import { Polygon } from '../../../domain/entities/Polygon.js';
 import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
-import { Property } from '../../../domain/value-objects/Property.js';
 import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
 
@@ -12,15 +11,15 @@ export class SplitPolygonUseCase {
     this._generateId = generateId;
   }
 
-  async execute(polygonId, splitPlan, inheritSideIndex, newProperty, editTime) {
+  async execute(polygonId, splitPlan, inheritSideIndex, newAnchor, editTime) {
     if (!polygonId) {
       throw new Error('分割対象のポリゴンIDが指定されていません。');
     }
     if (!splitPlan || !Array.isArray(splitPlan.polygons) || splitPlan.polygons.length !== 2) {
       throw new Error('分割結果の情報が不足しています。');
     }
-    if (!(newProperty instanceof Property)) {
-      throw new Error('新しいプロパティが不正です。');
+    if (!(newAnchor instanceof FeatureAnchor)) {
+      throw new Error('新しい履歴アンカーが不正です。');
     }
     if (!(editTime instanceof TimePoint)) {
       throw new Error('分割時刻は TimePoint で指定してください。');
@@ -81,9 +80,9 @@ export class SplitPolygonUseCase {
         childIds: originalPolygon.childIds
       };
     const newPolygonId = this._generateId('polygon');
-    const newAnchor = this._buildNewPolygonAnchor(
+    const createdAnchor = this._buildNewPolygonAnchor(
       newPolygonId,
-      newProperty,
+      newAnchor,
       newRings,
       placementAtEditTime,
       editTime,
@@ -91,12 +90,12 @@ export class SplitPolygonUseCase {
     );
     const newPolygon = new Polygon(
       newPolygonId,
-      [newProperty],
+      [createdAnchor.toPropertyProjection()],
       placementAtEditTime.layerId,
       placementAtEditTime.parentId,
       [],
       newRings,
-      [newAnchor]
+      [createdAnchor]
     );
 
     const originalFeaturesSnapshot = world.features.slice();
@@ -263,15 +262,15 @@ export class SplitPolygonUseCase {
     };
   }
 
-  _buildNewPolygonAnchor(newPolygonId, newProperty, newRings, placementAtEditTime, editTime, nextFutureAnchorStart) {
-    const endTime = this._resolveAnchorEndTime(newProperty.endTime, editTime, nextFutureAnchorStart);
+  _buildNewPolygonAnchor(newPolygonId, newAnchor, newRings, placementAtEditTime, editTime, nextFutureAnchorStart) {
+    const endTime = this._resolveAnchorEndTime(newAnchor.endTime, editTime, nextFutureAnchorStart);
     return new FeatureAnchor({
       id: `anchor-${newPolygonId}-1`,
       timeRange: { start: editTime, end: endTime },
       property: {
-        name: newProperty.name,
-        description: newProperty.description,
-        attributes: newProperty.getAttributes()
+        name: newAnchor.name,
+        description: newAnchor.description,
+        attributes: newAnchor.getAttributes()
       },
       shape: this._buildPolygonShape(newRings),
       placement: {
