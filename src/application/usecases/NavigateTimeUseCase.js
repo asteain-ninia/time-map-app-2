@@ -183,9 +183,6 @@ export class NavigateTimeUseCase {
     if (Array.isArray(feature.anchors) && feature.anchors.length > 0) {
       return feature.anchors;
     }
-    if (Array.isArray(feature.properties)) {
-      return feature.properties;
-    }
     return [];
   }
 

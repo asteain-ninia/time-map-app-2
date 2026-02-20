@@ -64,7 +64,7 @@ export class AddFeatureUseCase {
           feature = new Point(
             featureId,
             [pointVertexId],
-            pointAnchors.map(anchor => anchor.toPropertyProjection()),
+            [],
             layerId,
             pointAnchors
           );
@@ -84,7 +84,7 @@ export class AddFeatureUseCase {
             feature = new Line(
               featureId,
               lineVertexIds,
-              lineAnchors.map(anchor => anchor.toPropertyProjection()),
+              [],
               layerId,
               lineAnchors
             );
@@ -150,7 +150,7 @@ export class AddFeatureUseCase {
             );
             feature = new Polygon(
               featureId,
-              polygonAnchors.map(anchor => anchor.toPropertyProjection()),
+              [],
               layerId,
               parentId,
               [],

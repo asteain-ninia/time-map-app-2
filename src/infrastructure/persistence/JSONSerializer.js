@@ -217,14 +217,10 @@ export class JSONSerializer {
   }
 
   _serializeFeatureAnchors(feature, fallbackShape, fallbackPlacement) {
-    const anchors = Array.isArray(feature.anchors) && feature.anchors.length > 0
-      ? feature.anchors
-      : (feature.properties || []).map((property, index) => FeatureAnchor.fromProperty(
-        property,
-        fallbackShape,
-        fallbackPlacement,
-        `anchor-${feature.id}-${index + 1}`
-      ));
+    const anchors = Array.isArray(feature.anchors) ? feature.anchors : [];
+    if (anchors.length === 0) {
+      throw new Error(`Feature ${feature?.id ?? '(unknown)'} に anchors が存在しません。`);
+    }
 
     return anchors.map(anchor => this._serializeFeatureAnchor(anchor));
   }
@@ -261,7 +257,6 @@ export class JSONSerializer {
     }
 
     const anchors = featureData.anchors.map(anchorData => this._deserializeFeatureAnchor(anchorData));
-    const properties = anchors.map(anchor => anchor.toPropertyProjection());
     const latestAnchor = anchors[anchors.length - 1];
 
     if (featureData.featureType === 'Point') {
@@ -274,7 +269,7 @@ export class JSONSerializer {
       const layerId = typeof latestAnchor.placement?.layerId === 'string'
         ? latestAnchor.placement.layerId
         : '';
-      return new Point(featureData.id, [vertexId], properties, layerId, anchors);
+      return new Point(featureData.id, [vertexId], [], layerId, anchors);
     }
 
     if (featureData.featureType === 'Line') {
@@ -287,7 +282,7 @@ export class JSONSerializer {
       const layerId = typeof latestAnchor.placement?.layerId === 'string'
         ? latestAnchor.placement.layerId
         : '';
-      return new Line(featureData.id, [...vertexIds], properties, layerId, anchors);
+      return new Line(featureData.id, [...vertexIds], [], layerId, anchors);
     }
 
     if (featureData.featureType === 'Polygon') {
@@ -308,7 +303,7 @@ export class JSONSerializer {
       const childIds = Array.isArray(latestAnchor.placement?.childIds)
         ? [...latestAnchor.placement.childIds]
         : [];
-      return new Polygon(featureData.id, properties, layerId, parentId, childIds, rings, anchors);
+      return new Polygon(featureData.id, [], layerId, parentId, childIds, rings, anchors);
     }
 
     throw new Error(`Unsupported featureType: ${featureData.featureType}`);
@@ -334,4 +329,3 @@ export class JSONSerializer {
     });
   }
 }
-

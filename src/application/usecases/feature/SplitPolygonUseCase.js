@@ -90,7 +90,7 @@ export class SplitPolygonUseCase {
     );
     const newPolygon = new Polygon(
       newPolygonId,
-      [createdAnchor.toPropertyProjection()],
+      [],
       placementAtEditTime.layerId,
       placementAtEditTime.parentId,
       [],
@@ -249,17 +249,7 @@ export class SplitPolygonUseCase {
       };
     }
 
-    return {
-      updatedPolygon: new Polygon(
-      originalPolygon.id,
-      originalPolygon.properties,
-      originalPolygon.layerId,
-      originalPolygon.parentId,
-      originalPolygon.childIds,
-      updatedRings
-      ),
-      nextFutureAnchorStart: null
-    };
+    throw new Error('分割対象の履歴アンカーが存在しません。');
   }
 
   _buildNewPolygonAnchor(newPolygonId, newAnchor, newRings, placementAtEditTime, editTime, nextFutureAnchorStart) {

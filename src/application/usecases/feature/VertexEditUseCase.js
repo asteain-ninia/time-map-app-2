@@ -736,13 +736,13 @@ export class VertexEditUseCase {
       const latestVertexId = typeof feature.getVertexIdAt === 'function'
         ? feature.getVertexIdAt(null)
         : feature.vertexId;
-      return new Point(feature.id, [latestVertexId], feature.properties, feature.layerId, anchors);
+      return new Point(feature.id, [latestVertexId], [], feature.layerId, anchors);
     }
     if (feature instanceof Line) {
       const latestVertexIds = typeof feature.getVertexIdsAt === 'function'
         ? feature.getVertexIdsAt(null)
         : feature.vertexIds;
-      return new Line(feature.id, latestVertexIds, feature.properties, feature.layerId, anchors);
+      return new Line(feature.id, latestVertexIds, [], feature.layerId, anchors);
     }
     if (feature instanceof Polygon) {
       const latestPlacement = typeof feature.getPlacementAt === 'function'
@@ -761,7 +761,7 @@ export class VertexEditUseCase {
         : [];
       return new Polygon(
         feature.id,
-        feature.properties,
+        [],
         feature.layerId,
         latestPlacement.parentId,
         latestPlacement.childIds || [],

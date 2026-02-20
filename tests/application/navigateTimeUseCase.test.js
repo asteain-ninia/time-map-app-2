@@ -3,14 +3,20 @@ import { describe, expect, it } from "vitest";
 import { NavigateTimeUseCase } from "../../src/application/usecases/NavigateTimeUseCase.js";
 import { TimeService } from "../../src/domain/services/TimeService.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 
 describe("NavigateTimeUseCase", () => {
   const timeService = new TimeService();
   const useCase = new NavigateTimeUseCase(timeService);
 
   const makeFeature = (...years) => ({
-    properties: years.map(year => new Property(new TimePoint(year), `N${year}`, "", {}))
+    anchors: years.map((year, index) => new FeatureAnchor({
+      id: `anchor-${year}-${index}`,
+      timeRange: { start: new TimePoint(year), end: null },
+      property: { name: `N${year}`, description: "", attributes: {} },
+      shape: { type: "Point", vertexId: "v1" },
+      placement: { layerId: "layer-1" }
+    }))
   });
 
   it("initializes with default time and allows direct moves", () => {

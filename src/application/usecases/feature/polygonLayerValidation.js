@@ -1,13 +1,10 @@
 import { Polygon } from '../../../domain/entities/Polygon.js';
-import { Property } from '../../../domain/value-objects/Property.js';
+import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
 import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
 
 function getPropertyStartAnchor(property) {
   if (!property || typeof property !== 'object') {
     return null;
-  }
-  if (property instanceof Property) {
-    return property.startTime || property.timePoint || null;
   }
   return property.startTime || null;
 }
@@ -26,9 +23,10 @@ function collectValidationTimePoints(polygons) {
     if (!(polygon instanceof Polygon)) {
       continue;
     }
-    const timelineEntries = Array.isArray(polygon.anchors) && polygon.anchors.length > 0
-      ? polygon.anchors
-      : (Array.isArray(polygon.properties) ? polygon.properties : []);
+    const timelineEntries = Array.isArray(polygon.anchors) ? polygon.anchors : [];
+    if (timelineEntries.length === 0) {
+      throw new Error(`Polygon ${polygon.id} に履歴アンカーが存在しません。`);
+    }
 
     for (const entry of timelineEntries) {
       const start = getPropertyStartAnchor(entry);
@@ -36,7 +34,7 @@ function collectValidationTimePoints(polygons) {
         unique.set(`${start.year}:${start.month ?? 'null'}:${start.day ?? 'null'}`, start);
       }
 
-      const end = entry instanceof Property ? entry.endTime : entry?.endTime ?? null;
+      const end = entry?.endTime ?? null;
       if (end instanceof TimePoint) {
         unique.set(`${end.year}:${end.month ?? 'null'}:${end.day ?? 'null'}`, end);
       }
@@ -86,8 +84,10 @@ function buildPolygonSnapshotAtTime(polygon, timePoint) {
     return null;
   }
 
-  const activeProperty = polygon.getPropertyAt(timePoint);
-  if (!(activeProperty instanceof Property)) {
+  const activeAnchor = typeof polygon.getAnchorAt === 'function'
+    ? polygon.getAnchorAt(timePoint)
+    : null;
+  if (!(activeAnchor instanceof FeatureAnchor)) {
     return null;
   }
 
@@ -102,13 +102,38 @@ function buildPolygonSnapshotAtTime(polygon, timePoint) {
       childIds: polygon.childIds
     };
 
+  const normalizedPlacement = {
+    layerId: placementAtTime.layerId,
+    parentId: placementAtTime.parentId ?? '0',
+    childIds: Array.isArray(placementAtTime.childIds) ? [...placementAtTime.childIds] : []
+  };
+  const normalizedRings = cloneRings(ringsAtTime || []);
+  const snapshotAnchor = new FeatureAnchor({
+    id: activeAnchor.id,
+    timeRange: {
+      start: activeAnchor.startTime,
+      end: activeAnchor.endTime
+    },
+    property: {
+      name: activeAnchor.name,
+      description: activeAnchor.description,
+      attributes: activeAnchor.getAttributes()
+    },
+    shape: {
+      type: 'Polygon',
+      rings: normalizedRings
+    },
+    placement: normalizedPlacement
+  });
+
   return new Polygon(
     polygon.id,
-    [activeProperty],
-    placementAtTime.layerId,
-    placementAtTime.parentId ?? '0',
-    placementAtTime.childIds || [],
-    cloneRings(ringsAtTime || [])
+    [],
+    normalizedPlacement.layerId,
+    normalizedPlacement.parentId,
+    normalizedPlacement.childIds,
+    normalizedRings,
+    [snapshotAnchor]
   );
 }
 

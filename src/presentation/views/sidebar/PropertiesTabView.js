@@ -121,11 +121,11 @@ export class PropertiesTabView {
       : null;
     const currentProperty = typeof feature.getPropertyAt === 'function'
       ? feature.getPropertyAt(currentTime)
-      : (feature.properties && feature.properties.length > 0 ? feature.properties[0] : null);
+      : null;
     const sortedProperties = sortPropertiesByStart(
       Array.isArray(feature.anchors) && feature.anchors.length > 0
         ? feature.anchors
-        : (feature.properties || [])
+        : []
     );
 
     if (!currentProperty) {
@@ -298,7 +298,7 @@ export class PropertiesTabView {
     const sortedProperties = sortPropertiesByStart(
       Array.isArray(feature.anchors) && feature.anchors.length > 0
         ? feature.anchors
-        : (feature.properties || [])
+        : []
     );
     const hasExactAnchor = sortedProperties.some(property => {
       const anchor = getPropertyStartAnchor(property);
@@ -946,8 +946,6 @@ export class PropertiesTabView {
     let property = null;
     if (typeof feature.getPropertyAt === 'function' && typeof this._mapViewModel.getCurrentTime === 'function') {
       property = feature.getPropertyAt(this._mapViewModel.getCurrentTime());
-    } else if (Array.isArray(feature.properties) && feature.properties.length > 0) {
-      property = feature.properties[0];
     }
 
     let displayName = '';

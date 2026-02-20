@@ -537,7 +537,7 @@ export class MapView {
         const ownerFeature = this._viewModel.getWorld()?.features.find(f => f.id === ownerId);
         const ownerProperty = ownerFeature && typeof ownerFeature.getPropertyAt === 'function'
           ? ownerFeature.getPropertyAt(currentTime)
-          : (ownerFeature?.properties?.[0] ?? null);
+          : null;
         const ownerName = ownerProperty?.name || ownerFeature?.id || ownerId;
 
         items.push({

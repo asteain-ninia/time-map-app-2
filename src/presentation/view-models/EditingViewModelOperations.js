@@ -7,62 +7,6 @@ import { BatchUpdatePropertiesCommand } from '../../application/services/history
 import { UpdatePropertiesCommand } from '../../application/services/history/commands/UpdatePropertiesCommand.js';
 import { UnlinkSharedVertexCommand } from '../../application/services/history/commands/UnlinkSharedVertexCommand.js';
 
-function clonePolygonRings(rings) {
-  if (!Array.isArray(rings)) {
-    return [];
-  }
-  return rings.map(ring => ({
-    id: ring.id,
-    vertexIds: Array.isArray(ring.vertexIds) ? [...ring.vertexIds] : [],
-    ringType: ring.ringType,
-    parentId: ring.parentId ?? null
-  }));
-}
-
-function buildFeatureFallbackShape(feature) {
-  const featureType = feature?.constructor?.name;
-  if (featureType === 'Point') {
-    const vertexId = typeof feature.getVertexIdAt === 'function'
-      ? feature.getVertexIdAt(null)
-      : feature.vertexId;
-    return { type: 'Point', vertexId };
-  }
-
-  if (featureType === 'Line') {
-    const vertexIds = typeof feature.getVertexIdsAt === 'function'
-      ? feature.getVertexIdsAt(null)
-      : feature.vertexIds;
-    return {
-      type: 'LineString',
-      vertexIds: Array.isArray(vertexIds) ? [...vertexIds] : []
-    };
-  }
-
-  if (feature instanceof DomainPolygon || featureType === 'Polygon') {
-    const rings = typeof feature.getRingsAt === 'function'
-      ? feature.getRingsAt(null)
-      : feature.rings;
-    return {
-      type: 'Polygon',
-      rings: clonePolygonRings(rings)
-    };
-  }
-  return {};
-}
-
-function buildFeatureFallbackPlacement(feature) {
-  if (feature instanceof DomainPolygon || feature?.constructor?.name === 'Polygon') {
-    return {
-      layerId: feature.layerId,
-      parentId: feature.parentId,
-      childIds: Array.isArray(feature.childIds) ? [...feature.childIds] : []
-    };
-  }
-  return {
-    layerId: feature.layerId
-  };
-}
-
 function getFeatureTimelineAnchors(feature) {
   if (!feature || feature.id === null || feature.id === undefined) {
     return [];
@@ -71,20 +15,7 @@ function getFeatureTimelineAnchors(feature) {
   if (Array.isArray(feature.anchors) && feature.anchors.length > 0) {
     return [...feature.anchors];
   }
-
-  const properties = Array.isArray(feature.properties) ? feature.properties : [];
-  if (properties.length === 0) {
-    return [];
-  }
-
-  const fallbackShape = buildFeatureFallbackShape(feature);
-  const fallbackPlacement = buildFeatureFallbackPlacement(feature);
-  return properties.map((property, index) => FeatureAnchor.fromProperty(
-    property,
-    fallbackShape,
-    fallbackPlacement,
-    `anchor-${feature.id}-${index + 1}`
-  ));
+  throw new Error(`Feature ${feature.id} に履歴アンカーが存在しません。`);
 }
 
 /**
