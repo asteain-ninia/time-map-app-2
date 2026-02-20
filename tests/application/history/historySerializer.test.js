@@ -5,6 +5,7 @@ import { Vertex } from "../../../src/domain/entities/Vertex.js";
 import { Point } from "../../../src/domain/entities/Point.js";
 import { Line } from "../../../src/domain/entities/Line.js";
 import { Polygon } from "../../../src/domain/entities/Polygon.js";
+import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.js";
 import { Property } from "../../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 
@@ -28,10 +29,10 @@ describe("HistorySerializer", () => {
     const restoredPoint = serializer.deserialize(serializedPoint);
     expect(restoredPoint.id).toBe("pt1");
     expect(restoredPoint.vertexIds).toEqual(point.vertexIds);
-    expect(restoredPoint.properties[0]).toBeInstanceOf(Property);
-    expect(restoredPoint.properties[0].name).toBe(property.name);
-    expect(restoredPoint.properties[0].timePoint.equals(property.timePoint)).toBe(true);
-    expect(restoredPoint.properties[0].getAttribute("info")).toBe(1);
+    expect(restoredPoint.anchors[0]).toBeInstanceOf(FeatureAnchor);
+    expect(restoredPoint.anchors[0].name).toBe(property.name);
+    expect(restoredPoint.anchors[0].startTime.equals(property.timePoint)).toBe(true);
+    expect(restoredPoint.anchors[0].getAttributes().info).toBe(1);
 
     const serializedLine = serializer.serialize(line);
     const restoredLine = serializer.deserialize(serializedLine);

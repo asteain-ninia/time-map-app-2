@@ -282,9 +282,9 @@ describe("Polygon layer validation integration", () => {
 
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
     const polyAAfter = world.features.find((feature) => feature.id === "poly-a");
-    expect(polyAAfter.properties).toHaveLength(1);
-    expect(polyAAfter.properties[0].startTime.equals(new TimePoint(1000))).toBe(true);
-    expect(polyAAfter.properties[0].endTime.equals(new TimePoint(1200))).toBe(true);
+    expect(polyAAfter.anchors).toHaveLength(1);
+    expect(polyAAfter.anchors[0].startTime.equals(new TimePoint(1000))).toBe(true);
+    expect(polyAAfter.anchors[0].endTime.equals(new TimePoint(1200))).toBe(true);
     expect(polyAAfter.existsAt(new TimePoint(1250))).toBe(false);
   });
 
@@ -487,7 +487,7 @@ describe("Polygon layer validation integration", () => {
     expect(result.feature.existsAt(new TimePoint(1250))).toBe(true);
     const polyBAfter = world.features.find(feature => feature.id === "poly-b");
     expect(polyBAfter.existsAt(new TimePoint(1200))).toBe(false);
-    expect(polyBAfter.properties[0].endTime.equals(new TimePoint(1000))).toBe(true);
+    expect(polyBAfter.anchors[0].endTime.equals(new TimePoint(1000))).toBe(true);
     const updatedIds = (result.updatedFeatures || []).map(feature => feature.id).sort();
     expect(updatedIds).toEqual(["poly-a", "poly-b"]);
   });
@@ -552,8 +552,8 @@ describe("Polygon layer validation integration", () => {
 
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
     const childAfter = world.features.find((feature) => feature.id === "child");
-    expect(childAfter.properties).toHaveLength(1);
-    expect(childAfter.properties[0].endTime.equals(new TimePoint(1200))).toBe(true);
+    expect(childAfter.anchors).toHaveLength(1);
+    expect(childAfter.anchors[0].endTime.equals(new TimePoint(1200))).toBe(true);
   });
 
   it("allows polygon addition inside another polygon's hole", async () => {

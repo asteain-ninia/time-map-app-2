@@ -107,7 +107,7 @@ export class Point extends Feature {
     const layerId = typeof latestAnchor?.placement?.layerId === 'string'
       ? latestAnchor.placement.layerId
       : this._layerId;
-    return new Point(this._id, [latestVertexId], this._properties, layerId, normalizedAnchors);
+    return new Point(this._id, [latestVertexId], null, layerId, normalizedAnchors);
   }
 
   /**
@@ -132,7 +132,7 @@ export class Point extends Feature {
         layerId
       }))
       : null;
-    return new Point(this._id, this._vertexIds, this._properties, layerId, nextAnchors);
+    return new Point(this._id, this._vertexIds, null, layerId, nextAnchors);
   }
 
   /**
@@ -147,7 +147,7 @@ export class Point extends Feature {
     const nextAnchors = this._anchors.length > 0
       ? this._anchors.map(anchor => anchor.withShape(buildPointShape(vertexIds[0])))
       : null;
-    return new Point(this._id, vertexIds, this._properties, this._layerId, nextAnchors);
+    return new Point(this._id, vertexIds, null, this._layerId, nextAnchors);
   }
 }
 

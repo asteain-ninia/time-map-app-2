@@ -1,4 +1,3 @@
-import { Property } from './Property.js';
 import { TimePoint } from './TimePoint.js';
 
 function deepClone(value) {
@@ -128,17 +127,6 @@ export class FeatureAnchor {
     return true;
   }
 
-  toPropertyProjection() {
-    return new Property(
-      this._startTime,
-      this._name,
-      this._description,
-      this._attributes,
-      this._startTime,
-      this._endTime
-    );
-  }
-
   withTimeRange(startTime, endTime) {
     return new FeatureAnchor({
       id: this._id,
@@ -197,25 +185,4 @@ export class FeatureAnchor {
     });
   }
 
-  static fromProperty(property, shape, placement, id) {
-    if (!(property instanceof Property)) {
-      throw new Error('FeatureAnchor.fromProperty は Property を受け取る必要があります。');
-    }
-    const start = property.startTime || property.timePoint;
-    if (!(start instanceof TimePoint)) {
-      throw new Error('FeatureAnchor.fromProperty の開始時刻が不正です。');
-    }
-    return new FeatureAnchor({
-      id,
-      timeRange: { start, end: property.endTime || null },
-      property: {
-        name: property.name,
-        description: property.description,
-        attributes: property.getAttributes()
-      },
-      shape,
-      placement
-    });
-  }
 }
-

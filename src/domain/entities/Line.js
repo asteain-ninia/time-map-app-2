@@ -85,7 +85,7 @@ export class Line extends Feature {
     const layerId = typeof latestAnchor?.placement?.layerId === 'string'
       ? latestAnchor.placement.layerId
       : this._layerId;
-    return new Line(this._id, latestVertexIds, this._properties, layerId, normalizedAnchors);
+    return new Line(this._id, latestVertexIds, null, layerId, normalizedAnchors);
   }
 
   /**
@@ -110,7 +110,7 @@ export class Line extends Feature {
         layerId
       }))
       : null;
-    return new Line(this._id, this._vertexIds, this._properties, layerId, nextAnchors);
+    return new Line(this._id, this._vertexIds, null, layerId, nextAnchors);
   }
 
   /**
@@ -125,7 +125,7 @@ export class Line extends Feature {
     const nextAnchors = this._anchors.length > 0
       ? this._anchors.map(anchor => anchor.withShape(buildLineShape(vertexIds)))
       : null;
-    return new Line(this._id, vertexIds, this._properties, this._layerId, nextAnchors);
+    return new Line(this._id, vertexIds, null, this._layerId, nextAnchors);
   }
 
   /**

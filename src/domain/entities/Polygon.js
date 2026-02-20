@@ -250,7 +250,7 @@ export class Polygon extends Feature {
     const childIds = Array.isArray(latestPlacement.childIds) ? [...latestPlacement.childIds] : this.getPlacementAt(null).childIds;
     return new Polygon(
       this._id,
-      this._properties,
+      null,
       layerId,
       parentId,
       childIds,
@@ -285,7 +285,7 @@ export class Polygon extends Feature {
       : null;
     return new Polygon(
       this._id,
-      this._properties,
+      null,
       layerId, // 新しいレイヤーID
       placement.parentId,
       placement.childIds,
@@ -310,7 +310,7 @@ export class Polygon extends Feature {
          ? this._anchors.map(anchor => anchor.withShape(buildPolygonShape(newRings)))
          : null;
        return new Polygon(
-            this._id, this._properties, this._layerId,
+            this._id, null, this._layerId,
             placement.parentId, placement.childIds, newRings, nextAnchors
         );
    }
@@ -448,7 +448,7 @@ export class Polygon extends Feature {
       }))
       : null;
     return new Polygon(
-      this._id, this._properties, this._layerId,
+      this._id, null, this._layerId,
       parentId, // 新しい親ID
       placement.childIds, baseRings, nextAnchors
     );
@@ -471,7 +471,7 @@ export class Polygon extends Feature {
       }))
       : null;
     return new Polygon(
-      this._id, this._properties, this._layerId,
+      this._id, null, this._layerId,
       placement.parentId,
       nextChildIds, // 子ID追加
       baseRings,
@@ -496,7 +496,7 @@ export class Polygon extends Feature {
       }))
       : null;
     return new Polygon(
-      this._id, this._properties, this._layerId,
+      this._id, null, this._layerId,
       placement.parentId,
       newChildIds, // 子ID削除
       baseRings,

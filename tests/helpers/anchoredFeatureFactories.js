@@ -20,12 +20,26 @@ function buildAnchorsFromProperties(featureId, properties, shapeBuilder, placeme
   if (propertyArray.length === 0) {
     throw new Error(`Feature ${featureId} requires non-empty anchors in tests.`);
   }
-  return propertyArray.map((property, index) => FeatureAnchor.fromProperty(
-    property,
-    shapeBuilder(),
-    placementBuilder(),
-    `anchor-${featureId}-${index + 1}`
-  ));
+  return propertyArray.map((property, index) => {
+    const start = property.startTime || property.timePoint || null;
+    if (!start) {
+      throw new Error(`Feature ${featureId} test helper requires a valid start time.`);
+    }
+    return new FeatureAnchor({
+      id: `anchor-${featureId}-${index + 1}`,
+      timeRange: {
+        start,
+        end: property.endTime || null
+      },
+      property: {
+        name: property.name,
+        description: property.description,
+        attributes: property.getAttributes ? property.getAttributes() : {}
+      },
+      shape: shapeBuilder(),
+      placement: placementBuilder()
+    });
+  });
 }
 
 function cloneRing(ring) {

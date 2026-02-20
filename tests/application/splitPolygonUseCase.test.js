@@ -109,7 +109,7 @@ const createWorldWithAnchoredPolygon = (anchors) => ({
   features: [
     globalThis.createAnchoredPolygon(
       "poly-1",
-      anchors.map(anchor => anchor.toPropertyProjection()),
+      [],
       "layer-0",
       "0",
       [],

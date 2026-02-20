@@ -3,7 +3,6 @@ import { Vertex } from '../../../domain/entities/Vertex.js';
 import { Point } from '../../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../../domain/entities/Polygon.js';
-import { Property } from '../../../domain/value-objects/Property.js';
 import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
 import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
 
@@ -20,33 +19,6 @@ export class HistorySerializer {
     const month = data.month !== undefined ? data.month : null;
     const day = data.day !== undefined ? data.day : null;
     return new TimePoint(data.year, month, day);
-  }
-
-  /**
-   * プレーンオブジェクトから Property インスタンスを生成 (履歴用)
-   * @param {Object | null} data - Property のプレーンオブジェクト
-   * @returns {Property | null} Property インスタンス、または null
-   * @private
-   */
-  _deserializePropertyFromData(data) {
-    if (!data) return null;
-    const timePoint = this._deserializeTimePointFromData(data.timePoint);
-    if (!timePoint) {
-      console.warn("Property deserialization for history failed: Invalid or missing timePoint", data);
-      return null;
-    }
-    // eslint-disable-next-line no-unused-vars
-    const { timePoint: tpData, timeRange, name, description, attributes, ...legacyAttributes } = data;
-    const mergedAttributes = { ...legacyAttributes, ...(attributes || {}) };
-    let startTime = null;
-    let endTime = null;
-    if (timeRange) {
-      startTime = this._deserializeTimePointFromData(timeRange.start);
-      endTime = this._deserializeTimePointFromData(timeRange.end);
-    }
-    const propName = name !== undefined ? name : '';
-    const propDesc = description !== undefined ? description : '';
-    return new Property(timePoint, propName, propDesc, mergedAttributes, startTime, endTime);
   }
 
   _serializeFeatureAnchor(anchor) {
@@ -108,25 +80,6 @@ export class HistorySerializer {
 
     const serializeTimePoint = (tp) => tp ? { year: tp.year, month: tp.month, day: tp.day } : null;
 
-    const serializeProperty = (prop) => {
-      if (!prop || !(prop instanceof Property)) return null;
-      const attributes = prop.getAttributes ? prop.getAttributes() : {}; // 防御的プログラミング
-      const timeRangeData = {};
-      let hasTimeRange = false;
-      if (prop.startTime) { timeRangeData.start = serializeTimePoint(prop.startTime); hasTimeRange = true; }
-      if (prop.endTime) { timeRangeData.end = serializeTimePoint(prop.endTime); hasTimeRange = true; }
-      
-      const serialized = {
-        _constructorName: 'Property', // デシリアライズ時の型識別用
-        timePoint: serializeTimePoint(prop.timePoint),
-        name: prop.name,
-        description: prop.description,
-        attributes: attributes
-      };
-      if (hasTimeRange) { serialized.timeRange = timeRangeData; }
-      return serialized;
-    };
-
     if (object instanceof Vertex) {
       return { _constructorName: 'Vertex', id: object.id, x: object.x, y: object.y };
     } else if (object instanceof Point || object instanceof DomainLine) {
@@ -166,8 +119,6 @@ export class HistorySerializer {
       };
     } else if (object instanceof FeatureAnchor) {
       return this._serializeFeatureAnchor(object);
-    } else if (object instanceof Property) {
-      return serializeProperty(object);
     } else if (object instanceof TimePoint) {
       return { _constructorName: 'TimePoint', ...serializeTimePoint(object) };
     }
@@ -211,9 +162,6 @@ export class HistorySerializer {
         case 'TimePoint':
           // _deserializeTimePointFromData は _constructorName を期待しないため、data をそのまま渡す
           return this._deserializeTimePointFromData(data);
-        case 'Property':
-          // _deserializePropertyFromData は _constructorName を期待しないため、data をそのまま渡す
-          return this._deserializePropertyFromData(data);
         case 'FeatureAnchor':
           return this._deserializeFeatureAnchorFromData(data);
         case 'Point':

@@ -696,7 +696,7 @@ describe("HistoryService integration", () => {
 
     const worldAfterUpdate = await ctx.worldRepository.getWorld();
     const featureAfterUpdate = worldAfterUpdate.features.find((f) => f.id === storedFeature.id);
-    expect(featureAfterUpdate.properties[0].name).toBe("PropUpdated");
+    expect(featureAfterUpdate.anchors[0].name).toBe("PropUpdated");
     expect(ctx.historyService.canUndo()).toBe(true);
     expect(ctx.historyService.canRedo()).toBe(false);
     expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
@@ -707,7 +707,7 @@ describe("HistoryService integration", () => {
     await ctx.historyService.undo();
     const worldAfterUndo = await ctx.worldRepository.getWorld();
     const featureAfterUndo = worldAfterUndo.features.find((f) => f.id === storedFeature.id);
-    expect(featureAfterUndo.properties[0].name).toBe(originalAnchor.name);
+    expect(featureAfterUndo.anchors[0].name).toBe(originalAnchor.name);
     expect(ctx.historyService.canUndo()).toBe(false);
     expect(ctx.historyService.canRedo()).toBe(true);
     expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
@@ -720,7 +720,7 @@ describe("HistoryService integration", () => {
     await ctx.historyService.redo();
     const worldAfterRedo = await ctx.worldRepository.getWorld();
     const featureAfterRedo = worldAfterRedo.features.find((f) => f.id === storedFeature.id);
-    expect(featureAfterRedo.properties[0].name).toBe("PropUpdated");
+    expect(featureAfterRedo.anchors[0].name).toBe("PropUpdated");
     expect(ctx.historyService.canUndo()).toBe(true);
     expect(ctx.historyService.canRedo()).toBe(false);
     expect(ctx.eventBus.events.map((e) => e.type)).toEqual([
@@ -954,27 +954,27 @@ describe("HistoryService integration", () => {
 
     const afterDeleteWorld = await ctx.worldRepository.getWorld();
     const afterDeleteFeature = afterDeleteWorld.features.find((item) => item.id === featureId);
-    expect(afterDeleteFeature.properties.map((property) => property.startTime.year)).toEqual([1000]);
+    expect(afterDeleteFeature.anchors.map((property) => property.startTime.year)).toEqual([1000]);
 
     await ctx.historyService.undo();
     const afterUndoDeleteWorld = await ctx.worldRepository.getWorld();
     const afterUndoDeleteFeature = afterUndoDeleteWorld.features.find((item) => item.id === featureId);
-    expect(afterUndoDeleteFeature.properties.map((property) => property.startTime.year)).toEqual([1000, 1300]);
+    expect(afterUndoDeleteFeature.anchors.map((property) => property.startTime.year)).toEqual([1000, 1300]);
 
     await ctx.historyService.undo();
     const afterUndoDuplicateWorld = await ctx.worldRepository.getWorld();
     const afterUndoDuplicateFeature = afterUndoDuplicateWorld.features.find((item) => item.id === featureId);
-    expect(afterUndoDuplicateFeature.properties.map((property) => property.startTime.year)).toEqual([1000]);
+    expect(afterUndoDuplicateFeature.anchors.map((property) => property.startTime.year)).toEqual([1000]);
 
     await ctx.historyService.redo();
     const afterRedoDuplicateWorld = await ctx.worldRepository.getWorld();
     const afterRedoDuplicateFeature = afterRedoDuplicateWorld.features.find((item) => item.id === featureId);
-    expect(afterRedoDuplicateFeature.properties.map((property) => property.startTime.year)).toEqual([1000, 1300]);
+    expect(afterRedoDuplicateFeature.anchors.map((property) => property.startTime.year)).toEqual([1000, 1300]);
 
     await ctx.historyService.redo();
     const afterRedoDeleteWorld = await ctx.worldRepository.getWorld();
     const afterRedoDeleteFeature = afterRedoDeleteWorld.features.find((item) => item.id === featureId);
-    expect(afterRedoDeleteFeature.properties.map((property) => property.startTime.year)).toEqual([1000]);
+    expect(afterRedoDeleteFeature.anchors.map((property) => property.startTime.year)).toEqual([1000]);
   });
 
   it("keeps failed anchor save out of history and undoes only the successful duplicate", async () => {
@@ -1023,7 +1023,7 @@ describe("HistoryService integration", () => {
 
     const afterDuplicateWorld = await ctx.worldRepository.getWorld();
     const afterDuplicateFeature = afterDuplicateWorld.features.find((item) => item.id === featureId);
-    expect(afterDuplicateFeature.properties.map((property) => property.startTime.year)).toEqual([1000, 1300]);
+    expect(afterDuplicateFeature.anchors.map((property) => property.startTime.year)).toEqual([1000, 1300]);
     expect(ctx.historyService.canUndo()).toBe(true);
     expect(ctx.historyService.canRedo()).toBe(false);
 
@@ -1047,12 +1047,12 @@ describe("HistoryService integration", () => {
     expect(ctx.historyService.canRedo()).toBe(false);
     const afterFailedSaveWorld = await ctx.worldRepository.getWorld();
     const afterFailedSaveFeature = afterFailedSaveWorld.features.find((item) => item.id === featureId);
-    expect(afterFailedSaveFeature.properties.map((property) => property.startTime.year)).toEqual([1000, 1300]);
+    expect(afterFailedSaveFeature.anchors.map((property) => property.startTime.year)).toEqual([1000, 1300]);
 
     await ctx.historyService.undo();
     const worldAfterUndo = await ctx.worldRepository.getWorld();
     const featureAfterUndo = worldAfterUndo.features.find((item) => item.id === featureId);
-    expect(featureAfterUndo.properties.map((property) => property.startTime.year)).toEqual([1000]);
+    expect(featureAfterUndo.anchors.map((property) => property.startTime.year)).toEqual([1000]);
     expect(ctx.historyService.canUndo()).toBe(false);
     expect(ctx.historyService.canRedo()).toBe(true);
   });

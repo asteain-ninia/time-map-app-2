@@ -94,13 +94,13 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
     const result = await useCase.execute("point-1", { anchors: [later, earlier] });
 
-    expect(result.feature.properties).toHaveLength(2);
-    expect(result.feature.properties[0].startTime.equals(earlier.startTime)).toBe(true);
-    expect(result.feature.properties[0].name).toBe(earlier.name);
-    expect(result.feature.properties[1].startTime.equals(later.startTime)).toBe(true);
-    expect(result.feature.properties[1].name).toBe(later.name);
+    expect(result.feature.anchors).toHaveLength(2);
+    expect(result.feature.anchors[0].startTime.equals(earlier.startTime)).toBe(true);
+    expect(result.feature.anchors[0].name).toBe(earlier.name);
+    expect(result.feature.anchors[1].startTime.equals(later.startTime)).toBe(true);
+    expect(result.feature.anchors[1].name).toBe(later.name);
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
-    expect(world.features[0].properties).toHaveLength(2);
+    expect(world.features[0].anchors).toHaveLength(2);
   });
 
   it("rejects empty anchors updates", async () => {
@@ -120,8 +120,8 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       })
     ).rejects.toThrow(/廃止されました/);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
-    expect(world.features[0].properties).toHaveLength(1);
-    expect(world.features[0].properties[0].name).toBe("Initial");
+    expect(world.features[0].anchors).toHaveLength(1);
+    expect(world.features[0].anchors[0].name).toBe("Initial");
   });
 
   it("rejects duplicate anchors in anchors updates", async () => {
@@ -135,8 +135,8 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       useCase.execute("point-1", { anchors: [duplicateA, duplicateB] })
     ).rejects.toThrow(/同一時刻の歴史の錨が重複/);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
-    expect(world.features[0].properties).toHaveLength(1);
-    expect(world.features[0].properties[0].name).toBe("Initial");
+    expect(world.features[0].anchors).toHaveLength(1);
+    expect(world.features[0].anchors[0].name).toBe("Initial");
   });
 
   it("rejects overlapping ranges in anchors updates", async () => {
@@ -150,7 +150,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       useCase.execute("point-1", { anchors: [future, past] })
     ).rejects.toThrow(/次の歴史の錨/);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
-    expect(world.features[0].properties[0].name).toBe("Initial");
+    expect(world.features[0].anchors[0].name).toBe("Initial");
   });
 
   it("rejects non-FeatureAnchor entries in anchors updates", async () => {
@@ -161,7 +161,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       useCase.execute("point-1", { anchors: [createPropertyWithEnd(1200, 1300, "Invalid")] })
     ).rejects.toThrow(/FeatureAnchor/);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
-    expect(world.features[0].properties[0].name).toBe("Initial");
+    expect(world.features[0].anchors[0].name).toBe("Initial");
   });
 
   it("allows explicit gaps in anchors updates", async () => {
@@ -173,10 +173,10 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
     const result = await useCase.execute("point-1", { anchors: [future, past] });
 
-    expect(result.feature.properties).toHaveLength(2);
-    expect(result.feature.properties[0].startTime.equals(new TimePoint(1000))).toBe(true);
-    expect(result.feature.properties[0].endTime.equals(new TimePoint(1100))).toBe(true);
-    expect(result.feature.properties[1].startTime.equals(new TimePoint(1300))).toBe(true);
+    expect(result.feature.anchors).toHaveLength(2);
+    expect(result.feature.anchors[0].startTime.equals(new TimePoint(1000))).toBe(true);
+    expect(result.feature.anchors[0].endTime.equals(new TimePoint(1100))).toBe(true);
+    expect(result.feature.anchors[1].startTime.equals(new TimePoint(1300))).toBe(true);
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
 
@@ -195,16 +195,16 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       }
     });
 
-    expect(result.feature.properties).toHaveLength(3);
-    const starts = result.feature.properties.map(prop => prop.startTime.year);
+    expect(result.feature.anchors).toHaveLength(3);
+    const starts = result.feature.anchors.map(prop => prop.startTime.year);
     expect(starts).toEqual([1000, 1100, 1300]);
 
-    const edited = result.feature.properties[1];
+    const edited = result.feature.anchors[1];
     expect(edited.name).toBe("Edited");
     expect(edited.description).toBe("edited-description");
     expect(edited.endTime.equals(new TimePoint(1300))).toBe(true);
 
-    const preservedFuture = result.feature.properties[2];
+    const preservedFuture = result.feature.anchors[2];
     expect(preservedFuture.name).toBe("Future");
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
@@ -262,10 +262,10 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       }
     });
 
-    expect(result.feature.properties).toHaveLength(2);
-    expect(result.feature.properties[1].name).toBe("Future Updated");
-    expect(result.feature.properties[1].startTime.equals(new TimePoint(1300))).toBe(true);
-    const anchorsAt1300 = result.feature.properties.filter(prop => prop.startTime.equals(new TimePoint(1300)));
+    expect(result.feature.anchors).toHaveLength(2);
+    expect(result.feature.anchors[1].name).toBe("Future Updated");
+    expect(result.feature.anchors[1].startTime.equals(new TimePoint(1300))).toBe(true);
+    const anchorsAt1300 = result.feature.anchors.filter(prop => prop.startTime.equals(new TimePoint(1300)));
     expect(anchorsAt1300).toHaveLength(1);
   });
 
@@ -283,9 +283,9 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       }
     });
 
-    expect(afterFutureEdit.feature.properties).toHaveLength(2);
-    expect(afterFutureEdit.feature.properties[0].endTime.equals(new TimePoint(1300))).toBe(true);
-    expect(afterFutureEdit.feature.properties[1].startTime.equals(new TimePoint(1300))).toBe(true);
+    expect(afterFutureEdit.feature.anchors).toHaveLength(2);
+    expect(afterFutureEdit.feature.anchors[0].endTime.equals(new TimePoint(1300))).toBe(true);
+    expect(afterFutureEdit.feature.anchors[1].startTime.equals(new TimePoint(1300))).toBe(true);
 
     const afterPastEdit = await useCase.execute("point-1", {
       propertyEdit: {
@@ -297,13 +297,13 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       }
     });
 
-    expect(afterPastEdit.feature.properties).toHaveLength(3);
-    expect(afterPastEdit.feature.properties[0].startTime.equals(new TimePoint(1000))).toBe(true);
-    expect(afterPastEdit.feature.properties[0].endTime.equals(new TimePoint(1100))).toBe(true);
-    expect(afterPastEdit.feature.properties[1].startTime.equals(new TimePoint(1100))).toBe(true);
-    expect(afterPastEdit.feature.properties[1].endTime.equals(new TimePoint(1300))).toBe(true);
-    expect(afterPastEdit.feature.properties[2].startTime.equals(new TimePoint(1300))).toBe(true);
-    expect(afterPastEdit.feature.properties[2].name).toBe("Future");
+    expect(afterPastEdit.feature.anchors).toHaveLength(3);
+    expect(afterPastEdit.feature.anchors[0].startTime.equals(new TimePoint(1000))).toBe(true);
+    expect(afterPastEdit.feature.anchors[0].endTime.equals(new TimePoint(1100))).toBe(true);
+    expect(afterPastEdit.feature.anchors[1].startTime.equals(new TimePoint(1100))).toBe(true);
+    expect(afterPastEdit.feature.anchors[1].endTime.equals(new TimePoint(1300))).toBe(true);
+    expect(afterPastEdit.feature.anchors[2].startTime.equals(new TimePoint(1300))).toBe(true);
+    expect(afterPastEdit.feature.anchors[2].name).toBe("Future");
   });
 
   it("reproduces manual timeline checks for 1000->1300->1100 edits", async () => {
@@ -330,7 +330,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
       }
     });
 
-    expect(afterPastEdit.feature.properties).toHaveLength(3);
+    expect(afterPastEdit.feature.anchors).toHaveLength(3);
     expectNameAt(afterPastEdit.feature, 1050, "A");
     expectNameAt(afterPastEdit.feature, 1150, "C");
     expectNameAt(afterPastEdit.feature, 1299, "C");

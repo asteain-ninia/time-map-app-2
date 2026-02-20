@@ -26,9 +26,6 @@ export class Feature {
       throw new Error(`Feature ${id} requires at least one FeatureAnchor.`);
     }
     this._anchors = Object.freeze(normalizedAnchors);
-    this._properties = Object.freeze(
-      normalizedAnchors.map(anchor => anchor.toPropertyProjection())
-    );
     const latestAnchor = normalizedAnchors[normalizedAnchors.length - 1];
     const layerFromAnchor = latestAnchor?.placement?.layerId;
     this._layerId = typeof layerFromAnchor === 'string' ? layerFromAnchor : layerId;
@@ -92,11 +89,10 @@ export class Feature {
   }
 
   /**
-   * 時間依存プロパティの配列を取得
-   * @returns {Property[]} プロパティの配列
+   * @deprecated Feature.properties は廃止。Feature.anchors を使用すること。
    */
   get properties() {
-    return this._properties;
+    throw new Error('Feature.properties は廃止されました。Feature.anchors を使用してください。');
   }
 
   /**
@@ -152,13 +148,12 @@ export class Feature {
   }
 
   /**
-   * 指定した時点で有効なプロパティを取得する
+   * 指定した時点で有効な履歴アンカーを取得する（後方互換メソッド）
    * @param {TimePoint|null|undefined} timePoint - 取得対象の時刻
-   * @returns {Property|null} 有効なプロパティ。存在しなければnull
+   * @returns {FeatureAnchor|null} 有効な履歴アンカー。存在しなければnull
    */
   getPropertyAt(timePoint) {
-    const anchor = this.getAnchorAt(timePoint);
-    return anchor ? anchor.toPropertyProjection() : null;
+    return this.getAnchorAt(timePoint);
   }
 
   /**
@@ -181,7 +176,7 @@ export class Feature {
     console.warn(
       `Feature.withVertexIds (id: ${this._id}) was called on a Feature instance. Subclasses should override this method to return an instance of their own type.`
     );
-    return new Feature(this._id, vertexIds, this._properties, this._layerId, this._anchors);
+    return new Feature(this._id, vertexIds, null, this._layerId, this._anchors);
   }
 
   /**
@@ -202,7 +197,7 @@ export class Feature {
     const layerId = typeof latestAnchor?.placement?.layerId === 'string'
       ? latestAnchor.placement.layerId
       : this._layerId;
-    return new Feature(this._id, this._vertexIds, this._properties, layerId, normalizedAnchors);
+    return new Feature(this._id, this._vertexIds, null, layerId, normalizedAnchors);
   }
 
   /**
@@ -242,6 +237,6 @@ export class Feature {
         layerId
       }))
       : null;
-    return new Feature(this._id, this._vertexIds, this._properties, layerId, nextAnchors);
+    return new Feature(this._id, this._vertexIds, null, layerId, nextAnchors);
   }
 }

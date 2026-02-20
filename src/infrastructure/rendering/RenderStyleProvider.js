@@ -43,10 +43,20 @@ function resolveFeatureStyle(layerService, property, featureType) {
 }
 
 function readStyleOverrides(property, featureType) {
-  if (!property || typeof property.getAttribute !== 'function') {
+  if (!property || typeof property !== 'object') {
     return null;
   }
-  const rawOverrides = property.getAttribute('styleOverrides', null);
+
+  let rawOverrides = null;
+  if (typeof property.getAttribute === 'function') {
+    rawOverrides = property.getAttribute('styleOverrides', null);
+  } else if (typeof property.getAttributes === 'function') {
+    const attributes = property.getAttributes();
+    rawOverrides = isPlainObject(attributes) ? attributes.styleOverrides : null;
+  } else if (isPlainObject(property.attributes)) {
+    rawOverrides = property.attributes.styleOverrides;
+  }
+
   if (!isPlainObject(rawOverrides)) {
     return null;
   }
