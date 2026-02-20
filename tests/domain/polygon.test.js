@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
-const createProperty = () => new Property(new TimePoint(0), "Test", "", {}, null, null);
+const createProperty = () =>
+  new FeatureAnchor({
+    id: "anchor-test",
+    timeRange: { start: new TimePoint(0), end: null },
+    property: { name: "Test", description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 describe("Polygon", () => {
   it("removes territory enclaves when their enclosing hole is deleted", () => {

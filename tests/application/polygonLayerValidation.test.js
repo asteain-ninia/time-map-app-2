@@ -7,22 +7,29 @@ import { Layer } from "../../src/domain/entities/Layer.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
 import { Vertex } from "../../src/domain/entities/Vertex.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
-const createProperty = (name = "Polygon") => new Property(new TimePoint(0), name, "", {});
-const createPropertyWithRange = (startYear, endYear, name = "Polygon") => new Property(
-  new TimePoint(startYear),
-  name,
-  "",
-  {},
-  new TimePoint(startYear),
-  endYear === null ? null : new TimePoint(endYear)
-);
+const createProperty = (name = "Polygon") => new FeatureAnchor({
+  id: `anchor-${name}-0-null`,
+  timeRange: { start: new TimePoint(0), end: null },
+  property: { name, description: "", attributes: {} },
+  shape: {},
+  placement: {}
+});
+const createPropertyWithRange = (startYear, endYear, name = "Polygon") => new FeatureAnchor({
+  id: `anchor-${name}-${startYear}-${endYear ?? "null"}`,
+  timeRange: {
+    start: new TimePoint(startYear),
+    end: endYear === null ? null : new TimePoint(endYear)
+  },
+  property: { name, description: "", attributes: {} },
+  shape: {},
+  placement: {}
+});
 const toCreationAnchor = (property) => new FeatureAnchor({
   id: "anchor-draft",
   timeRange: {
-    start: property.startTime || property.timePoint,
+    start: property.startTime,
     end: property.endTime || null
   },
   property: {

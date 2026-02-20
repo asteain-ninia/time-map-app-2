@@ -5,7 +5,6 @@ import { HistoryStackManager } from "../../../src/application/services/history/H
 import { HistorySerializer } from "../../../src/application/services/history/HistorySerializer.js";
 import { EditFeatureUseCase } from "../../../src/application/usecases/EditFeatureUseCase.js";
 import { IdGenerationService } from "../../../src/application/services/IdGenerationService.js";
-import { Property } from "../../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../../src/domain/entities/Vertex.js";
 import { Point } from "../../../src/domain/entities/Point.js";
@@ -13,7 +12,15 @@ import { Polygon } from "../../../src/domain/entities/Polygon.js";
 import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.js";
 import { buildAnchorDeletionPlan, getAnchorKey } from "../../../src/presentation/views/sidebar/propertyAnchorUtils.js";
 
-const createProperty = (name = "Name") => new Property(new TimePoint(0), name, "", {});
+const createPropertyWithRange = (name = "Name", startTime = new TimePoint(0), endTime = null) =>
+  new FeatureAnchor({
+    id: `anchor-${name}-${startTime.year}-${endTime ? endTime.year : "null"}`,
+    timeRange: { start: startTime, end: endTime },
+    property: { name, description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
+const createProperty = (name = "Name") => createPropertyWithRange(name, new TimePoint(0), null);
 const createAddAnchor = (name = "Name", startTime = new TimePoint(0), endTime = null) =>
   new FeatureAnchor({
     id: "anchor-draft",
@@ -389,8 +396,8 @@ describe("HistoryService integration", () => {
       globalThis.createAnchoredPolygon(
         "poly-anchor-history",
         [
-          new Property(t1000, "Poly", "", {}, t1000, t1200),
-          new Property(t1200, "Poly", "", {}, t1200, null)
+          createPropertyWithRange("Poly", t1000, t1200),
+          createPropertyWithRange("Poly", t1200, null)
         ],
         "layer-0",
         "0",
@@ -609,8 +616,8 @@ describe("HistoryService integration", () => {
       globalThis.createAnchoredPolygon(
         "poly-anchor-failure",
         [
-          new Property(t1000, "Poly", "", {}, t1000, t1200),
-          new Property(t1200, "Poly", "", {}, t1200, null)
+          createPropertyWithRange("Poly", t1000, t1200),
+          createPropertyWithRange("Poly", t1200, null)
         ],
         "layer-0",
         "0",
@@ -885,14 +892,7 @@ describe("HistoryService integration", () => {
   });
 
   it("restores anchor duplicate/delete sequence through undo and redo", async () => {
-    const initialProperty = new Property(
-      new TimePoint(1000),
-      "Origin",
-      "",
-      {},
-      new TimePoint(1000),
-      null
-    );
+    const initialProperty = createPropertyWithRange("Origin", new TimePoint(1000), null);
     const feature = await ctx.editFeatureUseCase.addFeature(
       "point",
       [createAddAnchor(initialProperty.name, initialProperty.startTime, initialProperty.endTime)],
@@ -978,14 +978,7 @@ describe("HistoryService integration", () => {
   });
 
   it("keeps failed anchor save out of history and undoes only the successful duplicate", async () => {
-    const initialProperty = new Property(
-      new TimePoint(1000),
-      "Origin",
-      "",
-      {},
-      new TimePoint(1000),
-      null
-    );
+    const initialProperty = createPropertyWithRange("Origin", new TimePoint(1000), null);
     const feature = await ctx.editFeatureUseCase.addFeature(
       "point",
       [createAddAnchor(initialProperty.name, initialProperty.startTime, initialProperty.endTime)],

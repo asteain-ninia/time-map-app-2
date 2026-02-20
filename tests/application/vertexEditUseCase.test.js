@@ -4,14 +4,21 @@ import { VertexEditUseCase } from "../../src/application/usecases/feature/Vertex
 import { Point } from "../../src/domain/entities/Point.js";
 import { Line } from "../../src/domain/entities/Line.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../src/domain/entities/Vertex.js";
 import { GeometryService } from "../../src/domain/services/GeometryService.js";
 import { LayerService } from "../../src/domain/services/LayerService.js";
 
-const createProperty = (name = "feature") => new Property(new TimePoint(0), name, "", {});
+const createPropertyWithRange = (startTime, endTime, name = "feature") =>
+  new FeatureAnchor({
+    id: `anchor-${name}-${startTime.year}-${endTime ? endTime.year : "null"}`,
+    timeRange: { start: startTime, end: endTime },
+    property: { name, description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
+const createProperty = (name = "feature") => createPropertyWithRange(new TimePoint(0), null, name);
 const makePoint = (id, vertexId, layerId = "layer-1") =>
   globalThis.createAnchoredPoint(id, [vertexId], [createProperty(id)], layerId);
 const makeLine = (id, vertexIds, layerId = "layer-1") =>
@@ -281,8 +288,8 @@ describe("VertexEditUseCase", () => {
       globalThis.createAnchoredPolygon(
         "poly-time",
         [
-          new Property(t1000, "poly-time", "", {}, t1000, t1200),
-          new Property(t1200, "poly-time", "", {}, t1200, null)
+          createPropertyWithRange(t1000, t1200, "poly-time"),
+          createPropertyWithRange(t1200, null, "poly-time")
         ],
         "layer-1",
         "0",
@@ -364,8 +371,8 @@ describe("VertexEditUseCase", () => {
       globalThis.createAnchoredPolygon(
         "poly-existing",
         [
-          new Property(t1000, "poly-existing", "", {}, t1000, t1200),
-          new Property(t1200, "poly-existing", "", {}, t1200, null)
+          createPropertyWithRange(t1000, t1200, "poly-existing"),
+          createPropertyWithRange(t1200, null, "poly-existing")
         ],
         "layer-1",
         "0",
@@ -430,8 +437,8 @@ describe("VertexEditUseCase", () => {
       globalThis.createAnchoredPolygon(
         "poly-multi",
         [
-          new Property(t1000, "poly-multi", "", {}, t1000, t1300),
-          new Property(t1300, "poly-multi", "", {}, t1300, null)
+          createPropertyWithRange(t1000, t1300, "poly-multi"),
+          createPropertyWithRange(t1300, null, "poly-multi")
         ],
         "layer-1",
         "0",
@@ -501,8 +508,8 @@ describe("VertexEditUseCase", () => {
         "point-time",
         ["vp"],
         [
-          new Property(t1000, "point-time", "", {}, t1000, t1200),
-          new Property(t1200, "point-time", "", {}, t1200, null)
+          createPropertyWithRange(t1000, t1200, "point-time"),
+          createPropertyWithRange(t1200, null, "point-time")
         ],
         "layer-1",
         anchors
@@ -557,8 +564,8 @@ describe("VertexEditUseCase", () => {
         "line-time",
         ["vl1", "vl2", "vl3"],
         [
-          new Property(t1000, "line-time", "", {}, t1000, t1200),
-          new Property(t1200, "line-time", "", {}, t1200, null)
+          createPropertyWithRange(t1000, t1200, "line-time"),
+          createPropertyWithRange(t1200, null, "line-time")
         ],
         "layer-1",
         anchors
@@ -618,8 +625,8 @@ describe("VertexEditUseCase", () => {
     const originalFeature = globalThis.createAnchoredPolygon(
       "poly-fail",
       [
-        new Property(t1000, "poly-fail", "", {}, t1000, t1200),
-        new Property(t1200, "poly-fail", "", {}, t1200, null)
+        createPropertyWithRange(t1000, t1200, "poly-fail"),
+        createPropertyWithRange(t1200, null, "poly-fail")
       ],
       "layer-1",
       "0",

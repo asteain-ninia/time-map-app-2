@@ -2,11 +2,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { MapViewRendererHelper } from "../../src/presentation/views/map/MapViewRendererHelper.js";
 import { Line } from "../../src/domain/entities/Line.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { editingStyles } from "../../src/infrastructure/rendering/RenderStyleProvider.js";
 
-const createProperty = () => new Property(new TimePoint(0), "Line", "", {});
+const createProperty = () =>
+  new FeatureAnchor({
+    id: "anchor-line",
+    timeRange: { start: new TimePoint(0), end: null },
+    property: { name: "Line", description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 const createLine = (vertexIds = ["v1", "v2"]) =>
   globalThis.createAnchoredLine("line-1", vertexIds, [createProperty()], "layer-1");

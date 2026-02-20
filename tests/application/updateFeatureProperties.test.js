@@ -3,22 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UpdateFeatureUseCase } from "../../src/application/usecases/feature/UpdateFeatureUseCase.js";
 import { Point } from "../../src/domain/entities/Point.js";
 import { Vertex } from "../../src/domain/entities/Vertex.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
-
-const createProperty = (year, name) =>
-  new Property(new TimePoint(year), name, "", {}, new TimePoint(year), null);
-
-const createPropertyWithEnd = (startYear, endYear, name) =>
-  new Property(
-    new TimePoint(startYear),
-    name,
-    "",
-    {},
-    new TimePoint(startYear),
-    endYear === null ? null : new TimePoint(endYear)
-  );
 
 const createPointAnchorWithEnd = (startYear, endYear, name) =>
   new FeatureAnchor({
@@ -43,6 +29,12 @@ const createPointAnchorWithEnd = (startYear, endYear, name) =>
 
 const createPointAnchor = (year, name) =>
   createPointAnchorWithEnd(year, null, name);
+
+const createProperty = (year, name) =>
+  createPointAnchor(year, name);
+
+const createPropertyWithEnd = (startYear, endYear, name) =>
+  createPointAnchorWithEnd(startYear, endYear, name);
 
 describe("UpdateFeatureUseCase anchor updates", () => {
   let world;
@@ -158,7 +150,12 @@ describe("UpdateFeatureUseCase anchor updates", () => {
     world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initialProperty], "layer-1"));
 
     await expect(
-      useCase.execute("point-1", { anchors: [createPropertyWithEnd(1200, 1300, "Invalid")] })
+      useCase.execute("point-1", {
+        anchors: [{
+          id: "legacy-anchor",
+          timeRange: { start: new TimePoint(1200), end: new TimePoint(1300) }
+        }]
+      })
     ).rejects.toThrow(/FeatureAnchor/);
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
     expect(world.features[0].anchors[0].name).toBe("Initial");

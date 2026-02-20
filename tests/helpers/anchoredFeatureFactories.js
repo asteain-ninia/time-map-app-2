@@ -2,44 +2,25 @@ import { Feature } from "../../src/domain/entities/Feature.js";
 import { Point } from "../../src/domain/entities/Point.js";
 import { Line } from "../../src/domain/entities/Line.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 
-function toPropertyArray(properties) {
-  if (Array.isArray(properties)) {
-    return properties.filter(property => property instanceof Property);
-  }
-  if (properties instanceof Property) {
-    return [properties];
-  }
-  return [];
-}
-
-function buildAnchorsFromProperties(featureId, properties, shapeBuilder, placementBuilder) {
-  const propertyArray = toPropertyArray(properties);
-  if (propertyArray.length === 0) {
+function requireAnchors(featureId, anchors) {
+  if (!Array.isArray(anchors) || anchors.length === 0) {
     throw new Error(`Feature ${featureId} requires non-empty anchors in tests.`);
   }
-  return propertyArray.map((property, index) => {
-    const start = property.startTime || property.timePoint || null;
-    if (!start) {
-      throw new Error(`Feature ${featureId} test helper requires a valid start time.`);
+  for (const anchor of anchors) {
+    if (!(anchor instanceof FeatureAnchor)) {
+      throw new Error(`Feature ${featureId} test helper requires FeatureAnchor instances.`);
     }
-    return new FeatureAnchor({
-      id: `anchor-${featureId}-${index + 1}`,
-      timeRange: {
-        start,
-        end: property.endTime || null
-      },
-      property: {
-        name: property.name,
-        description: property.description,
-        attributes: property.getAttributes ? property.getAttributes() : {}
-      },
-      shape: shapeBuilder(),
-      placement: placementBuilder()
-    });
-  });
+  }
+  return anchors;
+}
+
+function prepareFeatureAnchors(featureId, primaryAnchors, fallbackAnchors = null) {
+  if (Array.isArray(fallbackAnchors) && fallbackAnchors.length > 0) {
+    return requireAnchors(featureId, fallbackAnchors);
+  }
+  return requireAnchors(featureId, primaryAnchors);
 }
 
 function cloneRing(ring) {
@@ -51,58 +32,86 @@ function cloneRing(ring) {
   };
 }
 
-export function createAnchoredFeature(id, vertexIds, properties, layerId, anchors = null) {
-  const preparedAnchors = Array.isArray(anchors) && anchors.length > 0
-    ? anchors
-    : buildAnchorsFromProperties(id, properties, () => ({}), () => ({ layerId }));
+function normalizePointAnchor(anchor, vertexId, layerId) {
+  const shape = anchor.shape && typeof anchor.shape === "object" ? anchor.shape : {};
+  const placement = anchor.placement && typeof anchor.placement === "object" ? anchor.placement : {};
+  return anchor
+    .withShape({
+      type: "Point",
+      vertexId: typeof shape.vertexId === "string" ? shape.vertexId : vertexId
+    })
+    .withPlacement({
+      ...placement,
+      layerId: typeof placement.layerId === "string" ? placement.layerId : layerId
+    });
+}
+
+function normalizeLineAnchor(anchor, vertexIds, layerId) {
+  const shape = anchor.shape && typeof anchor.shape === "object" ? anchor.shape : {};
+  const placement = anchor.placement && typeof anchor.placement === "object" ? anchor.placement : {};
+  return anchor
+    .withShape({
+      type: "LineString",
+      vertexIds: Array.isArray(shape.vertexIds) && shape.vertexIds.length > 0
+        ? [...shape.vertexIds]
+        : [...vertexIds]
+    })
+    .withPlacement({
+      ...placement,
+      layerId: typeof placement.layerId === "string" ? placement.layerId : layerId
+    });
+}
+
+function normalizePolygonAnchor(anchor, rings, layerId, parentId, childIds) {
+  const shape = anchor.shape && typeof anchor.shape === "object" ? anchor.shape : {};
+  const placement = anchor.placement && typeof anchor.placement === "object" ? anchor.placement : {};
+  return anchor
+    .withShape({
+      type: "Polygon",
+      rings: Array.isArray(shape.rings) && shape.rings.length > 0
+        ? shape.rings.map(ring => cloneRing(ring))
+        : rings.map(ring => cloneRing(ring))
+    })
+    .withPlacement({
+      ...placement,
+      layerId: typeof placement.layerId === "string" ? placement.layerId : layerId,
+      parentId: placement.parentId ?? parentId,
+      childIds: Array.isArray(placement.childIds) ? [...placement.childIds] : [...childIds]
+    });
+}
+
+export function createAnchoredFeature(id, vertexIds, anchors, layerId, anchorsOverride = null) {
+  const preparedAnchors = prepareFeatureAnchors(id, anchors, anchorsOverride);
   return new Feature(id, vertexIds, [], layerId, preparedAnchors);
 }
 
-export function createAnchoredPoint(id, vertexIds, properties, layerId, anchors = null) {
+export function createAnchoredPoint(id, vertexIds, anchors, layerId, anchorsOverride = null) {
   const preparedVertexIds = Array.isArray(vertexIds) ? [...vertexIds] : [];
-  const preparedAnchors = Array.isArray(anchors) && anchors.length > 0
-    ? anchors
-    : buildAnchorsFromProperties(
-      id,
-      properties,
-      () => ({ type: "Point", vertexId: preparedVertexIds[0] }),
-      () => ({ layerId })
-    );
+  const preparedAnchors = prepareFeatureAnchors(id, anchors, anchorsOverride)
+    .map(anchor => normalizePointAnchor(anchor, preparedVertexIds[0], layerId));
   return new Point(id, preparedVertexIds, [], layerId, preparedAnchors);
 }
 
-export function createAnchoredLine(id, vertexIds, properties, layerId, anchors = null) {
+export function createAnchoredLine(id, vertexIds, anchors, layerId, anchorsOverride = null) {
   const preparedVertexIds = Array.isArray(vertexIds) ? [...vertexIds] : [];
-  const preparedAnchors = Array.isArray(anchors) && anchors.length > 0
-    ? anchors
-    : buildAnchorsFromProperties(
-      id,
-      properties,
-      () => ({ type: "LineString", vertexIds: [...preparedVertexIds] }),
-      () => ({ layerId })
-    );
+  const preparedAnchors = prepareFeatureAnchors(id, anchors, anchorsOverride)
+    .map(anchor => normalizeLineAnchor(anchor, preparedVertexIds, layerId));
   return new Line(id, preparedVertexIds, [], layerId, preparedAnchors);
 }
 
 export function createAnchoredPolygon(
   id,
-  properties,
+  anchors,
   layerId,
   parentId = "0",
   childIds = [],
   rings = [],
-  anchors = null
+  anchorsOverride = null
 ) {
   const preparedRings = (rings || []).map(ring => cloneRing(ring));
   const preparedChildIds = Array.isArray(childIds) ? [...childIds] : [];
-  const preparedAnchors = Array.isArray(anchors) && anchors.length > 0
-    ? anchors
-    : buildAnchorsFromProperties(
-      id,
-      properties,
-      () => ({ type: "Polygon", rings: preparedRings.map(ring => cloneRing(ring)) }),
-      () => ({ layerId, parentId, childIds: [...preparedChildIds] })
-    );
+  const preparedAnchors = prepareFeatureAnchors(id, anchors, anchorsOverride)
+    .map(anchor => normalizePolygonAnchor(anchor, preparedRings, layerId, parentId, preparedChildIds));
   return new Polygon(
     id,
     [],

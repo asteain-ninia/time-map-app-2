@@ -3,13 +3,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PropertiesTabView } from '../../src/presentation/views/sidebar/PropertiesTabView.js';
 import { Point } from '../../src/domain/entities/Point.js';
-import { Property } from '../../src/domain/value-objects/Property.js';
+import { FeatureAnchor } from '../../src/domain/value-objects/FeatureAnchor.js';
 import { TimePoint } from '../../src/domain/value-objects/TimePoint.js';
 
 function createProperty(startYear, endYear, name, description = '') {
   const start = new TimePoint(startYear);
   const end = endYear === null ? null : new TimePoint(endYear);
-  return new Property(start, name, description, {}, start, end);
+  return new FeatureAnchor({
+    id: `anchor-${name}-${startYear}-${endYear ?? 'null'}`,
+    timeRange: { start, end },
+    property: {
+      name,
+      description,
+      attributes: {}
+    },
+    shape: {},
+    placement: {}
+  });
 }
 
 function createFeature(properties) {

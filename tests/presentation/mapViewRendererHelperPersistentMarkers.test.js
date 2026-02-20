@@ -2,11 +2,17 @@
 import { describe, expect, it } from "vitest";
 import { MapViewRendererHelper } from "../../src/presentation/views/map/MapViewRendererHelper.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 const createPolygonFeature = () => {
-  const property = new Property(new TimePoint(0), "Test", "", {}, null, null);
+  const property = new FeatureAnchor({
+    id: "anchor-polygon",
+    timeRange: { start: new TimePoint(0), end: null },
+    property: { name: "Test", description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
   return globalThis.createAnchoredPolygon(
     "polygon-1",
     [property],

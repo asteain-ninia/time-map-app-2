@@ -6,7 +6,6 @@ import { HistorySerializer } from "../../../src/application/services/history/His
 import { EditFeatureUseCase } from "../../../src/application/usecases/EditFeatureUseCase.js";
 import { IdGenerationService } from "../../../src/application/services/IdGenerationService.js";
 import { Polygon } from "../../../src/domain/entities/Polygon.js";
-import { Property } from "../../../src/domain/value-objects/Property.js";
 import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../../src/domain/entities/Vertex.js";
@@ -115,21 +114,6 @@ const createWorld = (t1000, t2000) => ({
     globalThis.createAnchoredPolygon(
       "poly-1",
       [
-        new Property(t1000, "Past", "", {}, t1000, t2000),
-        new Property(t2000, "Future", "", {}, t2000, null)
-      ],
-      "layer-0",
-      "0",
-      [],
-      [
-        {
-          id: "ring-latest",
-          vertexIds: ["v5", "v6", "v7", "v8"],
-          ringType: "territory",
-          parentId: null
-        }
-      ],
-      [
         createPolygonAnchor({
           id: "anchor-1000",
           start: t1000,
@@ -144,6 +128,17 @@ const createWorld = (t1000, t2000) => ({
           name: "Future",
           vertexIds: ["v5", "v6", "v7", "v8"]
         })
+      ],
+      "layer-0",
+      "0",
+      [],
+      [
+        {
+          id: "ring-latest",
+          vertexIds: ["v5", "v6", "v7", "v8"],
+          ringType: "territory",
+          parentId: null
+        }
       ]
     )
   ],

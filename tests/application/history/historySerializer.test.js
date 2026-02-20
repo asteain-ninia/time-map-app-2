@@ -6,13 +6,19 @@ import { Point } from "../../../src/domain/entities/Point.js";
 import { Line } from "../../../src/domain/entities/Line.js";
 import { Polygon } from "../../../src/domain/entities/Polygon.js";
 import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.js";
-import { Property } from "../../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 
 describe("HistorySerializer", () => {
   const serializer = new HistorySerializer();
 
-  const createProperty = () => new Property(new TimePoint(1900), "N", "D", { info: 1 });
+  const createProperty = () =>
+    new FeatureAnchor({
+      id: "anchor-history",
+      timeRange: { start: new TimePoint(1900), end: null },
+      property: { name: "N", description: "D", attributes: { info: 1 } },
+      shape: {},
+      placement: {}
+    });
 
   it("serializes and deserializes vertices and basic features", () => {
     const vertex = new Vertex("v1", 1, 2);
@@ -31,7 +37,7 @@ describe("HistorySerializer", () => {
     expect(restoredPoint.vertexIds).toEqual(point.vertexIds);
     expect(restoredPoint.anchors[0]).toBeInstanceOf(FeatureAnchor);
     expect(restoredPoint.anchors[0].name).toBe(property.name);
-    expect(restoredPoint.anchors[0].startTime.equals(property.timePoint)).toBe(true);
+    expect(restoredPoint.anchors[0].startTime.equals(property.startTime)).toBe(true);
     expect(restoredPoint.anchors[0].getAttributes().info).toBe(1);
 
     const serializedLine = serializer.serialize(line);

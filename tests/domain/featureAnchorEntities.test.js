@@ -1,21 +1,26 @@
 // Tests authored by Codex.
 import { describe, expect, it } from "vitest";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { Point } from "../../src/domain/entities/Point.js";
 import { Line } from "../../src/domain/entities/Line.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
 
 const createProperty = (startYear, endYear, name) =>
-  new Property(
-    new TimePoint(startYear),
-    name,
-    "",
-    {},
-    new TimePoint(startYear),
-    endYear === null ? null : new TimePoint(endYear)
-  );
+  new FeatureAnchor({
+    id: `anchor-${name}-${startYear}-${endYear ?? "null"}`,
+    timeRange: {
+      start: new TimePoint(startYear),
+      end: endYear === null ? null : new TimePoint(endYear)
+    },
+    property: {
+      name,
+      description: "",
+      attributes: {}
+    },
+    shape: {},
+    placement: {}
+  });
 
 const createAnchor = ({ id, start, end, name, shape, placement }) =>
   new FeatureAnchor({
@@ -167,4 +172,3 @@ describe("Feature entities with anchor-canonical shape/placement", () => {
     expect(placementAt1300.childIds).toEqual(["child-b-1", "child-b-2"]);
   });
 });
-

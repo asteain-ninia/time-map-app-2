@@ -6,7 +6,6 @@ import { Vertex } from "../../src/domain/entities/Vertex.js";
 import { Point } from "../../src/domain/entities/Point.js";
 import { Line } from "../../src/domain/entities/Line.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 
@@ -14,14 +13,20 @@ describe("JSONSerializer", () => {
   const serializer = new JSONSerializer();
 
   const createProperty = (name, startYear = 1900, endYear = null) =>
-    new Property(
-      new TimePoint(startYear, 1, 1),
-      name,
-      "desc",
-      { tag: name },
-      new TimePoint(startYear, 1, 1),
-      endYear === null ? null : new TimePoint(endYear, 1, 1)
-    );
+    new FeatureAnchor({
+      id: `anchor-${name}-${startYear}-${endYear ?? "null"}`,
+      timeRange: {
+        start: new TimePoint(startYear, 1, 1),
+        end: endYear === null ? null : new TimePoint(endYear, 1, 1)
+      },
+      property: {
+        name,
+        description: "desc",
+        attributes: { tag: name }
+      },
+      shape: {},
+      placement: {}
+    });
 
   it("serializes and deserializes a world with anchors, layers, vertices, and mixed features", () => {
     const layers = [new Layer("layer-base", "Base", 0, true, 1.0)];

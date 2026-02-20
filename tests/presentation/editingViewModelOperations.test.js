@@ -1,12 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { operationMethods } from "../../src/presentation/view-models/EditingViewModelOperations.js";
 import { Point } from "../../src/domain/entities/Point.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { BatchUpdatePropertiesCommand } from "../../src/application/services/history/commands/BatchUpdatePropertiesCommand.js";
 
 const createProperty = (year, name) =>
-  new Property(new TimePoint(year), name, "", {}, new TimePoint(year), null);
+  new FeatureAnchor({
+    id: `anchor-${name}-${year}`,
+    timeRange: { start: new TimePoint(year), end: null },
+    property: { name, description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 const buildContext = ({ world, updatedFeature, updatedFeatures = null, updateError = null }) => {
   const worldRepository = {

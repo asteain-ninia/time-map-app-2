@@ -4,7 +4,6 @@ import { MapViewInteractionLogic } from "../../src/presentation/views/map/MapVie
 import { Point } from "../../src/domain/entities/Point.js";
 import { Line } from "../../src/domain/entities/Line.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 const geometryService = {
@@ -44,7 +43,14 @@ const geometryService = {
   }
 };
 
-const createProperty = () => new Property(new TimePoint(0), "test", "");
+const createProperty = () =>
+  new FeatureAnchor({
+    id: "anchor-default",
+    timeRange: { start: new TimePoint(0), end: null },
+    property: { name: "test", description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 const createViewModel = (world, features, currentTime = new TimePoint(0)) => ({
   getWorld: () => world,
@@ -116,11 +122,6 @@ describe("MapViewInteractionLogic", () => {
       "point-1",
       ["v-new"],
       [
-        new Property(t1000, "Past", "", {}, t1000, t2000),
-        new Property(t2000, "Future", "", {}, t2000, null)
-      ],
-      "layer-1",
-      [
         new FeatureAnchor({
           id: "anchor-1000",
           timeRange: { start: t1000, end: t2000 },
@@ -135,7 +136,8 @@ describe("MapViewInteractionLogic", () => {
           shape: { type: "Point", vertexId: "v-new" },
           placement: { layerId: "layer-1" }
         })
-      ]
+      ],
+      "layer-1"
     );
 
     const world = {

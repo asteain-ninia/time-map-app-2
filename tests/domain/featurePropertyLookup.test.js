@@ -1,25 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { Property } from '../../src/domain/value-objects/Property.js';
+import { FeatureAnchor } from '../../src/domain/value-objects/FeatureAnchor.js';
 import { TimePoint } from '../../src/domain/value-objects/TimePoint.js';
 
 const createProperty = (startYear, endYear = null, name = 'property') => {
   const start = new TimePoint(startYear);
   const end = endYear !== null ? new TimePoint(endYear) : null;
-  return new Property(start, name, '', {}, start, end);
+  return new FeatureAnchor({
+    id: `anchor-${name}-${startYear}-${endYear ?? 'null'}`,
+    timeRange: { start, end },
+    property: { name, description: '', attributes: {} },
+    shape: {},
+    placement: {}
+  });
 };
 
 describe('Feature property lookup', () => {
   it('returns the property active at the requested time', () => {
     const early = createProperty(1750, 1800, 'early');
     const mid = createProperty(1850, 1900, 'mid');
-    const latest = new Property(
-      new TimePoint(1920),
-      'latest',
-      '',
-      {},
-      new TimePoint(1920),
-      null
-    );
+    const latest = createProperty(1920, null, 'latest');
 
     const feature = globalThis.createAnchoredFeature('feature-1', ['vertex-1'], [mid, early, latest], 'layer-1');
 
@@ -32,14 +31,7 @@ describe('Feature property lookup', () => {
 
   it('reports existence only when a property covers the given time', () => {
     const bounded = createProperty(1800, 1850, 'bounded');
-    const openEnded = new Property(
-      new TimePoint(1850),
-      'open-ended',
-      '',
-      {},
-      new TimePoint(1850),
-      null
-    );
+    const openEnded = createProperty(1850, null, 'open-ended');
 
     const feature = globalThis.createAnchoredFeature('feature-2', [], [bounded, openEnded], 'layer-1');
 

@@ -13,12 +13,17 @@ import { Vertex } from "../../../src/domain/entities/Vertex.js";
 import { Point } from "../../../src/domain/entities/Point.js";
 import { Line } from "../../../src/domain/entities/Line.js";
 import { Polygon } from "../../../src/domain/entities/Polygon.js";
-import { Property } from "../../../src/domain/value-objects/Property.js";
 import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 
 const createProperty = (year = 1900, name = "Name") =>
-  new Property(new TimePoint(year), name, "", {});
+  new FeatureAnchor({
+    id: `anchor-${name}-${year}`,
+    timeRange: { start: new TimePoint(year), end: null },
+    property: { name, description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 const createPoint = (id, vertexId) =>
   globalThis.createAnchoredPoint(id, [vertexId], [createProperty()], "layer-1");

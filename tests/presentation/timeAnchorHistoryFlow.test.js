@@ -9,7 +9,6 @@ import { HistorySerializer } from "../../src/application/services/history/Histor
 import { IdGenerationService } from "../../src/application/services/IdGenerationService.js";
 import { Point } from "../../src/domain/entities/Point.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../src/domain/entities/Vertex.js";
 
@@ -73,11 +72,6 @@ const createWorld = (t1000, t2000) => ({
       "point-time-flow",
       ["v-old"],
       [
-        new Property(t1000, "Point", "", {}, t1000, t2000),
-        new Property(t2000, "Point", "", {}, t2000, null)
-      ],
-      "layer-0",
-      [
         new FeatureAnchor({
           id: "anchor-point-1000",
           timeRange: { start: t1000, end: t2000 },
@@ -92,7 +86,8 @@ const createWorld = (t1000, t2000) => ({
           shape: { type: "Point", vertexId: "v-old" },
           placement: { layerId: "layer-0" }
         })
-      ]
+      ],
+      "layer-0"
     )
   ],
   vertices: [{ id: "v-old", x: 0, y: 0 }],

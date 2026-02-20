@@ -2,13 +2,20 @@
 import { describe, expect, it } from "vitest";
 import { LayerService } from "../../src/domain/services/LayerService.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 import { GeometryService } from "../../src/domain/services/GeometryService.js";
 
 const makeLayer = (id, order) => ({ id, order });
 
-const makeProperty = (name = "Test") => new Property(new TimePoint(0), name, "", {});
+const makeProperty = (name = "Test") =>
+  new FeatureAnchor({
+    id: `anchor-${name}`,
+    timeRange: { start: new TimePoint(0), end: null },
+    property: { name, description: "", attributes: {} },
+    shape: {},
+    placement: {}
+  });
 
 const makeRing = (id, vertexIds, ringType = "territory", parentId = null) => ({
   id,

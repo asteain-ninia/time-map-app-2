@@ -3,12 +3,18 @@ import { describe, expect, it } from "vitest";
 import { applyVertexSliding, createVertexSlidingContext } from "../../src/application/services/VertexSlideService.js";
 import { GeometryService } from "../../src/domain/services/GeometryService.js";
 import { Polygon } from "../../src/domain/entities/Polygon.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 describe("VertexSlideService", () => {
   const createWorld = () => {
-    const property = new Property(new TimePoint(0), "Name", "", {});
+    const property = new FeatureAnchor({
+      id: "anchor-vertex-slide",
+      timeRange: { start: new TimePoint(0), end: null },
+      property: { name: "Name", description: "", attributes: {} },
+      shape: {},
+      placement: {}
+    });
     const vertices = [
       { id: "a1", x: 12, y: 5 },
       { id: "a2", x: 14, y: 6 },

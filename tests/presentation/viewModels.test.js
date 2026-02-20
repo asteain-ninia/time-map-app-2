@@ -5,7 +5,6 @@ import { TimelineViewModel } from "../../src/presentation/view-models/TimelineVi
 import { EditingViewModel } from "../../src/presentation/view-models/EditingViewModel.js";
 import { Point } from "../../src/domain/entities/Point.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 const createEventBus = () => {
@@ -26,7 +25,21 @@ const createEventBus = () => {
   };
 };
 
-const createProperty = (year = 0, name = "Name") => new Property(new TimePoint(year), name, "", {});
+const createProperty = (year = 0, name = "Name", endYear = null) =>
+  new FeatureAnchor({
+    id: `anchor-${name}-${year}-${endYear ?? "null"}`,
+    timeRange: {
+      start: new TimePoint(year),
+      end: endYear === null ? null : new TimePoint(endYear)
+    },
+    property: {
+      name,
+      description: "",
+      attributes: {}
+    },
+    shape: {},
+    placement: {}
+  });
 const createAnchor = ({ id, startYear, endYear, name, vertexId, layerId }) =>
   new FeatureAnchor({
     id,
@@ -59,7 +72,7 @@ describe("MapViewModel", () => {
     const inactiveFeature = globalThis.createAnchoredPoint(
       "feature-future",
       ["v-future"],
-      [new Property(new TimePoint(200), "Future", "", {}, new TimePoint(200))],
+      [createProperty(200, "Future")],
       "layer-visible"
     );
     const hiddenFeature = globalThis.createAnchoredPoint(
@@ -245,8 +258,8 @@ describe("MapViewModel", () => {
       "feature-shifting-layer",
       ["v-visible"],
       [
-        new Property(new TimePoint(0), "Old", "", {}, new TimePoint(0), new TimePoint(100)),
-        new Property(new TimePoint(100), "New", "", {}, new TimePoint(100), null)
+        createProperty(0, "Old", 100),
+        createProperty(100, "New")
       ],
       "layer-visible",
       [
@@ -300,8 +313,8 @@ describe("MapViewModel", () => {
       "feature-layer-toggle",
       ["v-visible"],
       [
-        new Property(new TimePoint(0), "Old", "", {}, new TimePoint(0), new TimePoint(100)),
-        new Property(new TimePoint(100), "New", "", {}, new TimePoint(100), null)
+        createProperty(0, "Old", 100),
+        createProperty(100, "New")
       ],
       "layer-hidden",
       [
@@ -361,8 +374,8 @@ describe("MapViewModel", () => {
       "feature-point-shift",
       ["v-new"],
       [
-        new Property(new TimePoint(1000), "Past", "", {}, new TimePoint(1000), new TimePoint(2000)),
-        new Property(new TimePoint(2000), "Future", "", {}, new TimePoint(2000), null)
+        createProperty(1000, "Past", 2000),
+        createProperty(2000, "Future")
       ],
       "layer-visible",
       [
