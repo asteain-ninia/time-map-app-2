@@ -6,6 +6,7 @@
 // ・このコメントは削除しないでください。
 
 import { Vertex } from '../../../../domain/entities/Vertex.js';
+import { TimePoint } from '../../../../domain/value-objects/TimePoint.js';
 
 /**
  * 複数頂点削除操作をカプセル化するコマンド
@@ -16,6 +17,7 @@ export class DeleteVerticesCommand {
    * @param {string[]} payload.deletedVertexIds - 削除対象の頂点ID配列
    * @param {Object[]} payload.verticesToRestoreData - 復元に必要な頂点のデータ（プレーンオブジェクト）
    * @param {Object[]} payload.affectedFeaturesBefore - 影響を受けた地物の操作前の状態（プレーンオブジェクト）
+   * @param {{year:number,month:number|null,day:number|null}|null} [payload.editTime] - 時刻付き削除の編集時刻
    * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
    * @param {WorldRepository} worldRepository - ワールドリポジトリ（直接操作用）
    * @param {HistorySerializer} serializer - シリアライザ
@@ -33,7 +35,10 @@ export class DeleteVerticesCommand {
    */
   async execute() {
     const { deletedVertexIds } = this._payload;
-    const deleteResult = await this._editFeatureUseCase.deleteVertices(deletedVertexIds);
+    const editTime = this._deserializeEditTime(this._payload.editTime);
+    const deleteResult = editTime
+      ? await this._editFeatureUseCase.deleteVertices(deletedVertexIds, { editTime })
+      : await this._editFeatureUseCase.deleteVertices(deletedVertexIds);
     // deleteVerticesは { deletedVertexIds, updatedFeatureIds, deletedFeatureIds } を返す
     return { deletedVertexResult: deleteResult, eventType: 'VerticesDeletedCustom', eventPayload: deleteResult };
   }
@@ -85,5 +90,19 @@ export class DeleteVerticesCommand {
     }
 
     return {};
+  }
+
+  _deserializeEditTime(editTimeData) {
+    if (!editTimeData || typeof editTimeData !== 'object') {
+      return null;
+    }
+    if (typeof editTimeData.year !== 'number' || Number.isNaN(editTimeData.year)) {
+      return null;
+    }
+    return new TimePoint(
+      editTimeData.year,
+      editTimeData.month ?? null,
+      editTimeData.day ?? null
+    );
   }
 }

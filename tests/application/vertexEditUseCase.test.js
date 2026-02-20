@@ -90,7 +90,7 @@ describe("VertexEditUseCase", () => {
       updatedFeatureIds: ["line-1"],
       deletedFeatureIds: ["point-1"]
     });
-    expect(cleanupUnusedVertices).toHaveBeenCalledWith(world, ["v-point", "v-l2"]);
+    expect(cleanupUnusedVertices).not.toHaveBeenCalled();
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
     const savedWorld = worldRepository.saveWorld.mock.calls[0][0];
     expect(savedWorld.features).toHaveLength(1);
@@ -130,6 +130,117 @@ describe("VertexEditUseCase", () => {
     const [parentAfter] = world.features;
     expect(parentAfter.childIds).toEqual([]);
     expect(world.vertices.map((v) => v.id)).toEqual(["vp1", "vp2", "vp3"]);
+  });
+
+  it("deletes vertices only in the edited anchor while preserving past and future anchors", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 5, y: 0 },
+      { id: "v3", x: 10, y: 0 }
+    ];
+    const placement = { layerId: "layer-1" };
+    const anchors = [
+      new FeatureAnchor({
+        id: "anchor-line-1",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "line-time-delete", description: "", attributes: {} },
+        shape: { type: "LineString", vertexIds: ["v1", "v2", "v3"] },
+        placement
+      }),
+      new FeatureAnchor({
+        id: "anchor-line-2",
+        timeRange: { start: t1200, end: null },
+        property: { name: "line-time-delete", description: "", attributes: {} },
+        shape: { type: "LineString", vertexIds: ["v1", "v2", "v3"] },
+        placement
+      })
+    ];
+    world.features = [
+      globalThis.createAnchoredLine(
+        "line-time-delete",
+        ["v1", "v2", "v3"],
+        [
+          createPropertyWithRange(t1000, t1200, "line-time-delete"),
+          createPropertyWithRange(t1200, null, "line-time-delete")
+        ],
+        "layer-1",
+        anchors
+      )
+    ];
+    generateId.mockReset();
+    generateId.mockReturnValueOnce("anchor-line-1100");
+
+    const result = await useCase.deleteVertices(["v2"], { editTime: t1100 });
+
+    expect(result).toEqual({
+      deletedVertexIds: ["v2"],
+      updatedFeatureIds: ["line-time-delete"],
+      deletedFeatureIds: []
+    });
+    const lineAfter = world.features.find((feature) => feature.id === "line-time-delete");
+    expect(lineAfter).toBeInstanceOf(Line);
+    expect(lineAfter.anchors).toHaveLength(3);
+    expect(lineAfter.getVertexIdsAt(t1000)).toEqual(["v1", "v2", "v3"]);
+    expect(lineAfter.getVertexIdsAt(t1100)).toEqual(["v1", "v3"]);
+    expect(lineAfter.getVertexIdsAt(t1200)).toEqual(["v1", "v2", "v3"]);
+    expect(world.vertices.find((vertex) => vertex.id === "v2")).toEqual({ id: "v2", x: 5, y: 0 });
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps vertices referenced only by past anchors when deleting without editTime", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 2, y: 0 },
+      { id: "v3", x: 4, y: 0 }
+    ];
+    const placement = { layerId: "layer-1" };
+    const anchors = [
+      new FeatureAnchor({
+        id: "anchor-line-past-1",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "line-past-only", description: "", attributes: {} },
+        shape: { type: "LineString", vertexIds: ["v1", "v2"] },
+        placement
+      }),
+      new FeatureAnchor({
+        id: "anchor-line-past-2",
+        timeRange: { start: t1200, end: null },
+        property: { name: "line-past-only", description: "", attributes: {} },
+        shape: { type: "LineString", vertexIds: ["v1", "v3"] },
+        placement
+      })
+    ];
+    world.features = [
+      globalThis.createAnchoredLine(
+        "line-past-only",
+        ["v1", "v3"],
+        [
+          createPropertyWithRange(t1000, t1200, "line-past-only"),
+          createPropertyWithRange(t1200, null, "line-past-only")
+        ],
+        "layer-1",
+        anchors
+      )
+    ];
+
+    const result = await useCase.deleteVertices(["v2"]);
+
+    expect(result).toEqual({
+      deletedVertexIds: ["v2"],
+      updatedFeatureIds: [],
+      deletedFeatureIds: []
+    });
+    expect(world.vertices.map((vertex) => vertex.id)).toEqual(["v1", "v2", "v3"]);
+    const lineAfter = world.features.find((feature) => feature.id === "line-past-only");
+    expect(lineAfter).toBeInstanceOf(Line);
+    expect(lineAfter.getVertexIdsAt(t1000)).toEqual(["v1", "v2"]);
+    expect(lineAfter.getVertexIdsAt(t1200)).toEqual(["v1", "v3"]);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
 
   it("moves a vertex and reports affected polygons", async () => {

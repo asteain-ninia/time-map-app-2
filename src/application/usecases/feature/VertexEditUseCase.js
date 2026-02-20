@@ -32,15 +32,21 @@ export class VertexEditUseCase {
   /**
    * 複数の頂点を削除し、関連する地物を更新または削除
    * @param {string[]} vertexIdsToDelete - 削除する頂点のID配列
+   * @param {{editTime?: TimePoint}} [options] - 編集オプション
    * @returns {Promise<{deletedVertexIds: string[], updatedFeatureIds: string[], deletedFeatureIds: string[]}>} 影響結果
    */
-  async deleteVertices(vertexIdsToDelete) {
+  async deleteVertices(vertexIdsToDelete, options = undefined) {
     console.log(`[VertexEditUseCase] deleteVertices called with:`, vertexIdsToDelete);
     if (!vertexIdsToDelete || vertexIdsToDelete.length === 0) {
         return { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [] };
     }
+    if (options?.editTime instanceof TimePoint) {
+      return this._deleteVerticesAtTime(vertexIdsToDelete, options.editTime);
+    }
+
     const world = await this._worldRepository.getWorld();
     const verticesToDeleteSet = new Set(vertexIdsToDelete);
+    const cleanupCandidateVertexIds = new Set(vertexIdsToDelete);
 
     const originalFeatures = world.features;
     const updatedFeatures = [];
@@ -135,6 +141,9 @@ export class VertexEditUseCase {
         // 最終的な地物を配列に追加または削除リストへ
         if (featureShouldBeDeleted) {
             deletedFeatureIds.add(currentFeature.id);
+            this._collectFeatureVertexIdsAcrossTimeline(currentFeature).forEach(vertexId => {
+                cleanupCandidateVertexIds.add(vertexId);
+            });
             // 親ポリゴンからの子ID削除が必要な場合、情報を記録
             if (currentFeature instanceof Polygon && currentFeature.parentId && currentFeature.parentId !== "0") {
                 if (!parentUpdatesNeeded.has(currentFeature.parentId)) {
@@ -171,15 +180,8 @@ export class VertexEditUseCase {
         world.features = updatedFeatures;
     }
 
-    // 削除対象の頂点を物理的に削除
-    const verticesBeforeDelete = world.vertices.length;
-    world.vertices = world.vertices.filter(v => !verticesToDeleteSet.has(v.id));
-    const deletedVertexCount = verticesBeforeDelete - world.vertices.length;
-    console.log(`[VertexEditUseCase] Physically deleted ${deletedVertexCount} vertices from world.vertices.`);
-
-    // 使われなくなった頂点をクリーンアップ (依存関係の解決後に実行)
-    // cleanupUnusedVertices は WorldRepository 保存前に呼び出すべき
-    this._cleanupUnusedVertices(world, vertexIdsToDelete);
+    const removedVertexIds = this._pruneUnusedVerticesByIds(world, cleanupCandidateVertexIds);
+    console.log(`[VertexEditUseCase] Physically deleted ${removedVertexIds.length} vertices from world.vertices.`);
 
     console.log(`[VertexEditUseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
     await this._worldRepository.saveWorld(world);
@@ -191,6 +193,433 @@ export class VertexEditUseCase {
     };
     console.log('[VertexEditUseCase] deleteVertices finished. Result:', result);
     return result;
+  }
+
+  async _deleteVerticesAtTime(vertexIdsToDelete, editTime) {
+    const world = await this._worldRepository.getWorld();
+    const verticesToDeleteSet = new Set(vertexIdsToDelete);
+    const cleanupCandidateVertexIds = new Set(vertexIdsToDelete);
+    const updatedFeatures = [];
+    const updatedFeatureIds = new Set();
+    const deletedFeatureIds = new Set();
+    const parentUpdatesNeeded = new Map();
+
+    for (const feature of world.features) {
+      if (!(feature instanceof Point || feature instanceof Line || feature instanceof Polygon)) {
+        updatedFeatures.push(feature);
+        continue;
+      }
+
+      if (!this._featureUsesAnyVertexAtTime(feature, verticesToDeleteSet, editTime)) {
+        updatedFeatures.push(feature);
+        continue;
+      }
+
+      const deletionOutcome = this._buildFeatureForAnchorScopedVertexDeletion(
+        feature,
+        editTime,
+        verticesToDeleteSet
+      );
+
+      if (deletionOutcome.deleted || !deletionOutcome.feature) {
+        deletedFeatureIds.add(feature.id);
+        this._collectFeatureVertexIdsAcrossTimeline(feature).forEach(vertexId => {
+          cleanupCandidateVertexIds.add(vertexId);
+        });
+        if (feature instanceof Polygon && feature.parentId && feature.parentId !== "0") {
+          if (!parentUpdatesNeeded.has(feature.parentId)) {
+            parentUpdatesNeeded.set(feature.parentId, []);
+          }
+          parentUpdatesNeeded.get(feature.parentId).push(feature.id);
+        }
+        continue;
+      }
+
+      updatedFeatures.push(deletionOutcome.feature);
+      if (deletionOutcome.changed) {
+        updatedFeatureIds.add(deletionOutcome.feature.id);
+      }
+    }
+
+    if (parentUpdatesNeeded.size > 0) {
+      const featuresWithUpdatedParents = [];
+      for (let feature of updatedFeatures) {
+        if (parentUpdatesNeeded.has(feature.id) && feature instanceof Polygon) {
+          const childrenToRemove = parentUpdatesNeeded.get(feature.id);
+          let updatedParent = feature;
+          childrenToRemove.forEach(childId => {
+            updatedParent = updatedParent.removeChildId(childId);
+          });
+          featuresWithUpdatedParents.push(updatedParent);
+          updatedFeatureIds.add(updatedParent.id);
+        } else {
+          featuresWithUpdatedParents.push(feature);
+        }
+      }
+      world.features = featuresWithUpdatedParents;
+    } else {
+      world.features = updatedFeatures;
+    }
+
+    const removedVertexIds = this._pruneUnusedVerticesByIds(world, cleanupCandidateVertexIds);
+    console.log(`[VertexEditUseCase] Physically deleted ${removedVertexIds.length} vertices from world.vertices (editTime scope).`);
+
+    console.log(`[VertexEditUseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
+    await this._worldRepository.saveWorld(world);
+
+    const result = {
+      deletedVertexIds: Array.from(verticesToDeleteSet),
+      updatedFeatureIds: Array.from(updatedFeatureIds),
+      deletedFeatureIds: Array.from(deletedFeatureIds)
+    };
+    console.log('[VertexEditUseCase] deleteVertices finished. Result:', result);
+    return result;
+  }
+
+  _buildFeatureForAnchorScopedVertexDeletion(feature, editTime, verticesToDeleteSet) {
+    if (!(verticesToDeleteSet instanceof Set) || verticesToDeleteSet.size === 0) {
+      return { feature, changed: false, deleted: false };
+    }
+
+    const hasAnchors = Array.isArray(feature.anchors) && feature.anchors.length > 0;
+    if (!hasAnchors) {
+      return this._buildLegacyFeatureForVertexDeletion(feature, verticesToDeleteSet);
+    }
+
+    const anchors = [...feature.anchors];
+    let targetAnchorIndex = anchors.findIndex(anchor => anchor.startTime.equals(editTime));
+
+    if (targetAnchorIndex === -1) {
+      const activeAnchorIndex = anchors.findIndex(anchor => anchor.isActiveAt(editTime));
+      if (activeAnchorIndex === -1) {
+        return { feature, changed: false, deleted: false };
+      }
+      const sourceAnchor = anchors[activeAnchorIndex];
+      if (!sourceAnchor.startTime.equals(editTime)) {
+        const anchorIds = new Set(anchors.map(anchor => anchor.id));
+        const splitAnchor = new FeatureAnchor({
+          id: this._generateUniqueId('anchor', anchorIds),
+          timeRange: { start: editTime, end: sourceAnchor.endTime },
+          property: {
+            name: sourceAnchor.name,
+            description: sourceAnchor.description,
+            attributes: sourceAnchor.getAttributes()
+          },
+          shape: sourceAnchor.shape,
+          placement: sourceAnchor.placement
+        });
+        anchors.splice(
+          activeAnchorIndex,
+          1,
+          sourceAnchor.withTimeRange(sourceAnchor.startTime, editTime),
+          splitAnchor
+        );
+        targetAnchorIndex = activeAnchorIndex + 1;
+      } else {
+        targetAnchorIndex = activeAnchorIndex;
+      }
+    }
+
+    const targetAnchor = anchors[targetAnchorIndex];
+    if (!(targetAnchor instanceof FeatureAnchor)) {
+      return { feature, changed: false, deleted: false };
+    }
+
+    const nextShape = this._buildShapeAfterVertexDeletionAtTime(
+      feature,
+      targetAnchor,
+      editTime,
+      verticesToDeleteSet
+    );
+
+    if (nextShape === null) {
+      const removedStart = targetAnchor.startTime;
+      anchors.splice(targetAnchorIndex, 1);
+      this._truncatePreviousAnchorAt(anchors, targetAnchorIndex - 1, removedStart);
+      if (anchors.length === 0) {
+        return { feature: null, changed: true, deleted: true };
+      }
+      return {
+        feature: this._rebuildFeatureWithAnchors(feature, anchors),
+        changed: true,
+        deleted: false
+      };
+    }
+
+    const shapeChanged = JSON.stringify(targetAnchor.shape || {}) !== JSON.stringify(nextShape || {});
+    if (!shapeChanged) {
+      return { feature, changed: false, deleted: false };
+    }
+
+    anchors[targetAnchorIndex] = targetAnchor.withShape(nextShape);
+    return {
+      feature: this._rebuildFeatureWithAnchors(feature, anchors),
+      changed: true,
+      deleted: false
+    };
+  }
+
+  _buildLegacyFeatureForVertexDeletion(feature, verticesToDeleteSet) {
+    if (feature instanceof Point) {
+      const vertexIds = Array.isArray(feature.vertexIds) ? feature.vertexIds : [];
+      const shouldDelete = vertexIds.some(id => verticesToDeleteSet.has(id));
+      if (!shouldDelete) {
+        return { feature, changed: false, deleted: false };
+      }
+      return { feature: null, changed: true, deleted: true };
+    }
+
+    if (feature instanceof Line) {
+      const vertexIds = Array.isArray(feature.vertexIds) ? feature.vertexIds : [];
+      const includesDeleted = vertexIds.some(id => verticesToDeleteSet.has(id));
+      if (!includesDeleted) {
+        return { feature, changed: false, deleted: false };
+      }
+      const nextVertexIds = vertexIds.filter(id => !verticesToDeleteSet.has(id));
+      if (nextVertexIds.length < 2) {
+        return { feature: null, changed: true, deleted: true };
+      }
+      return { feature: feature.withVertexIds(nextVertexIds), changed: true, deleted: false };
+    }
+
+    if (feature instanceof Polygon) {
+      const rings = Array.isArray(feature.rings) ? feature.rings : [];
+      const ringsToDelete = [];
+      const ringsToUpdate = [];
+
+      rings.forEach(ring => {
+        if (!Array.isArray(ring?.vertexIds)) {
+          return;
+        }
+        if (!ring.vertexIds.some(id => verticesToDeleteSet.has(id))) {
+          return;
+        }
+        const nextVertexIds = ring.vertexIds.filter(id => !verticesToDeleteSet.has(id));
+        if (nextVertexIds.length < 3) {
+          ringsToDelete.push(ring.id);
+        } else {
+          ringsToUpdate.push({ ringId: ring.id, vertexIds: nextVertexIds });
+        }
+      });
+
+      if (ringsToDelete.length === 0 && ringsToUpdate.length === 0) {
+        return { feature, changed: false, deleted: false };
+      }
+
+      let nextPolygon = feature;
+      ringsToUpdate.forEach(update => {
+        nextPolygon = nextPolygon.withUpdatedRingVertices(update.ringId, update.vertexIds);
+      });
+      ringsToDelete.forEach(ringId => {
+        nextPolygon = nextPolygon.withRemovedRing(ringId);
+      });
+
+      if (nextPolygon.rings.length === 0 && !nextPolygon.hasChildren()) {
+        return { feature: null, changed: true, deleted: true };
+      }
+      return { feature: nextPolygon, changed: true, deleted: false };
+    }
+
+    return { feature, changed: false, deleted: false };
+  }
+
+  _buildShapeAfterVertexDeletionAtTime(feature, anchor, editTime, verticesToDeleteSet) {
+    if (feature instanceof Point) {
+      const currentVertexId = anchor?.shape?.type === 'Point' && typeof anchor.shape.vertexId === 'string'
+        ? anchor.shape.vertexId
+        : (typeof feature.getVertexIdAt === 'function' ? feature.getVertexIdAt(editTime) : feature.vertexId);
+      if (verticesToDeleteSet.has(currentVertexId)) {
+        return null;
+      }
+      return { type: 'Point', vertexId: currentVertexId };
+    }
+
+    if (feature instanceof Line) {
+      const currentVertexIds = anchor?.shape?.type === 'LineString' && Array.isArray(anchor.shape.vertexIds)
+        ? [...anchor.shape.vertexIds]
+        : (typeof feature.getVertexIdsAt === 'function' ? feature.getVertexIdsAt(editTime) : feature.vertexIds || []);
+      const nextVertexIds = currentVertexIds.filter(vertexId => !verticesToDeleteSet.has(vertexId));
+      if (nextVertexIds.length < 2) {
+        return null;
+      }
+      return { type: 'LineString', vertexIds: nextVertexIds };
+    }
+
+    if (feature instanceof Polygon) {
+      const currentRings = anchor?.shape?.type === 'Polygon' && Array.isArray(anchor.shape.rings)
+        ? this._cloneRings(anchor.shape.rings)
+        : this._cloneRings(typeof feature.getRingsAt === 'function' ? feature.getRingsAt(editTime) : feature.rings || []);
+      const placementAtTime = anchor?.placement && typeof anchor.placement === 'object'
+        ? anchor.placement
+        : (typeof feature.getPlacementAt === 'function' ? feature.getPlacementAt(editTime) : {
+            layerId: feature.layerId,
+            parentId: feature.parentId,
+            childIds: feature.childIds
+          });
+      const normalizedPlacement = {
+        layerId: typeof placementAtTime?.layerId === 'string' ? placementAtTime.layerId : feature.layerId,
+        parentId: placementAtTime?.parentId ?? "0",
+        childIds: Array.isArray(placementAtTime?.childIds) ? [...placementAtTime.childIds] : []
+      };
+      const scopedAnchor = new FeatureAnchor({
+        id: anchor.id,
+        timeRange: { start: anchor.startTime, end: anchor.endTime },
+        property: {
+          name: anchor.name,
+          description: anchor.description,
+          attributes: anchor.getAttributes()
+        },
+        shape: { type: 'Polygon', rings: this._cloneRings(currentRings) },
+        placement: normalizedPlacement
+      });
+      let polygonAtTime = new Polygon(
+        feature.id,
+        [],
+        normalizedPlacement.layerId,
+        normalizedPlacement.parentId,
+        normalizedPlacement.childIds,
+        this._cloneRings(currentRings),
+        [scopedAnchor]
+      );
+      const ringsToDelete = [];
+      const ringsToUpdate = [];
+      currentRings.forEach(ring => {
+        if (!Array.isArray(ring?.vertexIds)) {
+          return;
+        }
+        if (!ring.vertexIds.some(vertexId => verticesToDeleteSet.has(vertexId))) {
+          return;
+        }
+        const nextVertexIds = ring.vertexIds.filter(vertexId => !verticesToDeleteSet.has(vertexId));
+        if (nextVertexIds.length < 3) {
+          ringsToDelete.push(ring.id);
+        } else {
+          ringsToUpdate.push({ ringId: ring.id, vertexIds: nextVertexIds });
+        }
+      });
+
+      if (ringsToDelete.length === 0 && ringsToUpdate.length === 0) {
+        return { type: 'Polygon', rings: this._cloneRings(currentRings) };
+      }
+
+      ringsToUpdate.forEach(update => {
+        polygonAtTime = polygonAtTime.withUpdatedRingVertices(update.ringId, update.vertexIds);
+      });
+      ringsToDelete.forEach(ringId => {
+        polygonAtTime = polygonAtTime.withRemovedRing(ringId);
+      });
+
+      if (polygonAtTime.rings.length === 0 && !polygonAtTime.hasChildren()) {
+        return null;
+      }
+      return {
+        type: 'Polygon',
+        rings: this._cloneRings(polygonAtTime.rings)
+      };
+    }
+
+    return anchor?.shape || {};
+  }
+
+  _truncatePreviousAnchorAt(anchors, previousIndex, cutoffTime) {
+    if (previousIndex < 0 || previousIndex >= anchors.length) {
+      return;
+    }
+    const previousAnchor = anchors[previousIndex];
+    if (!(previousAnchor instanceof FeatureAnchor) || !(cutoffTime instanceof TimePoint)) {
+      return;
+    }
+    if (!previousAnchor.startTime.isBefore(cutoffTime)) {
+      return;
+    }
+    if (previousAnchor.endTime === null || cutoffTime.isBefore(previousAnchor.endTime)) {
+      anchors[previousIndex] = previousAnchor.withTimeRange(previousAnchor.startTime, cutoffTime);
+    }
+  }
+
+  _cloneRings(rings) {
+    if (!Array.isArray(rings)) {
+      return [];
+    }
+    return rings.map(ring => ({
+      id: ring.id,
+      vertexIds: Array.isArray(ring.vertexIds) ? [...ring.vertexIds] : [],
+      ringType: ring.ringType,
+      parentId: ring.parentId ?? null
+    }));
+  }
+
+  _collectFeatureVertexIdsAcrossTimeline(feature) {
+    const ids = new Set();
+    if (!feature) {
+      return [];
+    }
+
+    if (Array.isArray(feature.anchors) && feature.anchors.length > 0) {
+      feature.anchors.forEach(anchor => {
+        const shape = anchor?.shape;
+        if (!shape || typeof shape !== 'object') {
+          return;
+        }
+        if (shape.type === 'Point' && typeof shape.vertexId === 'string') {
+          ids.add(shape.vertexId);
+          return;
+        }
+        if (shape.type === 'LineString' && Array.isArray(shape.vertexIds)) {
+          shape.vertexIds.forEach(vertexId => ids.add(vertexId));
+          return;
+        }
+        if (shape.type === 'Polygon' && Array.isArray(shape.rings)) {
+          shape.rings.forEach(ring => {
+            if (Array.isArray(ring?.vertexIds)) {
+              ring.vertexIds.forEach(vertexId => ids.add(vertexId));
+            }
+          });
+        }
+      });
+    }
+
+    if (ids.size > 0) {
+      return Array.from(ids);
+    }
+
+    if (feature instanceof Polygon) {
+      const rings = Array.isArray(feature.rings) ? feature.rings : [];
+      rings.forEach(ring => {
+        if (Array.isArray(ring?.vertexIds)) {
+          ring.vertexIds.forEach(vertexId => ids.add(vertexId));
+        }
+      });
+    } else if (Array.isArray(feature.vertexIds)) {
+      feature.vertexIds.forEach(vertexId => ids.add(vertexId));
+    }
+
+    return Array.from(ids);
+  }
+
+  _pruneUnusedVerticesByIds(world, candidateIds) {
+    const candidateSet = candidateIds instanceof Set
+      ? new Set(candidateIds)
+      : new Set(Array.isArray(candidateIds) ? candidateIds : []);
+    if (candidateSet.size === 0) {
+      return [];
+    }
+
+    const usedVertexIds = new Set();
+    (world.features || []).forEach(feature => {
+      this._collectFeatureVertexIdsAcrossTimeline(feature).forEach(vertexId => {
+        usedVertexIds.add(vertexId);
+      });
+    });
+
+    const removable = [...candidateSet].filter(vertexId => !usedVertexIds.has(vertexId));
+    if (removable.length === 0) {
+      return [];
+    }
+
+    const removeSet = new Set(removable);
+    world.vertices = (world.vertices || []).filter(vertex => !removeSet.has(vertex.id));
+    return removable;
   }
 
   /**

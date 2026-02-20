@@ -102,8 +102,8 @@ export class EditFeatureUseCase {
     return this._deleteFeatureUseCase.execute(featureId);
   }
 
-  async deleteVertices(vertexIdsToDelete) {
-    return this._vertexEditUseCase.deleteVertices(vertexIdsToDelete);
+  async deleteVertices(vertexIdsToDelete, options = undefined) {
+    return this._vertexEditUseCase.deleteVertices(vertexIdsToDelete, options);
   }
 
   async moveVertex(vertexId, newPosition, options = undefined) {

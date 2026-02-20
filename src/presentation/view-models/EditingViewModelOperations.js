@@ -1,5 +1,8 @@
+import { Point as DomainPoint } from '../../domain/entities/Point.js';
+import { Line as DomainLine } from '../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { FeatureAnchor } from '../../domain/value-objects/FeatureAnchor.js';
+import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { DeleteFeatureCommand } from '../../application/services/history/commands/DeleteFeatureCommand.js';
 import { DeleteVerticesCommand } from '../../application/services/history/commands/DeleteVerticesCommand.js';
@@ -16,6 +19,47 @@ function getFeatureTimelineAnchors(feature) {
     return [...feature.anchors];
   }
   throw new Error(`Feature ${feature.id} に履歴アンカーが存在しません。`);
+}
+
+function collectFeatureVertexIdsAtTime(feature, editTime = null) {
+  if (!feature) {
+    return [];
+  }
+
+  if (feature instanceof DomainPolygon) {
+    const rings = typeof feature.getRingsAt === 'function'
+      ? feature.getRingsAt(editTime)
+      : feature.rings;
+    if (!Array.isArray(rings)) {
+      return [];
+    }
+    const ids = new Set();
+    rings.forEach(ring => {
+      if (Array.isArray(ring?.vertexIds)) {
+        ring.vertexIds.forEach(id => ids.add(id));
+      }
+    });
+    return Array.from(ids);
+  }
+
+  if (feature instanceof DomainLine) {
+    const vertexIds = typeof feature.getVertexIdsAt === 'function'
+      ? feature.getVertexIdsAt(editTime)
+      : feature.vertexIds;
+    return Array.isArray(vertexIds) ? [...vertexIds] : [];
+  }
+
+  if (feature instanceof DomainPoint) {
+    const vertexId = typeof feature.getVertexIdAt === 'function'
+      ? feature.getVertexIdAt(editTime)
+      : feature.vertexId;
+    return typeof vertexId === 'string' ? [vertexId] : [];
+  }
+
+  if (Array.isArray(feature.vertexIds)) {
+    return [...feature.vertexIds];
+  }
+  return [];
 }
 
 /**
@@ -54,12 +98,14 @@ async function deleteFeature(featureId, feature) {
  * @param {string[]} vertexIds - 削除する頂点のID配列
  * @returns {Promise<void>}
  */
-async function deleteVertices(vertexIds) {
+async function deleteVertices(vertexIds, options = undefined) {
   if (!vertexIds || vertexIds.length === 0) return;
   
   try {
     const worldRepository = this._editFeatureUseCase.getWorldRepository();
     const worldBefore = await worldRepository.getWorld();
+    const editTime = options?.editTime instanceof TimePoint ? options.editTime : null;
+    const deleteOptions = editTime ? { editTime } : undefined;
 
     const verticesToRestore = vertexIds.map(id => {
       const vData = worldBefore.vertices.find(v => v.id === id);
@@ -69,20 +115,22 @@ async function deleteVertices(vertexIds) {
     const affectedFeaturesBefore = [];
     const deletedVertexIdsSet = new Set(vertexIds);
     worldBefore.features.forEach(f => {
-      const usesAnyDeletedVertex = 
-        (f instanceof DomainPolygon && f.rings?.some(r => r.vertexIds.some(id => deletedVertexIdsSet.has(id)))) ||
-        (!(f instanceof DomainPolygon) && f.vertexIds?.some(id => deletedVertexIdsSet.has(id)));
+      const vertexIdsAtTime = collectFeatureVertexIdsAtTime(f, editTime);
+      const usesAnyDeletedVertex = vertexIdsAtTime.some(id => deletedVertexIdsSet.has(id));
       if (usesAnyDeletedVertex) {
         affectedFeaturesBefore.push(f);
       }
     });
     
-    const result = await this._editFeatureUseCase.deleteVertices(vertexIds);
+    const result = await this._editFeatureUseCase.deleteVertices(vertexIds, deleteOptions);
     
     const payload = {
       deletedVertexIds: result.deletedVertexIds,
       verticesToRestoreData: verticesToRestore.map(v => this._historyService._serializer.serialize(v)),
-      affectedFeaturesBefore: affectedFeaturesBefore.map(f => this._historyService._serializer.serialize(f))
+      affectedFeaturesBefore: affectedFeaturesBefore.map(f => this._historyService._serializer.serialize(f)),
+      editTime: editTime
+        ? { year: editTime.year, month: editTime.month, day: editTime.day }
+        : null
     };
     
     const command = new DeleteVerticesCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
@@ -97,7 +145,10 @@ async function deleteVertices(vertexIds) {
         if (updatedFeature) { this._eventBus.publish('FeatureUpdated', { feature: updatedFeature }); }
       });
     }
-    this._eventBus.publish('VerticesDeleted', { deletedVertexIds: vertexIds });
+    this._eventBus.publish('VerticesDeleted', {
+      deletedVertexIds: vertexIds,
+      editTime: payload.editTime
+    });
     this._eventBus.publish('ClearSelection');
   } catch (error) {
     console.error('頂点の削除に失敗しました', error);

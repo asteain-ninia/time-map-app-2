@@ -303,6 +303,44 @@ describe("History commands", () => {
     expect(reverseResult.updatedFeatures[0].vertexIds).toEqual(originalLine.vertexIds);
   });
 
+  it("passes editTime payload to DeleteVerticesCommand execute", async () => {
+    const serializer = new HistorySerializer();
+    const deleteResult = {
+      deletedVertexIds: ["vertex-remove"],
+      updatedFeatureIds: [],
+      deletedFeatureIds: []
+    };
+    const editFeatureUseCase = {
+      deleteVertices: vi.fn().mockResolvedValue(deleteResult)
+    };
+    const worldRepository = {
+      getWorld: vi.fn(async () => ({ vertices: [], features: [], layers: [] })),
+      saveWorld: vi.fn(async () => {})
+    };
+    const payload = {
+      deletedVertexIds: ["vertex-remove"],
+      verticesToRestoreData: [],
+      affectedFeaturesBefore: [],
+      editTime: { year: 1300, month: 4, day: 2 }
+    };
+
+    const command = new DeleteVerticesCommand(payload, editFeatureUseCase, worldRepository, serializer);
+    const executeResult = await command.execute();
+
+    expect(editFeatureUseCase.deleteVertices).toHaveBeenCalledTimes(1);
+    expect(editFeatureUseCase.deleteVertices).toHaveBeenCalledWith(
+      ["vertex-remove"],
+      { editTime: expect.any(TimePoint) }
+    );
+    const calledEditTime = editFeatureUseCase.deleteVertices.mock.calls[0][1].editTime;
+    expect(calledEditTime.equals(new TimePoint(1300, 4, 2))).toBe(true);
+    expect(executeResult).toEqual({
+      deletedVertexResult: deleteResult,
+      eventType: "VerticesDeletedCustom",
+      eventPayload: deleteResult
+    });
+  });
+
   it("updates anchor timeline through UpdatePropertiesCommand", async () => {
     const serializer = new HistorySerializer();
     const baseFeature = globalThis.createAnchoredPoint("feature-prop", ["vertex-prop"], [createProperty(1500, "Original")], "layer-1");

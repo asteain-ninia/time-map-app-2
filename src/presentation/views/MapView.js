@@ -518,7 +518,9 @@ export class MapView {
             return;
           }
           try {
-            await this._editingViewModel.deleteVertices(selectedVertexIds);
+            await this._editingViewModel.deleteVertices(selectedVertexIds, {
+              editTime: currentTime
+            });
           } catch (error) {
             console.error('頂点の削除に失敗しました (ContextMenu)', error);
             alert(`頂点の削除に失敗しました: ${error.message}`);

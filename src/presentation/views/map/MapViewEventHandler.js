@@ -569,7 +569,9 @@ export class MapViewEventHandler {
           if (selectedVertexIds.size > 0) {
               // 頂点選択中 -> 選択頂点を削除
               const vertexIdsToDelete = Array.from(selectedVertexIds);
-              this._editingViewModel.deleteVertices(vertexIdsToDelete);
+              this._editingViewModel.deleteVertices(vertexIdsToDelete, {
+                editTime: this._viewModel.getCurrentTime()
+              });
           } else if (contextFeature) {
               // 地物選択中 -> 選択地物を削除
               this._editingViewModel.deleteFeature(contextFeature.id, contextFeature);
