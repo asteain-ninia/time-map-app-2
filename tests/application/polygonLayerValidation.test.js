@@ -79,7 +79,7 @@ describe("Polygon layer validation integration", () => {
         new Vertex("v4", 0, 10)
       ],
       features: [
-        new Polygon("poly-existing", [createProperty("Existing")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-existing", [createProperty("Existing")], "layer-base", "0", [], [
           { id: "ring-existing", vertexIds: ["v1", "v2", "v3", "v4"], ringType: "territory", parentId: null }
         ])
       ],
@@ -131,7 +131,7 @@ describe("Polygon layer validation integration", () => {
         new Vertex("v4", 0, 10)
       ],
       features: [
-        new Polygon("poly-existing", [createPropertyWithRange(1000, 1200, "Existing")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-existing", [createPropertyWithRange(1000, 1200, "Existing")], "layer-base", "0", [], [
           { id: "ring-existing", vertexIds: ["v1", "v2", "v3", "v4"], ringType: "territory", parentId: null }
         ])
       ],
@@ -188,10 +188,10 @@ describe("Polygon layer validation integration", () => {
         new Vertex("u4", 2, 8)
       ],
       features: [
-        new Polygon("poly-base", [createProperty("Base")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-base", [createProperty("Base")], "layer-base", "0", [], [
           { id: "ring-base", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
         ]),
-        new Polygon("poly-upper", [createProperty("Upper")], "layer-upper", "0", [], [
+        globalThis.createAnchoredPolygon("poly-upper", [createProperty("Upper")], "layer-upper", "0", [], [
           { id: "ring-upper", vertexIds: ["u1", "u2", "u3", "u4"], ringType: "territory", parentId: null }
         ])
       ],
@@ -240,10 +240,10 @@ describe("Polygon layer validation integration", () => {
         new Vertex("b4", 5, 15)
       ],
       features: [
-        new Polygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
           { id: "ring-a", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }
         ]),
-        new Polygon("poly-b", [createPropertyWithRange(1200, null, "B")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-b", [createPropertyWithRange(1200, null, "B")], "layer-base", "0", [], [
           { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
         ])
       ],
@@ -303,10 +303,10 @@ describe("Polygon layer validation integration", () => {
         new Vertex("b4", 5, 15)
       ],
       features: [
-        new Polygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
           { id: "ring-a", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }
         ]),
-        new Polygon("poly-b", [createPropertyWithRange(1200, null, "B")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-b", [createPropertyWithRange(1200, null, "B")], "layer-base", "0", [], [
           { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
         ])
       ],
@@ -362,10 +362,10 @@ describe("Polygon layer validation integration", () => {
         new Vertex("b4", 5, 15)
       ],
       features: [
-        new Polygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
           { id: "ring-a", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }
         ]),
-        new Polygon("poly-b", [createPropertyWithRange(900, null, "B")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-b", [createPropertyWithRange(900, null, "B")], "layer-base", "0", [], [
           { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
         ])
       ],
@@ -426,10 +426,10 @@ describe("Polygon layer validation integration", () => {
         new Vertex("b4", 5, 15)
       ],
       features: [
-        new Polygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-a", [createPropertyWithRange(1000, 1200, "A")], "layer-base", "0", [], [
           { id: "ring-a", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }
         ]),
-        new Polygon("poly-b", [createPropertyWithRange(900, null, "B")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-b", [createPropertyWithRange(900, null, "B")], "layer-base", "0", [], [
           { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
         ])
       ],
@@ -510,10 +510,10 @@ describe("Polygon layer validation integration", () => {
         new Vertex("c4", 5, 10)
       ],
       features: [
-        new Polygon("parent", [createPropertyWithRange(1000, 1200, "Parent")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("parent", [createPropertyWithRange(1000, 1200, "Parent")], "layer-base", "0", [], [
           { id: "ring-parent", vertexIds: ["p1", "p2", "p3", "p4"], ringType: "territory", parentId: null }
         ]),
-        new Polygon("child", [createPropertyWithRange(1000, 1200, "Child")], "layer-upper", "parent", [], [
+        globalThis.createAnchoredPolygon("child", [createPropertyWithRange(1000, 1200, "Child")], "layer-upper", "parent", [], [
           { id: "ring-child", vertexIds: ["c1", "c2", "c3", "c4"], ringType: "territory", parentId: null }
         ])
       ],
@@ -571,7 +571,7 @@ describe("Polygon layer validation integration", () => {
         new Vertex("h4", 2, 4)
       ],
       features: [
-        new Polygon("poly-with-hole", [createProperty("Outer")], "layer-base", "0", [], [
+        globalThis.createAnchoredPolygon("poly-with-hole", [createProperty("Outer")], "layer-base", "0", [], [
           { id: "outer", vertexIds: ["t1", "t2", "t3", "t4"], ringType: "territory", parentId: null },
           { id: "hole", vertexIds: ["h1", "h2", "h3", "h4"], ringType: "hole", parentId: "outer" }
         ])

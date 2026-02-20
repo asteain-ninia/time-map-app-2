@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    setupFiles: ["./tests/setupAnchoredFactories.js"],
     include: ["tests/**/*.test.js"],
     coverage: {
       reporter: ["text", "html"],

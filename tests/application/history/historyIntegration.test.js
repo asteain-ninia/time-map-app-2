@@ -386,7 +386,7 @@ describe("HistoryService integration", () => {
     };
     const placement = { layerId: "layer-0", parentId: "0", childIds: [] };
     world.features = [
-      new Polygon(
+      globalThis.createAnchoredPolygon(
         "poly-anchor-history",
         [
           new Property(t1000, "Poly", "", {}, t1000, t1200),
@@ -606,7 +606,7 @@ describe("HistoryService integration", () => {
     };
     const placement = { layerId: "layer-0", parentId: "0", childIds: [] };
     world.features = [
-      new Polygon(
+      globalThis.createAnchoredPolygon(
         "poly-anchor-failure",
         [
           new Property(t1000, "Poly", "", {}, t1000, t1200),

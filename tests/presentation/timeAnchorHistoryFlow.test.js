@@ -69,7 +69,7 @@ const createPolygonEditService = () => ({});
 
 const createWorld = (t1000, t2000) => ({
   features: [
-    new Point(
+    globalThis.createAnchoredPoint(
       "point-time-flow",
       ["v-old"],
       [

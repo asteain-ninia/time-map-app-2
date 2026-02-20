@@ -9,7 +9,7 @@ import { editingStyles } from "../../src/infrastructure/rendering/RenderStylePro
 const createProperty = () => new Property(new TimePoint(0), "Line", "", {});
 
 const createLine = (vertexIds = ["v1", "v2"]) =>
-  new Line("line-1", vertexIds, [createProperty()], "layer-1");
+  globalThis.createAnchoredLine("line-1", vertexIds, [createProperty()], "layer-1");
 
 const createRenderer = ({ worldWidth = 360, offsets = [0], provideOffsets = true } = {}) => {
   const drawPointCalls = [];

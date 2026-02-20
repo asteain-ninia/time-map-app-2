@@ -112,7 +112,7 @@ const createSplitAnchorDraft = (endTime = null) =>
 
 const createWorld = (t1000, t2000) => ({
   features: [
-    new Polygon(
+    globalThis.createAnchoredPolygon(
       "poly-1",
       [
         new Property(t1000, "Past", "", {}, t1000, t2000),

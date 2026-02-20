@@ -13,9 +13,9 @@ import { LayerService } from "../../src/domain/services/LayerService.js";
 
 const createProperty = (name = "feature") => new Property(new TimePoint(0), name, "", {});
 const makePoint = (id, vertexId, layerId = "layer-1") =>
-  new Point(id, [vertexId], [createProperty(id)], layerId);
+  globalThis.createAnchoredPoint(id, [vertexId], [createProperty(id)], layerId);
 const makeLine = (id, vertexIds, layerId = "layer-1") =>
-  new Line(id, vertexIds, [createProperty(id)], layerId);
+  globalThis.createAnchoredLine(id, vertexIds, [createProperty(id)], layerId);
 const makeRing = (id, vertexIds, ringType = "territory", parentId = null) => ({
   id,
   vertexIds,
@@ -23,7 +23,7 @@ const makeRing = (id, vertexIds, ringType = "territory", parentId = null) => ({
   parentId
 });
 const makePolygon = ({ id, rings, parentId = "0", childIds = [], layerId = "layer-1" }) =>
-  new Polygon(id, [createProperty(id)], layerId, parentId, childIds, rings);
+  globalThis.createAnchoredPolygon(id, [createProperty(id)], layerId, parentId, childIds, rings);
 
 describe("VertexEditUseCase", () => {
   let world;
@@ -278,7 +278,7 @@ describe("VertexEditUseCase", () => {
       })
     ];
     world.features = [
-      new Polygon(
+      globalThis.createAnchoredPolygon(
         "poly-time",
         [
           new Property(t1000, "poly-time", "", {}, t1000, t1200),
@@ -361,7 +361,7 @@ describe("VertexEditUseCase", () => {
       })
     ];
     world.features = [
-      new Polygon(
+      globalThis.createAnchoredPolygon(
         "poly-existing",
         [
           new Property(t1000, "poly-existing", "", {}, t1000, t1200),
@@ -427,7 +427,7 @@ describe("VertexEditUseCase", () => {
       })
     ];
     world.features = [
-      new Polygon(
+      globalThis.createAnchoredPolygon(
         "poly-multi",
         [
           new Property(t1000, "poly-multi", "", {}, t1000, t1300),
@@ -497,7 +497,7 @@ describe("VertexEditUseCase", () => {
       })
     ];
     world.features = [
-      new Point(
+      globalThis.createAnchoredPoint(
         "point-time",
         ["vp"],
         [
@@ -553,7 +553,7 @@ describe("VertexEditUseCase", () => {
       })
     ];
     world.features = [
-      new Line(
+      globalThis.createAnchoredLine(
         "line-time",
         ["vl1", "vl2", "vl3"],
         [
@@ -615,7 +615,7 @@ describe("VertexEditUseCase", () => {
         placement
       })
     ];
-    const originalFeature = new Polygon(
+    const originalFeature = globalThis.createAnchoredPolygon(
       "poly-fail",
       [
         new Property(t1000, "poly-fail", "", {}, t1000, t1200),

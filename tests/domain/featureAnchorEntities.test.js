@@ -35,7 +35,7 @@ const createAnchor = ({ id, start, end, name, shape, placement }) =>
 
 describe("Feature entities with anchor-canonical shape/placement", () => {
   it("resolves point and line geometry by active anchor time", () => {
-    const point = new Point(
+    const point = globalThis.createAnchoredPoint(
       "point-1",
       ["vp-latest"],
       [createProperty(1000, 1200, "P-1000"), createProperty(1200, null, "P-1200")],
@@ -60,7 +60,7 @@ describe("Feature entities with anchor-canonical shape/placement", () => {
       ]
     );
 
-    const line = new Line(
+    const line = globalThis.createAnchoredLine(
       "line-1",
       ["vl-latest-1", "vl-latest-2"],
       [createProperty(1000, 1200, "L-1000"), createProperty(1200, null, "L-1200")],
@@ -97,7 +97,7 @@ describe("Feature entities with anchor-canonical shape/placement", () => {
   });
 
   it("resolves polygon rings and placement by active anchor time", () => {
-    const polygon = new Polygon(
+    const polygon = globalThis.createAnchoredPolygon(
       "polygon-1",
       [createProperty(1000, 1200, "G-1000"), createProperty(1200, null, "G-1200")],
       "layer-fallback",

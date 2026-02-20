@@ -31,9 +31,9 @@ describe("JSONSerializer", () => {
       new Vertex("v3", 0, 10),
       new Vertex("v4", 5, 5)
     ];
-    const point = new Point("pt-1", ["v1"], [createProperty("P")], "layer-base");
-    const line = new Line("ln-1", ["v1", "v2"], [createProperty("L")], "layer-base");
-    const polygon = new Polygon(
+    const point = globalThis.createAnchoredPoint("pt-1", ["v1"], [createProperty("P")], "layer-base");
+    const line = globalThis.createAnchoredLine("ln-1", ["v1", "v2"], [createProperty("L")], "layer-base");
+    const polygon = globalThis.createAnchoredPolygon(
       "poly-1",
       [createProperty("G", 1900, 1950), createProperty("G2", 1950, null)],
       "layer-base",
@@ -251,21 +251,21 @@ describe("JSONSerializer", () => {
       })
     ];
 
-    const point = new Point(
+    const point = globalThis.createAnchoredPoint(
       "point-time",
       ["vp-2"],
       [createProperty("Point-1000", 1000, 1200), createProperty("Point-1200", 1200, null)],
       "layer-b",
       pointAnchors
     );
-    const line = new Line(
+    const line = globalThis.createAnchoredLine(
       "line-time",
       ["vl-1", "vl-2", "vl-3"],
       [createProperty("Line-1000", 1000, 1200), createProperty("Line-1200", 1200, null)],
       "layer-b",
       lineAnchors
     );
-    const polygon = new Polygon(
+    const polygon = globalThis.createAnchoredPolygon(
       "polygon-time",
       [createProperty("Polygon-1000", 1000, 1200), createProperty("Polygon-1200", 1200, null)],
       "layer-b",

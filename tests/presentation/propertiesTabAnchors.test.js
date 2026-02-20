@@ -13,7 +13,7 @@ function createProperty(startYear, endYear, name, description = '') {
 }
 
 function createFeature(properties) {
-  return new Point('feature-1', ['v1'], properties, 'layer-1');
+  return globalThis.createAnchoredPoint('feature-1', ['v1'], properties, 'layer-1');
 }
 
 function createMapViewModel(feature, currentTime) {
@@ -291,11 +291,11 @@ describe('PropertiesTabView anchor UI', () => {
   });
 
   it('retries save with conflict resolutions selected in dialog', async () => {
-    const featureA = new Point('feature-1', ['v1'], [
+    const featureA = globalThis.createAnchoredPoint('feature-1', ['v1'], [
       createProperty(1000, 1200, 'A-1000'),
       createProperty(1200, null, 'A-1200')
     ], 'layer-1');
-    const featureB = new Point('feature-2', ['v2'], [
+    const featureB = globalThis.createAnchoredPoint('feature-2', ['v2'], [
       createProperty(1000, null, 'B-1000')
     ], 'layer-1');
     const world = {
@@ -362,9 +362,9 @@ describe('PropertiesTabView anchor UI', () => {
   });
 
   it('keeps conflict apply disabled until all conflicts are selected', async () => {
-    const featureA = new Point('feature-1', ['v1'], [createProperty(1000, null, 'A')], 'layer-1');
-    const featureB = new Point('feature-2', ['v2'], [createProperty(1000, null, 'B')], 'layer-1');
-    const featureC = new Point('feature-3', ['v3'], [createProperty(1000, null, 'C')], 'layer-1');
+    const featureA = globalThis.createAnchoredPoint('feature-1', ['v1'], [createProperty(1000, null, 'A')], 'layer-1');
+    const featureB = globalThis.createAnchoredPoint('feature-2', ['v2'], [createProperty(1000, null, 'B')], 'layer-1');
+    const featureC = globalThis.createAnchoredPoint('feature-3', ['v3'], [createProperty(1000, null, 'C')], 'layer-1');
     const world = {
       features: [featureA, featureB, featureC],
       vertices: [
@@ -426,8 +426,8 @@ describe('PropertiesTabView anchor UI', () => {
   });
 
   it('cancels conflict dialog without partial save', async () => {
-    const featureA = new Point('feature-1', ['v1'], [createProperty(1000, null, 'A')], 'layer-1');
-    const featureB = new Point('feature-2', ['v2'], [createProperty(1000, null, 'B')], 'layer-1');
+    const featureA = globalThis.createAnchoredPoint('feature-1', ['v1'], [createProperty(1000, null, 'A')], 'layer-1');
+    const featureB = globalThis.createAnchoredPoint('feature-2', ['v2'], [createProperty(1000, null, 'B')], 'layer-1');
     const world = {
       features: [featureA, featureB],
       vertices: [

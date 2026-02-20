@@ -1,7 +1,6 @@
 // src/domain/entities/Polygon.js
 
 import { Feature } from './Feature.js';
-import { Property } from '../value-objects/Property.js';
 import { FeatureAnchor } from '../value-objects/FeatureAnchor.js';
 // Vertex は直接使わないが、概念として関連
 
@@ -34,40 +33,25 @@ function buildPolygonShape(rings) {
   };
 }
 
-function buildPolygonPlacement(layerId, parentId, childIds) {
-  return {
-    layerId,
-    parentId,
-    childIds: [...childIds]
-  };
-}
-
-function ensurePolygonAnchors(id, properties, layerId, parentId, childIds, rings, anchors) {
-  if (Array.isArray(anchors) && anchors.length > 0) {
-    return anchors.map(anchor => {
-      if (!(anchor instanceof FeatureAnchor)) {
-        return anchor;
-      }
-      const shape = anchor.shape?.type === 'Polygon' && Array.isArray(anchor.shape?.rings)
-        ? anchor.shape
-        : buildPolygonShape(rings);
-      const placement = {
-        ...(anchor.placement || {}),
-        layerId: typeof anchor.placement?.layerId === 'string' ? anchor.placement.layerId : layerId,
-        parentId: typeof anchor.placement?.parentId === 'string' ? anchor.placement.parentId : parentId,
-        childIds: Array.isArray(anchor.placement?.childIds) ? [...anchor.placement.childIds] : [...childIds]
-      };
-      return anchor.withShape(shape).withPlacement(placement);
-    });
+function ensurePolygonAnchors(id, layerId, parentId, childIds, rings, anchors) {
+  if (!Array.isArray(anchors) || anchors.length === 0) {
+    throw new Error(`Polygon ${id} requires at least one FeatureAnchor.`);
   }
-
-  const normalized = Feature._normalizeProperties(id, properties);
-  return normalized.map((property, index) => FeatureAnchor.fromProperty(
-    property,
-    buildPolygonShape(rings),
-    buildPolygonPlacement(layerId, parentId, childIds),
-    `anchor-${id}-${index + 1}`
-  ));
+  return anchors.map(anchor => {
+    if (!(anchor instanceof FeatureAnchor)) {
+      return anchor;
+    }
+    const shape = anchor.shape?.type === 'Polygon' && Array.isArray(anchor.shape?.rings)
+      ? anchor.shape
+      : buildPolygonShape(rings);
+    const placement = {
+      ...(anchor.placement || {}),
+      layerId: typeof anchor.placement?.layerId === 'string' ? anchor.placement.layerId : layerId,
+      parentId: typeof anchor.placement?.parentId === 'string' ? anchor.placement.parentId : parentId,
+      childIds: Array.isArray(anchor.placement?.childIds) ? [...anchor.placement.childIds] : [...childIds]
+    };
+    return anchor.withShape(shape).withPlacement(placement);
+  });
 }
 
 /**
@@ -95,7 +79,6 @@ export class Polygon extends Feature {
     const preparedRings = cloneRings(rings);
     const preparedAnchors = ensurePolygonAnchors(
       id,
-      properties,
       layerId,
       parentId,
       childIds,
@@ -282,17 +265,8 @@ export class Polygon extends Feature {
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withProperties(properties) {
-    const normalized = Feature._normalizeProperties(this._id, properties);
-    const placement = this.getPlacementAt(null);
-    const baseRings = this.getRingsAt(null);
-    const nextAnchors = Feature._syncAnchorsWithProperties(
-      this._id,
-      this._anchors,
-      normalized,
-      buildPolygonShape(baseRings),
-      buildPolygonPlacement(this._layerId, placement.parentId, placement.childIds)
-    );
-    return this.withAnchors(nextAnchors);
+    void properties;
+    throw new Error(`Polygon.withProperties は廃止されました。withAnchors を使用してください。 (id: ${this._id})`);
   }
 
   /**

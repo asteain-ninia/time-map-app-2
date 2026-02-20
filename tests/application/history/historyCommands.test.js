@@ -21,10 +21,10 @@ const createProperty = (year = 1900, name = "Name") =>
   new Property(new TimePoint(year), name, "", {});
 
 const createPoint = (id, vertexId) =>
-  new Point(id, [vertexId], [createProperty()], "layer-1");
+  globalThis.createAnchoredPoint(id, [vertexId], [createProperty()], "layer-1");
 
 const createLine = (id, vertexIds) =>
-  new Line(id, vertexIds, [createProperty()], "layer-1");
+  globalThis.createAnchoredLine(id, vertexIds, [createProperty()], "layer-1");
 
 const createPolygon = (id, rings) => {
   const safeRings = rings.length > 0 ? rings : [
@@ -35,7 +35,7 @@ const createPolygon = (id, rings) => {
       parentId: null
     }
   ];
-  return new Polygon(id, [createProperty()], "layer-1", "0", [], safeRings);
+  return globalThis.createAnchoredPolygon(id, [createProperty()], "layer-1", "0", [], safeRings);
 };
 
 describe("History commands", () => {
@@ -300,7 +300,7 @@ describe("History commands", () => {
 
   it("updates anchor timeline through UpdatePropertiesCommand", async () => {
     const serializer = new HistorySerializer();
-    const baseFeature = new Point("feature-prop", ["vertex-prop"], [createProperty(1500, "Original")], "layer-1");
+    const baseFeature = globalThis.createAnchoredPoint("feature-prop", ["vertex-prop"], [createProperty(1500, "Original")], "layer-1");
     const originalAnchor = baseFeature.anchors[0];
     const updatedAnchor = originalAnchor.withProperty({ name: "Updated" });
 

@@ -61,7 +61,7 @@ describe("MapViewInteractionLogic", () => {
       ]
     };
     const features = [
-      new Line("line-1", ["v1", "v2"], [createProperty()], "layer-1")
+      globalThis.createAnchoredLine("line-1", ["v1", "v2"], [createProperty()], "layer-1")
     ];
     const viewModel = createViewModel(world, features);
     const logic = new MapViewInteractionLogic(
@@ -88,7 +88,7 @@ describe("MapViewInteractionLogic", () => {
       ]
     };
     const features = [
-      new Line("line-1", ["v1", "v2"], [createProperty()], "layer-1")
+      globalThis.createAnchoredLine("line-1", ["v1", "v2"], [createProperty()], "layer-1")
     ];
     const viewModel = createViewModel(world, features);
     const logic = new MapViewInteractionLogic(
@@ -112,7 +112,7 @@ describe("MapViewInteractionLogic", () => {
   it("finds vertices based on the current-time anchor geometry", () => {
     const t1000 = new TimePoint(1000);
     const t2000 = new TimePoint(2000);
-    const point = new Point(
+    const point = globalThis.createAnchoredPoint(
       "point-1",
       ["v-new"],
       [

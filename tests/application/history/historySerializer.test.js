@@ -16,8 +16,8 @@ describe("HistorySerializer", () => {
   it("serializes and deserializes vertices and basic features", () => {
     const vertex = new Vertex("v1", 1, 2);
     const property = createProperty();
-    const point = new Point("pt1", ["v1"], [property], "layer");
-    const line = new Line("ln1", ["v1", "v2"], [property], "layer");
+    const point = globalThis.createAnchoredPoint("pt1", ["v1"], [property], "layer");
+    const line = globalThis.createAnchoredLine("ln1", ["v1", "v2"], [property], "layer");
 
     const serializedVertex = serializer.serialize(vertex);
     expect(serializedVertex).toEqual({ _constructorName: "Vertex", id: "v1", x: 1, y: 2 });
@@ -44,7 +44,7 @@ describe("HistorySerializer", () => {
       { id: "ring-main", vertexIds: ["a", "b", "c"], ringType: "territory", parentId: null },
       { id: "ring-hole", vertexIds: ["d", "e", "f"], ringType: "hole", parentId: "ring-main" }
     ];
-    const polygon = new Polygon("poly", [property], "layer", "0", ["child"], rings);
+    const polygon = globalThis.createAnchoredPolygon("poly", [property], "layer", "0", ["child"], rings);
 
     const serializedPolygon = serializer.serialize(polygon);
     expect(serializedPolygon._constructorName).toBe("Polygon");

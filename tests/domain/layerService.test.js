@@ -18,7 +18,7 @@ const makeRing = (id, vertexIds, ringType = "territory", parentId = null) => ({
 });
 
 const makePolygon = ({ id, layerId, parentId = "0", childIds = [], rings }) =>
-  new Polygon(id, [makeProperty(id)], layerId, parentId, childIds, rings);
+  globalThis.createAnchoredPolygon(id, [makeProperty(id)], layerId, parentId, childIds, rings);
 
 const makeVertex = (id, x, y) => ({ id, x, y });
 

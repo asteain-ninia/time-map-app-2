@@ -5,34 +5,23 @@ function buildLineShape(vertexIds) {
   return { type: 'LineString', vertexIds: [...vertexIds] };
 }
 
-function buildLinePlacement(layerId) {
-  return { layerId };
-}
-
-function ensureLineAnchors(id, vertexIds, properties, layerId, anchors) {
-  if (Array.isArray(anchors) && anchors.length > 0) {
-    return anchors.map(anchor => {
-      if (!(anchor instanceof FeatureAnchor)) {
-        return anchor;
-      }
-      const shape = anchor.shape?.type === 'LineString' && Array.isArray(anchor.shape?.vertexIds)
-        ? anchor.shape
-        : buildLineShape(vertexIds);
-      const placement = {
-        ...(anchor.placement || {}),
-        layerId: typeof anchor.placement?.layerId === 'string' ? anchor.placement.layerId : layerId
-      };
-      return anchor.withShape(shape).withPlacement(placement);
-    });
+function ensureLineAnchors(id, vertexIds, layerId, anchors) {
+  if (!Array.isArray(anchors) || anchors.length === 0) {
+    throw new Error(`Line ${id} requires at least one FeatureAnchor.`);
   }
-
-  const normalized = Feature._normalizeProperties(id, properties);
-  return normalized.map((property, index) => FeatureAnchor.fromProperty(
-    property,
-    buildLineShape(vertexIds),
-    buildLinePlacement(layerId),
-    `anchor-${id}-${index + 1}`
-  ));
+  return anchors.map(anchor => {
+    if (!(anchor instanceof FeatureAnchor)) {
+      return anchor;
+    }
+    const shape = anchor.shape?.type === 'LineString' && Array.isArray(anchor.shape?.vertexIds)
+      ? anchor.shape
+      : buildLineShape(vertexIds);
+    const placement = {
+      ...(anchor.placement || {}),
+      layerId: typeof anchor.placement?.layerId === 'string' ? anchor.placement.layerId : layerId
+    };
+    return anchor.withShape(shape).withPlacement(placement);
+  });
 }
 /**
  * 線情報を表すエンティティ
@@ -55,7 +44,6 @@ export class Line extends Feature {
     const preparedAnchors = ensureLineAnchors(
       id,
       vertexIds,
-      properties,
       layerId,
       anchors
     );
@@ -65,13 +53,16 @@ export class Line extends Feature {
   /**
    * 新しい線情報を作成するファクトリーメソッド
    * @param {string} id - 一意のID
-   * @param {Property[]} properties - プロパティの配列
+   * @param {FeatureAnchor[]} anchors - 履歴アンカー配列
    * @param {Object} geometry - 形状情報 { vertexIds: string[] }
    * @param {string} layerId - レイヤーID
    * @returns {Line} 新しい線情報オブジェクト
    */
-  static create(id, properties, geometry, layerId) {
-    return new Line(id, geometry.vertexIds, properties, layerId);
+  static create(id, anchors, geometry, layerId) {
+    if (!Array.isArray(anchors) || anchors.length === 0) {
+      throw new Error(`Line.create requires at least one FeatureAnchor. (id: ${id})`);
+    }
+    return new Line(id, geometry.vertexIds, [], layerId, anchors);
   }
 
   /**
@@ -103,15 +94,8 @@ export class Line extends Feature {
    * @returns {Line} 新しい線情報オブジェクト
    */
   withProperties(properties) {
-    const normalized = Feature._normalizeProperties(this._id, properties);
-    const nextAnchors = Feature._syncAnchorsWithProperties(
-      this._id,
-      this._anchors,
-      normalized,
-      buildLineShape(this._vertexIds),
-      buildLinePlacement(this._layerId)
-    );
-    return this.withAnchors(nextAnchors);
+    void properties;
+    throw new Error(`Line.withProperties は廃止されました。withAnchors を使用してください。 (id: ${this._id})`);
   }
 
   /**

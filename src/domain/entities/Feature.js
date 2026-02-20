@@ -1,6 +1,5 @@
 // src/domain/entities/Feature.js
 import { TimePoint } from '../value-objects/TimePoint.js';
-import { Property } from '../value-objects/Property.js';
 import { FeatureAnchor } from '../value-objects/FeatureAnchor.js';
 // サブクラスのインポートは循環参照になるためここでは行わない
 
@@ -17,65 +16,22 @@ export class Feature {
    * @param {FeatureAnchor[]|null|undefined} anchors - 履歴アンカー正準データ
    */
   constructor(id, vertexIds, properties, layerId, anchors = null) {
+    void properties;
     this._id = id;
     this._vertexIds = [...vertexIds];
     Object.freeze(this._vertexIds);
 
     const normalizedAnchors = Feature._normalizeAnchors(id, anchors);
+    if (normalizedAnchors.length === 0) {
+      throw new Error(`Feature ${id} requires at least one FeatureAnchor.`);
+    }
     this._anchors = Object.freeze(normalizedAnchors);
-
-    if (normalizedAnchors.length > 0) {
-      this._properties = Object.freeze(
-        normalizedAnchors.map(anchor => anchor.toPropertyProjection())
-      );
-      const latestAnchor = normalizedAnchors[normalizedAnchors.length - 1];
-      const layerFromAnchor = latestAnchor?.placement?.layerId;
-      this._layerId = typeof layerFromAnchor === 'string' ? layerFromAnchor : layerId;
-    } else {
-      const normalizedProperties = Feature._normalizeProperties(id, properties);
-      this._properties = Object.freeze(normalizedProperties); // プロパティ配列自体を凍結する
-      this._layerId = layerId;
-    }
-  }
-
-  /**
-   * プロパティ配列を正規化する
-   * @param {string} featureId - 対象となるFeatureのID
-   * @param {Property[]|Property|null|undefined} properties - 正規化前のプロパティ集合
-   * @returns {Property[]} 時系列順に整列されたプロパティ配列
-   * @private
-   */
-  static _normalizeProperties(featureId, properties) {
-    const arrayInput = Array.isArray(properties)
-      ? properties
-      : properties instanceof Property || properties === null || properties === undefined
-        ? [properties].filter(Boolean)
-        : [];
-
-    const validProperties = [];
-    for (const candidate of arrayInput) {
-      if (candidate instanceof Property) {
-        validProperties.push(candidate);
-      } else if (candidate !== null && candidate !== undefined) {
-        console.warn(
-          `Feature (id: ${featureId}) received a non-Property item in properties and it will be ignored.`,
-          candidate
-        );
-      }
-    }
-
-    if (validProperties.length === 0) {
-      console.warn(
-        `Feature constructor (id: ${featureId}) did not receive any Property instances. Falling back to a default Property.`
-      );
-      const defaultTimePoint = new TimePoint(0);
-      return [
-        new Property(defaultTimePoint, 'Default Property', '', {}, defaultTimePoint, null)
-      ];
-    }
-
-    validProperties.sort((a, b) => Feature._comparePropertiesByStart(a, b));
-    return [...validProperties];
+    this._properties = Object.freeze(
+      normalizedAnchors.map(anchor => anchor.toPropertyProjection())
+    );
+    const latestAnchor = normalizedAnchors[normalizedAnchors.length - 1];
+    const layerFromAnchor = latestAnchor?.placement?.layerId;
+    this._layerId = typeof layerFromAnchor === 'string' ? layerFromAnchor : layerId;
   }
 
   /**
@@ -117,122 +73,6 @@ export class Feature {
       }
     }
     return validAnchors;
-  }
-
-  /**
-   * プロパティの開始時刻で並び替える際の比較関数
-   * @param {Property} left - 比較対象のプロパティA
-   * @param {Property} right - 比較対象のプロパティB
-   * @returns {number} 並び順を表す値
-   * @private
-   */
-  static _comparePropertiesByStart(left, right) {
-    const leftStart = Feature._selectTimeAnchor(left);
-    const rightStart = Feature._selectTimeAnchor(right);
-
-    if (leftStart && rightStart) {
-      if (leftStart.isBefore(rightStart)) return -1;
-      if (rightStart.isBefore(leftStart)) return 1;
-      return 0;
-    }
-
-    if (leftStart) return -1;
-    if (rightStart) return 1;
-    return 0;
-  }
-
-  /**
-   * 比較用の基準時刻を取得する
-   * @param {Property} property - 対象のプロパティ
-   * @returns {TimePoint|null} 比較に使用する開始時刻
-   * @private
-   */
-  static _selectTimeAnchor(property) {
-    return property.startTime || property.timePoint || null;
-  }
-
-  static _buildAnchorId(featureId, start, index) {
-    const month = start?.month ?? 'null';
-    const day = start?.day ?? 'null';
-    return `anchor-${featureId}-${index + 1}-${start?.year ?? 0}-${month}-${day}`;
-  }
-
-  static _resolveTemplateAnchor(existingAnchors, startTime) {
-    if (!Array.isArray(existingAnchors) || existingAnchors.length === 0) {
-      return null;
-    }
-
-    const exact = existingAnchors.find(anchor => anchor.startTime.equals(startTime));
-    if (exact) {
-      return exact;
-    }
-
-    const active = existingAnchors.find(anchor => anchor.isActiveAt(startTime));
-    if (active) {
-      return active;
-    }
-
-    const earlier = existingAnchors
-      .filter(anchor => anchor.startTime.isBefore(startTime))
-      .sort((left, right) => left.startTime.isBefore(right.startTime) ? 1 : -1);
-    if (earlier.length > 0) {
-      return earlier[0];
-    }
-
-    return existingAnchors[0];
-  }
-
-  /**
-   * 既存アンカーを保持しつつ、Property 配列に対応するアンカー列へ同期する。
-   * @param {string} featureId
-   * @param {FeatureAnchor[]} existingAnchors
-   * @param {Property[]} normalizedProperties
-   * @param {Object} fallbackShape
-   * @param {Object} fallbackPlacement
-   * @returns {FeatureAnchor[]}
-   */
-  static _syncAnchorsWithProperties(
-    featureId,
-    existingAnchors,
-    normalizedProperties,
-    fallbackShape,
-    fallbackPlacement
-  ) {
-    const anchors = Array.isArray(existingAnchors) ? existingAnchors : [];
-    const fallbackAnchor = new FeatureAnchor({
-      id: `anchor-${featureId}-fallback`,
-      timeRange: {
-        start: new TimePoint(0),
-        end: null
-      },
-      property: {
-        name: 'Default Property',
-        description: '',
-        attributes: {}
-      },
-      shape: fallbackShape || {},
-      placement: fallbackPlacement || {}
-    });
-
-    return normalizedProperties.map((property, index) => {
-      const start = Feature._selectTimeAnchor(property);
-      const end = property.endTime || null;
-      const exactAnchor = anchors.find(anchor => anchor.startTime.equals(start));
-      const template = exactAnchor || Feature._resolveTemplateAnchor(anchors, start) || fallbackAnchor;
-      const anchorId = exactAnchor ? exactAnchor.id : Feature._buildAnchorId(featureId, start, index);
-
-      return new FeatureAnchor({
-        id: anchorId,
-        timeRange: { start, end },
-        property: {
-          name: property.name,
-          description: property.description,
-          attributes: property.getAttributes()
-        },
-        shape: template.shape,
-        placement: template.placement
-      });
-    });
   }
 
   /**
@@ -317,32 +157,8 @@ export class Feature {
    * @returns {Property|null} 有効なプロパティ。存在しなければnull
    */
   getPropertyAt(timePoint) {
-    if (this._anchors.length > 0) {
-      const anchor = this.getAnchorAt(timePoint);
-      return anchor ? anchor.toPropertyProjection() : null;
-    }
-
-    if (this._properties.length === 0) {
-      return null;
-    }
-
-    if (!(timePoint instanceof TimePoint)) {
-      // Without a valid time, expose the latest definition
-      return this._properties[this._properties.length - 1];
-    }
-
-    let candidate = null;
-    for (const property of this._properties) {
-      const start = Feature._selectTimeAnchor(property);
-      if (start && timePoint.isBefore(start)) {
-        break;
-      }
-      if (property.isActiveAt(timePoint)) {
-        candidate = property;
-      }
-    }
-
-    return candidate;
+    const anchor = this.getAnchorAt(timePoint);
+    return anchor ? anchor.toPropertyProjection() : null;
   }
 
   /**
@@ -351,10 +167,7 @@ export class Feature {
    * @returns {boolean} 存在する場合はtrue
    */
   existsAt(timePoint) {
-    if (this._anchors.length > 0 && timePoint instanceof TimePoint) {
-      return this.getAnchorAt(timePoint) !== null;
-    }
-    return this.getPropertyAt(timePoint) !== null;
+    return this.getAnchorAt(timePoint) !== null;
   }
 
   /**
@@ -400,17 +213,8 @@ export class Feature {
    * @returns {Feature} 新しいFeatureインスタンス (サブクラスでは上書き推奨)
    */
   withProperties(properties) {
-    console.warn(
-      `Feature.withProperties (id: ${this._id}) was called on a Feature instance. Subclasses should override this method to return an instance of their own type.`
-    );
-    const normalized = Feature._normalizeProperties(this._id, properties);
-    const nextAnchors = this._anchors.length > 0
-      ? Feature._syncAnchorsWithProperties(this._id, this._anchors, normalized, {}, { layerId: this._layerId })
-      : null;
-    if (Array.isArray(nextAnchors) && nextAnchors.length > 0) {
-      return this.withAnchors(nextAnchors);
-    }
-    return new Feature(this._id, this._vertexIds, normalized, this._layerId, nextAnchors);
+    void properties;
+    throw new Error('Feature.withProperties は廃止されました。FeatureAnchor を使用してください。');
   }
 
   /**
@@ -419,15 +223,8 @@ export class Feature {
    * @returns {Feature} 追加後のFeatureインスタンス
    */
   addProperty(property) {
-    if (!(property instanceof Property)) {
-      console.error(
-        `Feature.addProperty (id: ${this._id}): Provided property is not an instance of Property. Keeping original properties. Received:`,
-        property
-      );
-      return this;
-    }
-
-    return this.withProperties([...this._properties, property]);
+    void property;
+    throw new Error('Feature.addProperty は廃止されました。FeatureAnchor を使用してください。');
   }
 
   /**

@@ -107,7 +107,7 @@ const createNewAnchorDraft = (name = "Split-Child", end = null) =>
 
 const createWorldWithAnchoredPolygon = (anchors) => ({
   features: [
-    new Polygon(
+    globalThis.createAnchoredPolygon(
       "poly-1",
       anchors.map(anchor => anchor.toPropertyProjection()),
       "layer-0",

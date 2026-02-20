@@ -50,19 +50,19 @@ const createAnchor = ({ id, startYear, endYear, name, vertexId, layerId }) =>
 
 describe("MapViewModel", () => {
   const createWorld = () => {
-    const activeFeature = new Point(
+    const activeFeature = globalThis.createAnchoredPoint(
       "feature-active",
       ["v-visible"],
       [createProperty(0, "Active")],
       "layer-visible"
     );
-    const inactiveFeature = new Point(
+    const inactiveFeature = globalThis.createAnchoredPoint(
       "feature-future",
       ["v-future"],
       [new Property(new TimePoint(200), "Future", "", {}, new TimePoint(200))],
       "layer-visible"
     );
-    const hiddenFeature = new Point(
+    const hiddenFeature = globalThis.createAnchoredPoint(
       "feature-hidden",
       ["v-hidden"],
       [createProperty(0, "Hidden")],
@@ -241,7 +241,7 @@ describe("MapViewModel", () => {
 
   it("filters features by anchor layer on time change and clears stale selection", async () => {
     let currentTime = new TimePoint(0);
-    const shiftingFeature = new Point(
+    const shiftingFeature = globalThis.createAnchoredPoint(
       "feature-shifting-layer",
       ["v-visible"],
       [
@@ -296,7 +296,7 @@ describe("MapViewModel", () => {
 
   it("uses current-time anchor layer when clearing selection on layer visibility change", async () => {
     let currentTime = new TimePoint(150);
-    const shiftingFeature = new Point(
+    const shiftingFeature = globalThis.createAnchoredPoint(
       "feature-layer-toggle",
       ["v-visible"],
       [
@@ -357,7 +357,7 @@ describe("MapViewModel", () => {
 
   it("selects only the current-time anchor vertex for point features", async () => {
     let currentTime = new TimePoint(1000);
-    const shiftingPoint = new Point(
+    const shiftingPoint = globalThis.createAnchoredPoint(
       "feature-point-shift",
       ["v-new"],
       [

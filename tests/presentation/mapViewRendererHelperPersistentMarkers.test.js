@@ -7,7 +7,7 @@ import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
 const createPolygonFeature = () => {
   const property = new Property(new TimePoint(0), "Test", "", {}, null, null);
-  return new Polygon(
+  return globalThis.createAnchoredPolygon(
     "polygon-1",
     [property],
     "layer-1",

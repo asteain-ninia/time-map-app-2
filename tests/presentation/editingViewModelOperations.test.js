@@ -57,8 +57,8 @@ const buildContext = ({ world, updatedFeature, updatedFeatures = null, updateErr
 
 describe("EditingViewModelOperations.updateFeatureProperties", () => {
   it("records history only when property update succeeds", async () => {
-    const beforeFeature = new Point("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
-    const afterFeature = new Point("point-1", ["v1"], [createProperty(1200, "After")], "layer-1");
+    const beforeFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
+    const afterFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1200, "After")], "layer-1");
     const world = {
       features: [beforeFeature],
       vertices: [{ id: "v1", x: 0, y: 0 }],
@@ -86,7 +86,7 @@ describe("EditingViewModelOperations.updateFeatureProperties", () => {
   });
 
   it("does not record history when property update fails validation", async () => {
-    const beforeFeature = new Point("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
+    const beforeFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
     const world = {
       features: [beforeFeature],
       vertices: [{ id: "v1", x: 0, y: 0 }],
@@ -118,10 +118,10 @@ describe("EditingViewModelOperations.updateFeatureProperties", () => {
   });
 
   it("records one batch history command when multiple features are updated", async () => {
-    const beforeFeatureA = new Point("point-a", ["v1"], [createProperty(1000, "A-before")], "layer-1");
-    const beforeFeatureB = new Point("point-b", ["v2"], [createProperty(1000, "B-before")], "layer-1");
-    const afterFeatureA = new Point("point-a", ["v1"], [createProperty(1200, "A-after")], "layer-1");
-    const afterFeatureB = new Point("point-b", ["v2"], [createProperty(1200, "B-after")], "layer-1");
+    const beforeFeatureA = globalThis.createAnchoredPoint("point-a", ["v1"], [createProperty(1000, "A-before")], "layer-1");
+    const beforeFeatureB = globalThis.createAnchoredPoint("point-b", ["v2"], [createProperty(1000, "B-before")], "layer-1");
+    const afterFeatureA = globalThis.createAnchoredPoint("point-a", ["v1"], [createProperty(1200, "A-after")], "layer-1");
+    const afterFeatureB = globalThis.createAnchoredPoint("point-b", ["v2"], [createProperty(1200, "B-after")], "layer-1");
     const world = {
       features: [beforeFeatureA, beforeFeatureB],
       vertices: [

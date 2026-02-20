@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { Feature } from '../../src/domain/entities/Feature.js';
 import { Property } from '../../src/domain/value-objects/Property.js';
 import { TimePoint } from '../../src/domain/value-objects/TimePoint.js';
 
@@ -22,13 +21,13 @@ describe('Feature property lookup', () => {
       null
     );
 
-    const feature = new Feature('feature-1', ['vertex-1'], [mid, early, latest], 'layer-1');
+    const feature = globalThis.createAnchoredFeature('feature-1', ['vertex-1'], [mid, early, latest], 'layer-1');
 
-    expect(feature.getPropertyAt(new TimePoint(1760))).toBe(early);
-    expect(feature.getPropertyAt(new TimePoint(1855))).toBe(mid);
-    expect(feature.getPropertyAt(new TimePoint(1950))).toBe(latest);
+    expect(feature.getPropertyAt(new TimePoint(1760)).name).toBe(early.name);
+    expect(feature.getPropertyAt(new TimePoint(1855)).name).toBe(mid.name);
+    expect(feature.getPropertyAt(new TimePoint(1950)).name).toBe(latest.name);
     expect(feature.getPropertyAt(new TimePoint(1700))).toBeNull();
-    expect(feature.getPropertyAt(null)).toBe(latest);
+    expect(feature.getPropertyAt(null).name).toBe(latest.name);
   });
 
   it('reports existence only when a property covers the given time', () => {
@@ -42,7 +41,7 @@ describe('Feature property lookup', () => {
       null
     );
 
-    const feature = new Feature('feature-2', [], [bounded, openEnded], 'layer-1');
+    const feature = globalThis.createAnchoredFeature('feature-2', [], [bounded, openEnded], 'layer-1');
 
     expect(feature.existsAt(new TimePoint(1825))).toBe(true);
     expect(feature.existsAt(new TimePoint(1799))).toBe(false);
@@ -50,12 +49,9 @@ describe('Feature property lookup', () => {
     expect(feature.existsAt(new TimePoint(2100))).toBe(true);
   });
 
-  it('creates a default property when none are supplied', () => {
-    const feature = new Feature('feature-empty', [], [], 'layer-1');
-    const property = feature.getPropertyAt(new TimePoint(10));
-
-    expect(property).toBeInstanceOf(Property);
-    expect(property.startTime.year).toBe(0);
-    expect(property.endTime).toBeNull();
+  it('requires anchors when creating a feature', () => {
+    expect(() =>
+      globalThis.createAnchoredFeature('feature-empty', [], [], 'layer-1')
+    ).toThrow(/requires non-empty anchors/);
   });
 });

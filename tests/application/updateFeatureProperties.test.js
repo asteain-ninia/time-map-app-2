@@ -87,7 +87,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
   it("updates properties with multiple anchors", async () => {
     const initialProperty = createProperty(1, "Initial");
-    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initialProperty], "layer-1"));
 
     const earlier = createPointAnchor(0, "Earlier");
     const later = createPointAnchor(10, "Later");
@@ -105,14 +105,14 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
   it("rejects empty anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
-    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initialProperty], "layer-1"));
 
     await expect(useCase.execute("point-1", { anchors: [] })).rejects.toThrow(/anchors が必要/);
   });
 
   it("rejects deprecated properties payloads", async () => {
     const initialProperty = createProperty(1, "Initial");
-    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initialProperty], "layer-1"));
 
     await expect(
       useCase.execute("point-1", {
@@ -126,7 +126,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
   it("rejects duplicate anchors in anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
-    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initialProperty], "layer-1"));
 
     const duplicateA = createPointAnchor(1000, "A");
     const duplicateB = createPointAnchor(1000, "B");
@@ -141,7 +141,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
   it("rejects overlapping ranges in anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
-    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initialProperty], "layer-1"));
 
     const past = createPointAnchorWithEnd(1000, 1500, "Past");
     const future = createPointAnchor(1300, "Future");
@@ -155,7 +155,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
   it("rejects non-FeatureAnchor entries in anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
-    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initialProperty], "layer-1"));
 
     await expect(
       useCase.execute("point-1", { anchors: [createPropertyWithEnd(1200, 1300, "Invalid")] })
@@ -166,7 +166,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
   it("allows explicit gaps in anchors updates", async () => {
     const initialProperty = createProperty(1, "Initial");
-    world.features.push(new Point("point-1", ["v1"], [initialProperty], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initialProperty], "layer-1"));
 
     const past = createPointAnchorWithEnd(1000, 1100, "Past");
     const future = createPointAnchor(1300, "Future");
@@ -183,7 +183,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
   it("splits an anchor at edit time and preserves the future anchor", async () => {
     const past = createProperty(1000, "Past");
     const future = createProperty(1300, "Future");
-    world.features.push(new Point("point-1", ["v1"], [past, future], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [past, future], "layer-1"));
 
     const result = await useCase.execute("point-1", {
       propertyEdit: {
@@ -212,7 +212,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
   it("rejects end times that exceed the next future anchor", async () => {
     const past = createProperty(1000, "Past");
     const future = createProperty(1300, "Future");
-    world.features.push(new Point("point-1", ["v1"], [past, future], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [past, future], "layer-1"));
 
     await expect(
       useCase.execute("point-1", {
@@ -231,7 +231,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
   it("rejects edits when start time does not match the timeline time", async () => {
     const past = createProperty(1000, "Past");
     const future = createProperty(1300, "Future");
-    world.features.push(new Point("point-1", ["v1"], [past, future], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [past, future], "layer-1"));
 
     await expect(
       useCase.execute("point-1", {
@@ -250,7 +250,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
   it("updates an existing anchor without creating duplicates", async () => {
     const past = createPropertyWithEnd(1000, 1300, "Past");
     const future = createProperty(1300, "Future");
-    world.features.push(new Point("point-1", ["v1"], [past, future], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [past, future], "layer-1"));
 
     const result = await useCase.execute("point-1", {
       propertyEdit: {
@@ -271,7 +271,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
   it("allows editing past after creating a future anchor first", async () => {
     const initial = createPropertyWithEnd(1000, 2001, "Initial");
-    world.features.push(new Point("point-1", ["v1"], [initial], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initial], "layer-1"));
 
     const afterFutureEdit = await useCase.execute("point-1", {
       propertyEdit: {
@@ -308,7 +308,7 @@ describe("UpdateFeatureUseCase anchor updates", () => {
 
   it("reproduces manual timeline checks for 1000->1300->1100 edits", async () => {
     const initial = createProperty(1000, "A");
-    world.features.push(new Point("point-1", ["v1"], [initial], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [initial], "layer-1"));
 
     await useCase.execute("point-1", {
       propertyEdit: {

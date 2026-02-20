@@ -12,7 +12,7 @@ describe("Polygon", () => {
       { id: "holeA", vertexIds: ["v4", "v5", "v6"], ringType: "hole", parentId: "outer" },
       { id: "enclave", vertexIds: ["v7", "v8", "v9"], ringType: "territory", parentId: "holeA" }
     ];
-    const polygon = new Polygon("poly-1", [createProperty()], "layer-1", "0", [], rings);
+    const polygon = globalThis.createAnchoredPolygon("poly-1", [createProperty()], "layer-1", "0", [], rings);
 
     const updated = polygon.withRemovedRing("holeA");
 
@@ -27,7 +27,7 @@ describe("Polygon", () => {
       { id: "holeB", vertexIds: ["v10", "v11", "v12"], ringType: "hole", parentId: "enclave" },
       { id: "inner", vertexIds: ["v13", "v14", "v15"], ringType: "territory", parentId: "holeB" }
     ];
-    const polygon = new Polygon("poly-2", [createProperty()], "layer-1", "0", [], rings);
+    const polygon = globalThis.createAnchoredPolygon("poly-2", [createProperty()], "layer-1", "0", [], rings);
 
     const updated = polygon.withRemovedRing("holeA");
 
@@ -51,7 +51,7 @@ describe("Polygon", () => {
       { id: "holeB", vertexIds: ["v10", "v11", "v12"], ringType: "hole", parentId: "enclave" },
       { id: "inner", vertexIds: ["v13", "v14", "v15"], ringType: "territory", parentId: "holeB" }
     ];
-    const polygon = new Polygon("poly-3", [createProperty()], "layer-1", "0", [], rings);
+    const polygon = globalThis.createAnchoredPolygon("poly-3", [createProperty()], "layer-1", "0", [], rings);
 
     const updated = polygon.withRemovedRing("outer");
 

@@ -1,41 +1,29 @@
 // src/domain/entities/Point.js
 
 import { Feature } from './Feature.js';
-import { Property } from '../value-objects/Property.js'; // Propertyをインポート
 import { FeatureAnchor } from '../value-objects/FeatureAnchor.js';
 
 function buildPointShape(vertexId) {
   return { type: 'Point', vertexId };
 }
 
-function buildPointPlacement(layerId) {
-  return { layerId };
-}
-
-function ensurePointAnchors(id, vertexId, properties, layerId, anchors) {
-  if (Array.isArray(anchors) && anchors.length > 0) {
-    return anchors.map(anchor => {
-      if (!(anchor instanceof FeatureAnchor)) {
-        return anchor;
-      }
-      const shape = anchor.shape?.type === 'Point' && typeof anchor.shape?.vertexId === 'string'
-        ? anchor.shape
-        : buildPointShape(vertexId);
-      const placement = {
-        ...(anchor.placement || {}),
-        layerId: typeof anchor.placement?.layerId === 'string' ? anchor.placement.layerId : layerId
-      };
-      return anchor.withShape(shape).withPlacement(placement);
-    });
+function ensurePointAnchors(id, vertexId, layerId, anchors) {
+  if (!Array.isArray(anchors) || anchors.length === 0) {
+    throw new Error(`Point ${id} requires at least one FeatureAnchor.`);
   }
-
-  const normalized = Feature._normalizeProperties(id, properties);
-  return normalized.map((property, index) => FeatureAnchor.fromProperty(
-    property,
-    buildPointShape(vertexId),
-    buildPointPlacement(layerId),
-    `anchor-${id}-${index + 1}`
-  ));
+  return anchors.map(anchor => {
+    if (!(anchor instanceof FeatureAnchor)) {
+      return anchor;
+    }
+    const shape = anchor.shape?.type === 'Point' && typeof anchor.shape?.vertexId === 'string'
+      ? anchor.shape
+      : buildPointShape(vertexId);
+    const placement = {
+      ...(anchor.placement || {}),
+      layerId: typeof anchor.placement?.layerId === 'string' ? anchor.placement.layerId : layerId
+    };
+    return anchor.withShape(shape).withPlacement(placement);
+  });
 }
 
 /**
@@ -59,7 +47,6 @@ export class Point extends Feature {
     const preparedAnchors = ensurePointAnchors(
       id,
       vertexIds[0],
-      properties,
       layerId,
       anchors
     );
@@ -91,18 +78,16 @@ export class Point extends Feature {
   /**
    * 新しい点情報を作成するファクトリーメソッド
    * @param {string} id - 一意のID
-   * @param {Property[]} properties - プロパティの配列
+   * @param {FeatureAnchor[]} anchors - 履歴アンカー配列
    * @param {Object} geometry - 形状情報 { vertexId: string }
    * @param {string} layerId - レイヤーID
    * @returns {Point} 新しい点情報オブジェクト
    */
-  static create(id, properties, geometry, layerId) {
-    // properties が要素数1の Property インスタンスの配列であることをバリデーション
-    // (バリデーションは AddFeatureUseCase で行うので、ここではそのまま渡す)
-    // if (!Array.isArray(properties) || properties.length !== 1 || !(properties[0] instanceof Property)) {
-    //     console.warn("Point.create: properties must be an array with a single Property instance. Received:", properties);
-    // }
-    return new Point(id, [geometry.vertexId], properties, layerId);
+  static create(id, anchors, geometry, layerId) {
+    if (!Array.isArray(anchors) || anchors.length === 0) {
+      throw new Error(`Point.create requires at least one FeatureAnchor. (id: ${id})`);
+    }
+    return new Point(id, [geometry.vertexId], [], layerId, anchors);
   }
 
   /**
@@ -131,15 +116,8 @@ export class Point extends Feature {
    * @returns {Point} 新しい点情報オブジェクト
    */
   withProperties(properties) {
-    const normalized = Feature._normalizeProperties(this._id, properties);
-    const nextAnchors = Feature._syncAnchorsWithProperties(
-      this._id,
-      this._anchors,
-      normalized,
-      buildPointShape(this._vertexIds[0]),
-      buildPointPlacement(this._layerId)
-    );
-    return this.withAnchors(nextAnchors);
+    void properties;
+    throw new Error(`Point.withProperties は廃止されました。withAnchors を使用してください。 (id: ${this._id})`);
   }
 
   /**

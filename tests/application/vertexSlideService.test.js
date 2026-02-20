@@ -19,10 +19,10 @@ describe("VertexSlideService", () => {
       { id: "b4", x: 0, y: 10 }
     ];
 
-    const polygonA = new Polygon("poly-a", [property], "layer-1", "0", [], [
+    const polygonA = globalThis.createAnchoredPolygon("poly-a", [property], "layer-1", "0", [], [
       { id: "ring-a", ringType: "territory", parentId: null, vertexIds: ["a1", "a2", "a3"] }
     ]);
-    const polygonB = new Polygon("poly-b", [property], "layer-1", "0", [], [
+    const polygonB = globalThis.createAnchoredPolygon("poly-b", [property], "layer-1", "0", [], [
       { id: "ring-b", ringType: "territory", parentId: null, vertexIds: ["b1", "b2", "b3", "b4"] }
     ]);
 
