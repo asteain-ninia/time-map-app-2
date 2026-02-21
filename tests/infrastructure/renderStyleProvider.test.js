@@ -6,12 +6,20 @@ import {
   getPolygonStyle
 } from "../../src/infrastructure/rendering/RenderStyleProvider.js";
 import { LayerService } from "../../src/domain/services/LayerService.js";
-import { Property } from "../../src/domain/value-objects/Property.js";
+import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
 
+let anchorSeq = 0;
 const createProperty = (styleOverrides = null) => {
+  anchorSeq += 1;
   const attributes = styleOverrides ? { styleOverrides } : {};
-  return new Property(new TimePoint(0), "Feature", "", attributes, new TimePoint(0), null);
+  return new FeatureAnchor({
+    id: `anchor-style-${anchorSeq}`,
+    timeRange: { start: new TimePoint(0), end: null },
+    property: { name: "Feature", description: "", attributes },
+    shape: { type: "Point", vertexId: "v-style" },
+    placement: { layerId: "layer-style" }
+  });
 };
 
 describe("RenderStyleProvider", () => {

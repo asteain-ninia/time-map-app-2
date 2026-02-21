@@ -34,7 +34,7 @@ export class Point extends Feature {
    * 点情報オブジェクトを作成
    * @param {string} id - 一意のID
    * @param {string[]} vertexIds - 頂点IDの配列（通常は単一要素）
-   * @param {Property[]} properties - 時間依存プロパティの配列
+   * @param {*|null|undefined} properties - 互換維持のための未使用引数
    * @param {string} layerId - 所属レイヤーID
    * @param {FeatureAnchor[]|null|undefined} anchors - 履歴アンカー正準データ
    */
@@ -112,7 +112,7 @@ export class Point extends Feature {
 
   /**
    * 新しいプロパティの配列で新インスタンスを作成
-   * @param {Property[]} properties - 新しいプロパティの配列
+   * @param {*|null|undefined} properties - 互換維持のための未使用引数
    * @returns {Point} 新しい点情報オブジェクト
    */
   withProperties(properties) {

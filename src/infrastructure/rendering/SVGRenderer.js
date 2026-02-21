@@ -920,7 +920,7 @@ toWorldY(svgY, viewport) {
 
   /**
    * 点のスタイルを取得
-   * @param {Property} property - プロパティ
+   * @param {FeatureAnchor|Object|null} property - 履歴アンカーまたは属性参照オブジェクト
    * @returns {Object} スタイル情報
    * @private
    */
@@ -930,7 +930,7 @@ toWorldY(svgY, viewport) {
 
   /**
    * 線のスタイルを取得
-   * @param {Property} property - プロパティ
+   * @param {FeatureAnchor|Object|null} property - 履歴アンカーまたは属性参照オブジェクト
    * @returns {Object} スタイル情報
    * @private
    */
@@ -940,7 +940,7 @@ toWorldY(svgY, viewport) {
 
   /**
    * 面のスタイルを取得
-   * @param {Property} property - プロパティ
+   * @param {FeatureAnchor|Object|null} property - 履歴アンカーまたは属性参照オブジェクト
    * @returns {Object} スタイル情報
    * @private
    */

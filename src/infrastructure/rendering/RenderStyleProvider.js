@@ -6,7 +6,7 @@
  * レイヤー個別設定は参照せず、型ごとの既定値 + styleOverrides で解決する。
  * SVGRenderer から利用されるユーティリティ
  * @param {LayerService} layerService
- * @param {Property|null} property
+ * @param {FeatureAnchor|Object|null} property
  * @returns {Object}
  */
 export function getPointStyle(layerService, property) {
@@ -16,7 +16,7 @@ export function getPointStyle(layerService, property) {
 /**
  * 線のスタイルを取得
  * @param {LayerService} layerService
- * @param {Property|null} property
+ * @param {FeatureAnchor|Object|null} property
  * @returns {Object}
  */
 export function getLineStyle(layerService, property) {
@@ -26,7 +26,7 @@ export function getLineStyle(layerService, property) {
 /**
  * 面のスタイルを取得
  * @param {LayerService} layerService
- * @param {Property|null} property
+ * @param {FeatureAnchor|Object|null} property
  * @returns {Object}
  */
 export function getPolygonStyle(layerService, property) {

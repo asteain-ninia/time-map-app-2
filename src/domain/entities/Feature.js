@@ -11,7 +11,7 @@ export class Feature {
    * 地理オブジェクトを作成
    * @param {string} id - 一意のID
    * @param {string[]} vertexIds - 頂点IDの配列
-   * @param {Property[]|Property|null|undefined} properties - 時間依存プロパティの候補
+   * @param {*|null|undefined} properties - 互換維持のための未使用引数
    * @param {string} layerId - 所属レイヤーID
    * @param {FeatureAnchor[]|null|undefined} anchors - 履歴アンカー正準データ
    */
@@ -204,7 +204,7 @@ export class Feature {
    * 新しいプロパティ集合を適用したインスタンスを作成する
    * 注意: このメソッドはサブクラスでオーバーライドされることを強く推奨します。
    *       基底クラスの実装ではサブクラス固有のプロパティが失われる可能性があります。
-   * @param {Property[]|Property|null|undefined} properties - 置き換えるプロパティ集合
+   * @param {*|null|undefined} properties - 互換維持のための未使用引数
    * @returns {Feature} 新しいFeatureインスタンス (サブクラスでは上書き推奨)
    */
   withProperties(properties) {
@@ -214,7 +214,7 @@ export class Feature {
 
   /**
    * プロパティを追加したインスタンスを作成する
-   * @param {Property} property - 追加するプロパティ
+   * @param {*|null|undefined} property - 互換維持のための未使用引数
    * @returns {Feature} 追加後のFeatureインスタンス
    */
   addProperty(property) {

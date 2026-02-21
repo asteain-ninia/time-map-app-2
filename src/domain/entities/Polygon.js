@@ -68,7 +68,7 @@ export class Polygon extends Feature {
   /**
    * 面情報オブジェクトを作成 (リングベース)
    * @param {string} id - 一意のID
-   * @param {Property[]} properties - 時間依存プロパティの配列
+   * @param {*|null|undefined} properties - 互換維持のための未使用引数
    * @param {string} layerId - 所属レイヤーID
    * @param {string} parentId - ドメイン階層における上位領域ID（最上位の場合は "0"）
    * @param {string[]} childIds - ドメイン階層における下位領域IDの配列
@@ -261,7 +261,7 @@ export class Polygon extends Feature {
 
   /**
    * 新しいプロパティの配列で新インスタンスを作成 (Featureクラスのメソッドをオーバーライド)
-   * @param {Property[]} properties - 新しいプロパティの配列
+   * @param {*|null|undefined} properties - 互換維持のための未使用引数
    * @returns {Polygon} 新しい面情報オブジェクト
    */
   withProperties(properties) {
