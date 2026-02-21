@@ -35,6 +35,10 @@ export class SplitPolygonCommand {
 
     const updatedPolygon = this._serializer.deserialize(this._payload.updatedPolygonData);
     const newPolygon = this._serializer.deserialize(this._payload.newPolygonData);
+    const primaryIds = new Set(
+      [updatedPolygon?.id, newPolygon?.id].filter(id => typeof id === 'string' && id !== '')
+    );
+    const additionalUpdatedFeatures = [];
 
     if (updatedPolygon) {
       const index = world.features.findIndex(feature => feature.id === updatedPolygon.id);
@@ -54,9 +58,31 @@ export class SplitPolygonCommand {
       }
     }
 
+    const additionalFeatureChanges = Array.isArray(this._payload.additionalFeatureChanges)
+      ? this._payload.additionalFeatureChanges
+      : [];
+    for (const change of additionalFeatureChanges) {
+      const afterFeatureData = change?.afterFeatureData;
+      if (!afterFeatureData) {
+        continue;
+      }
+      const afterFeature = this._serializer.deserialize(afterFeatureData);
+      if (!afterFeature || primaryIds.has(afterFeature.id)) {
+        continue;
+      }
+      const index = world.features.findIndex(feature => feature.id === afterFeature.id);
+      if (index !== -1) {
+        world.features[index] = afterFeature;
+      } else {
+        world.features.push(afterFeature);
+      }
+      additionalUpdatedFeatures.push(afterFeature);
+    }
+
     await this._worldRepository.saveWorld(world);
     return {
       updatedFeature: updatedPolygon || undefined,
+      updatedFeatures: additionalUpdatedFeatures.length > 0 ? additionalUpdatedFeatures : undefined,
       addedFeature: newPolygon || undefined
     };
   }
@@ -65,6 +91,10 @@ export class SplitPolygonCommand {
     const world = await this._worldRepository.getWorld();
     const originalPolygon = this._serializer.deserialize(this._payload.originalPolygonData);
     const newPolygonId = this._payload.newPolygonData?.id;
+    const primaryIds = new Set(
+      [originalPolygon?.id, newPolygonId].filter(id => typeof id === 'string' && id !== '')
+    );
+    const additionalUpdatedFeatures = [];
 
     if (newPolygonId) {
       world.features = world.features.filter(feature => feature.id !== newPolygonId);
@@ -77,6 +107,27 @@ export class SplitPolygonCommand {
       } else {
         world.features.push(originalPolygon);
       }
+    }
+
+    const additionalFeatureChanges = Array.isArray(this._payload.additionalFeatureChanges)
+      ? this._payload.additionalFeatureChanges
+      : [];
+    for (const change of additionalFeatureChanges) {
+      const beforeFeatureData = change?.beforeFeatureData;
+      if (!beforeFeatureData) {
+        continue;
+      }
+      const beforeFeature = this._serializer.deserialize(beforeFeatureData);
+      if (!beforeFeature || primaryIds.has(beforeFeature.id)) {
+        continue;
+      }
+      const index = world.features.findIndex(feature => feature.id === beforeFeature.id);
+      if (index !== -1) {
+        world.features[index] = beforeFeature;
+      } else {
+        world.features.push(beforeFeature);
+      }
+      additionalUpdatedFeatures.push(beforeFeature);
     }
 
     if (this._payload.addedVerticesData && Array.isArray(this._payload.addedVerticesData)) {
@@ -105,6 +156,7 @@ export class SplitPolygonCommand {
     await this._worldRepository.saveWorld(world);
     return {
       updatedFeature: originalPolygon || undefined,
+      updatedFeatures: additionalUpdatedFeatures.length > 0 ? additionalUpdatedFeatures : undefined,
       deletedFeatureId: newPolygonId || undefined
     };
   }

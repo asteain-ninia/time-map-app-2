@@ -7,6 +7,7 @@ import { Vertex } from '../../../domain/entities/Vertex'; // Vertex をインポ
 import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
 import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
+import { resolvePolygonAnchorConflictsOrThrow } from './polygonAnchorConflictResolution.js';
 import { applyVertexSliding } from '../../services/VertexSlideService.js';
 
 /**
@@ -716,7 +717,7 @@ export class VertexEditUseCase {
    */
   async moveVertices(vertexUpdates, options = undefined) {
     if (options?.editTime instanceof TimePoint) {
-      return this._moveVerticesAtTime(vertexUpdates, options.editTime);
+      return this._moveVerticesAtTime(vertexUpdates, options);
     }
 
     const world = await this._worldRepository.getWorld();
@@ -834,7 +835,12 @@ export class VertexEditUseCase {
     return { updatedVertices, affectedFeatures };
   }
 
-  async _moveVerticesAtTime(vertexUpdates, editTime) {
+  async _moveVerticesAtTime(vertexUpdates, options = undefined) {
+    const editTime = options?.editTime;
+    const conflictResolutions = options?.conflictResolutions;
+    if (!(editTime instanceof TimePoint)) {
+      throw new Error('編集時刻は TimePoint で指定してください。');
+    }
     if (!Array.isArray(vertexUpdates) || vertexUpdates.length === 0) {
       return { updatedVertices: [], affectedFeatures: [], requiresWorldRefresh: false };
     }
@@ -905,7 +911,8 @@ export class VertexEditUseCase {
     }
 
     const updatedFeatures = [...world.features];
-    const historyFeatureChanges = [];
+    const beforeFeaturesById = new Map();
+    const updatedFeatureIdsFromMove = new Set();
     const updatedPolygons = [];
 
     for (const entry of affectedFeatureEntries) {
@@ -919,17 +926,14 @@ export class VertexEditUseCase {
         continue;
       }
       updatedFeatures[entry.index] = afterFeature;
-      historyFeatureChanges.push({
-        featureId: afterFeature.id,
-        beforeFeature,
-        afterFeature
-      });
+      updatedFeatureIdsFromMove.add(afterFeature.id);
+      beforeFeaturesById.set(afterFeature.id, beforeFeature);
       if (afterFeature instanceof Polygon) {
         updatedPolygons.push(afterFeature);
       }
     }
 
-    if (historyFeatureChanges.length === 0) {
+    if (updatedFeatureIdsFromMove.size === 0) {
       return { updatedVertices: [], affectedFeatures: [], requiresWorldRefresh: false };
     }
 
@@ -944,8 +948,39 @@ export class VertexEditUseCase {
       candidateWorld.vertices,
       editTime
     );
+    const conflictResolvedFeatureIds = resolvePolygonAnchorConflictsOrThrow({
+      editedPolygons: updatedPolygons,
+      world: candidateWorld,
+      layerService: this._layerService,
+      geometryService: this._geometryService,
+      conflictResolutions
+    });
+    const finalChangedFeatureIds = new Set(updatedFeatureIdsFromMove);
+    conflictResolvedFeatureIds.forEach(id => finalChangedFeatureIds.add(id));
+    const historyFeatureChanges = [];
+    finalChangedFeatureIds.forEach(featureId => {
+      const beforeFeature = beforeFeaturesById.get(featureId)
+        || world.features.find(feature => feature.id === featureId);
+      const afterFeature = candidateWorld.features.find(feature => feature.id === featureId);
+      if (!beforeFeature || !afterFeature || beforeFeature === afterFeature) {
+        return;
+      }
+      historyFeatureChanges.push({
+        featureId,
+        beforeFeature,
+        afterFeature
+      });
+    });
+
+    if (historyFeatureChanges.length === 0) {
+      return { updatedVertices: [], affectedFeatures: [], requiresWorldRefresh: false };
+    }
+
+    const finalUpdatedPolygons = historyFeatureChanges
+      .map(change => change.afterFeature)
+      .filter(feature => feature instanceof Polygon);
     const constraintError = this._validatePolygonConstraints(
-      updatedPolygons,
+      finalUpdatedPolygons,
       candidateWorld,
       [...movedVertexIds, ...replacementMap.values()]
     );
@@ -954,7 +989,7 @@ export class VertexEditUseCase {
       throw selfIntersectionError || constraintError;
     }
 
-    world.features = updatedFeatures;
+    world.features = candidateWorld.features;
     world.vertices = candidateWorld.vertices;
     await this._worldRepository.saveWorld(world);
 

@@ -145,8 +145,15 @@ export class EditFeatureUseCase {
 
   // --- ポリゴン固有操作 (リングベース移行後は PolygonEditService へ委譲) ---
 
-  async splitPolygon(polygonId, splitPlan, inheritSideIndex, newAnchor, editTime) {
-    return this._splitPolygonUseCase.execute(polygonId, splitPlan, inheritSideIndex, newAnchor, editTime);
+  async splitPolygon(polygonId, splitPlan, inheritSideIndex, newAnchor, editTime, options = undefined) {
+    return this._splitPolygonUseCase.execute(
+      polygonId,
+      splitPlan,
+      inheritSideIndex,
+      newAnchor,
+      editTime,
+      options
+    );
   }
 
   async changePolygonParent(polygonId, newParentId) {

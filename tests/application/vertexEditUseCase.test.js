@@ -592,6 +592,209 @@ describe("VertexEditUseCase", () => {
     expect(world.vertices.find((vertex) => vertex.id === "v3-1100")).toEqual({ id: "v3-1100", x: 5, y: 5 });
   });
 
+  it("returns anchor conflict error when editTime vertex move introduces overlap without resolutions", async () => {
+    const t900 = new TimePoint(900);
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 2, y: 0 },
+      { id: "v3", x: 0, y: 2 },
+      { id: "rv1", x: 3, y: 0 },
+      { id: "rv2", x: 5, y: 0 },
+      { id: "rv3", x: 5, y: 2 },
+      { id: "rv4", x: 3, y: 2 }
+    ];
+    const movePlacement = { layerId: "layer-1", parentId: "0", childIds: [] };
+    const moveShape = {
+      type: "Polygon",
+      rings: [makeRing("ring-move", ["v1", "v2", "v3"])]
+    };
+    const rivalShape = {
+      type: "Polygon",
+      rings: [makeRing("ring-rival", ["rv1", "rv2", "rv3", "rv4"])]
+    };
+    const moveAnchors = [
+      new FeatureAnchor({
+        id: "anchor-move-1000",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "poly-move", description: "", attributes: {} },
+        shape: moveShape,
+        placement: movePlacement
+      }),
+      new FeatureAnchor({
+        id: "anchor-move-1200",
+        timeRange: { start: t1200, end: null },
+        property: { name: "poly-move", description: "", attributes: {} },
+        shape: moveShape,
+        placement: movePlacement
+      })
+    ];
+    const rivalAnchors = [
+      new FeatureAnchor({
+        id: "anchor-rival-900",
+        timeRange: { start: t900, end: null },
+        property: { name: "poly-rival", description: "", attributes: {} },
+        shape: rivalShape,
+        placement: movePlacement
+      })
+    ];
+    world.features = [
+      globalThis.createAnchoredPolygon(
+        "poly-move",
+        [
+          createPropertyWithRange(t1000, t1200, "poly-move"),
+          createPropertyWithRange(t1200, null, "poly-move")
+        ],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-move", ["v1", "v2", "v3"])],
+        moveAnchors
+      ),
+      globalThis.createAnchoredPolygon(
+        "poly-rival",
+        [createPropertyWithRange(t900, null, "poly-rival")],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-rival", ["rv1", "rv2", "rv3", "rv4"])],
+        rivalAnchors
+      )
+    ];
+    vi.spyOn(layerService, "validatePolygonHierarchy").mockImplementation(() => true);
+    vi.spyOn(layerService, "isContainedInHigherLayerPolygon").mockImplementation(() => true);
+    vi.spyOn(layerService, "checkExclusivity").mockImplementation((targetPolygon, polygons) => {
+      if (!Array.isArray(polygons) || polygons.length <= 1) {
+        return true;
+      }
+      const ids = polygons.map(polygon => polygon.id);
+      if (!(ids.includes("poly-move") && ids.includes("poly-rival"))) {
+        return true;
+      }
+      const activeAnchor = Array.isArray(targetPolygon?.anchors) ? targetPolygon.anchors[0] : null;
+      return activeAnchor?.startTime?.year !== 1100;
+    });
+
+    await expect(
+      useCase.moveVertices(
+        [{ vertexId: "v2", newPosition: { x: 4, y: 1 } }],
+        { editTime: t1100 }
+      )
+    ).rejects.toMatchObject({
+      code: "FEATURE_ANCHOR_CONFLICTS"
+    });
+  });
+
+  it("applies conflict resolutions for editTime vertex move and patches history for losing polygon", async () => {
+    const t900 = new TimePoint(900);
+    const t1000 = new TimePoint(1000);
+    const t1100 = new TimePoint(1100);
+    const t1200 = new TimePoint(1200);
+    world.vertices = [
+      { id: "v1", x: 0, y: 0 },
+      { id: "v2", x: 2, y: 0 },
+      { id: "v3", x: 0, y: 2 },
+      { id: "rv1", x: 3, y: 0 },
+      { id: "rv2", x: 5, y: 0 },
+      { id: "rv3", x: 5, y: 2 },
+      { id: "rv4", x: 3, y: 2 }
+    ];
+    const movePlacement = { layerId: "layer-1", parentId: "0", childIds: [] };
+    const moveShape = {
+      type: "Polygon",
+      rings: [makeRing("ring-move", ["v1", "v2", "v3"])]
+    };
+    const rivalShape = {
+      type: "Polygon",
+      rings: [makeRing("ring-rival", ["rv1", "rv2", "rv3", "rv4"])]
+    };
+    const moveAnchors = [
+      new FeatureAnchor({
+        id: "anchor-move-1000",
+        timeRange: { start: t1000, end: t1200 },
+        property: { name: "poly-move", description: "", attributes: {} },
+        shape: moveShape,
+        placement: movePlacement
+      }),
+      new FeatureAnchor({
+        id: "anchor-move-1200",
+        timeRange: { start: t1200, end: null },
+        property: { name: "poly-move", description: "", attributes: {} },
+        shape: moveShape,
+        placement: movePlacement
+      })
+    ];
+    const rivalAnchors = [
+      new FeatureAnchor({
+        id: "anchor-rival-900",
+        timeRange: { start: t900, end: null },
+        property: { name: "poly-rival", description: "", attributes: {} },
+        shape: rivalShape,
+        placement: movePlacement
+      })
+    ];
+    world.features = [
+      globalThis.createAnchoredPolygon(
+        "poly-move",
+        [
+          createPropertyWithRange(t1000, t1200, "poly-move"),
+          createPropertyWithRange(t1200, null, "poly-move")
+        ],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-move", ["v1", "v2", "v3"])],
+        moveAnchors
+      ),
+      globalThis.createAnchoredPolygon(
+        "poly-rival",
+        [createPropertyWithRange(t900, null, "poly-rival")],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-rival", ["rv1", "rv2", "rv3", "rv4"])],
+        rivalAnchors
+      )
+    ];
+    vi.spyOn(layerService, "validatePolygonHierarchy").mockImplementation(() => true);
+    vi.spyOn(layerService, "isContainedInHigherLayerPolygon").mockImplementation(() => true);
+    vi.spyOn(layerService, "checkExclusivity").mockImplementation((targetPolygon, polygons) => {
+      if (!Array.isArray(polygons) || polygons.length <= 1) {
+        return true;
+      }
+      const ids = polygons.map(polygon => polygon.id);
+      if (!(ids.includes("poly-move") && ids.includes("poly-rival"))) {
+        return true;
+      }
+      const activeAnchor = Array.isArray(targetPolygon?.anchors) ? targetPolygon.anchors[0] : null;
+      return activeAnchor?.startTime?.year !== 1100;
+    });
+    generateId.mockReset();
+    generateId.mockReturnValueOnce("v2-1100");
+    generateId.mockReturnValueOnce("anchor-1100");
+
+    const result = await useCase.moveVertices(
+      [{ vertexId: "v2", newPosition: { x: 4, y: 1 } }],
+      {
+        editTime: t1100,
+        conflictResolutions: {
+          "polygon-overlap:poly-move::poly-rival:1100:null:null": { preferFeatureId: "poly-move" }
+        }
+      }
+    );
+
+    expect(result.requiresWorldRefresh).toBe(true);
+    expect(result.historyPatch.featureChanges.map(change => change.featureId)).toEqual(
+      expect.arrayContaining(["poly-move", "poly-rival"])
+    );
+    const rivalAfter = world.features.find(feature => feature.id === "poly-rival");
+    expect(rivalAfter.anchors).toHaveLength(1);
+    expect(rivalAfter.anchors[0].startTime.year).toBe(900);
+    expect(rivalAfter.anchors[0].endTime.equals(t1100)).toBe(true);
+  });
+
   it("moves a point at editTime without mutating other anchors", async () => {
     const t1000 = new TimePoint(1000);
     const t1100 = new TimePoint(1100);

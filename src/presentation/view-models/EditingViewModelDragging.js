@@ -6,6 +6,39 @@ import { AddVertexToEdgeCommand } from '../../application/services/history/comma
 import { MoveVerticesCommand } from '../../application/services/history/commands/MoveVerticesCommand.js';
 import { ShareVerticesCommand } from '../../application/services/history/commands/ShareVerticesCommand.js';
 import { applyVertexSliding, createVertexSlidingContext } from '../../application/services/VertexSlideService.js';
+import { AnchorConflictResolutionDialog } from '../views/sidebar/AnchorConflictResolutionDialog.js';
+
+const MAX_CONFLICT_RETRY_COUNT = 4;
+
+function isAnchorConflictError(error) {
+  return !!(
+    error &&
+    typeof error === 'object' &&
+    error.code === 'FEATURE_ANCHOR_CONFLICTS' &&
+    Array.isArray(error.conflicts)
+  );
+}
+
+function ensureAnchorConflictDialog(context) {
+  if (!context._anchorConflictResolutionDialog) {
+    context._anchorConflictResolutionDialog = new AnchorConflictResolutionDialog();
+  }
+  return context._anchorConflictResolutionDialog;
+}
+
+function formatFeatureLabel(feature, fallbackId, timePoint = null) {
+  if (!feature) {
+    return `ID: ${fallbackId}`;
+  }
+  const anchor = typeof feature.getAnchorAt === 'function'
+    ? feature.getAnchorAt(timePoint)
+    : null;
+  const name = anchor?.name;
+  if (typeof name === 'string' && name.trim() !== '') {
+    return `${name.trim()} (ID: ${fallbackId})`;
+  }
+  return `ID: ${fallbackId}`;
+}
 
 /**
  * 複数の頂点のドラッグを開始
@@ -147,10 +180,44 @@ async function endVerticesDrag(options = {}) {
 
     if (significantMovement) {
       try {
-        const moveOptions = options?.editTime ? { editTime: options.editTime } : undefined;
-        const moveResult = moveOptions
-          ? await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase, moveOptions)
-          : await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase);
+        let moveOptions = options?.editTime ? { editTime: options.editTime } : undefined;
+        let moveResult = null;
+        let retryCount = 0;
+        while (retryCount < MAX_CONFLICT_RETRY_COUNT) {
+          try {
+            moveResult = moveOptions
+              ? await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase, moveOptions)
+              : await this._editFeatureUseCase.moveVertices(vertexUpdatesForUseCase);
+            break;
+          } catch (error) {
+            if (!isAnchorConflictError(error) || !options?.editTime) {
+              throw error;
+            }
+            const worldRepository = this._editFeatureUseCase.getWorldRepository();
+            const world = await worldRepository.getWorld();
+            const dialog = ensureAnchorConflictDialog(this);
+            const conflicts = Array.isArray(error.conflicts) ? error.conflicts : [];
+            const resolveFeatureLabel = (featureId) => {
+              const feature = world.features.find(candidate => String(candidate?.id) === String(featureId));
+              return formatFeatureLabel(feature, String(featureId), options.editTime);
+            };
+            const resolutions = await dialog.show({
+              conflicts,
+              resolveFeatureLabel
+            });
+            if (!resolutions) {
+              throw new Error('競合解決をキャンセルしました。');
+            }
+            moveOptions = {
+              editTime: options.editTime,
+              conflictResolutions: resolutions
+            };
+            retryCount += 1;
+          }
+        }
+        if (!moveResult) {
+          throw new Error('競合解決の再試行回数が上限を超えました。');
+        }
 
         let payload = { updates: historyPayloadUpdates };
         const featureChangesRaw = Array.isArray(moveResult?.historyPatch?.featureChanges)

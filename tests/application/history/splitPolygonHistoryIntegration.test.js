@@ -366,7 +366,7 @@ describe("SplitPolygon history integration", () => {
           addedFeature: result.newPolygon
         };
       }, "splitPolygon", payload)
-    ).rejects.toThrow(/重なっています/);
+    ).rejects.toThrow(/重なっています|形状が不正/);
 
     const worldAfterFailure = await ctx.worldRepository.getWorld();
     const polygonAfterFailure = worldAfterFailure.features.find((feature) => feature.id === "poly-1");

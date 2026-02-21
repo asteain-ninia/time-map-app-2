@@ -2,6 +2,7 @@ import { Polygon } from '../../../domain/entities/Polygon.js';
 import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor.js';
 import { TimePoint } from '../../../domain/value-objects/TimePoint.js';
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
+import { resolvePolygonAnchorConflictsOrThrow } from './polygonAnchorConflictResolution.js';
 
 export class SplitPolygonUseCase {
   constructor(worldRepository, geometryService, layerService, generateId) {
@@ -11,7 +12,7 @@ export class SplitPolygonUseCase {
     this._generateId = generateId;
   }
 
-  async execute(polygonId, splitPlan, inheritSideIndex, newAnchor, editTime) {
+  async execute(polygonId, splitPlan, inheritSideIndex, newAnchor, editTime, options = undefined) {
     if (!polygonId) {
       throw new Error('分割対象のポリゴンIDが指定されていません。');
     }
@@ -25,6 +26,9 @@ export class SplitPolygonUseCase {
       throw new Error('分割時刻は TimePoint で指定してください。');
     }
     const inheritIndex = inheritSideIndex === 1 ? 1 : 0;
+    const conflictResolutions = options && typeof options === 'object'
+      ? options.conflictResolutions
+      : undefined;
 
     const world = await this._worldRepository.getWorld();
     const originalVerticesSnapshot = world.vertices.map(vertex => ({ id: vertex.id, x: vertex.x, y: vertex.y }));
@@ -103,21 +107,38 @@ export class SplitPolygonUseCase {
       world.features[polygonIndex] = updatedPolygon;
       world.features.push(newPolygon);
 
-      ensurePolygonLayerConstraints(updatedPolygon, world, this._layerService, this._geometryService);
-      ensurePolygonLayerConstraints(newPolygon, world, this._layerService, this._geometryService);
+      const conflictResolvedFeatureIds = resolvePolygonAnchorConflictsOrThrow({
+        editedPolygons: [updatedPolygon, newPolygon],
+        world,
+        layerService: this._layerService,
+        geometryService: this._geometryService,
+        conflictResolutions
+      });
+
+      const refreshedUpdatedPolygon = world.features.find(feature => feature.id === updatedPolygon.id) || updatedPolygon;
+      const refreshedNewPolygon = world.features.find(feature => feature.id === newPolygon.id) || newPolygon;
+      ensurePolygonLayerConstraints(refreshedUpdatedPolygon, world, this._layerService, this._geometryService);
+      ensurePolygonLayerConstraints(refreshedNewPolygon, world, this._layerService, this._geometryService);
 
       await this._worldRepository.saveWorld(world);
+
+      const updatedFeatureIds = new Set([refreshedUpdatedPolygon.id, refreshedNewPolygon.id]);
+      conflictResolvedFeatureIds.forEach(id => updatedFeatureIds.add(id));
+      const updatedFeatures = [...updatedFeatureIds]
+        .map(id => world.features.find(feature => feature.id === id))
+        .filter(Boolean);
+
+      return {
+        updatedPolygon: refreshedUpdatedPolygon,
+        newPolygon: refreshedNewPolygon,
+        addedVerticesData,
+        updatedFeatures: updatedFeatures.length > 0 ? updatedFeatures : undefined
+      };
     } catch (error) {
       world.vertices = originalVerticesSnapshot.map(vertex => ({ id: vertex.id, x: vertex.x, y: vertex.y }));
       world.features = originalFeaturesSnapshot;
       throw error;
     }
-
-    return {
-      updatedPolygon,
-      newPolygon,
-      addedVerticesData
-    };
   }
 
   _assertSplittablePolygon(polygon) {
