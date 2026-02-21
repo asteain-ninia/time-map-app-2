@@ -342,7 +342,10 @@ export class PropertiesTabView {
         throw new Error('履歴アンカーが存在しないため削除できません。');
       }
       const deletionPlan = buildAnchorDeletionPlan(feature.anchors, getAnchorKey(selectedAnchorStart));
-      await this._editingViewModel.updateFeatureProperties(feature.id, deletionPlan.updatedAnchors);
+      await this._updateFeaturePropertiesWithConflictResolution(feature.id, {
+        anchors: deletionPlan.updatedAnchors,
+        conflictResolutions: {}
+      });
       this._setSelectedAnchorKey(feature.id, deletionPlan.nextSelectionKey);
       alert('履歴アンカーを削除しました。');
     } catch (error) {

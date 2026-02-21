@@ -209,7 +209,8 @@ describe('PropertiesTabView anchor UI', () => {
     deleteAnchorButton.click();
     await flushAsync();
 
-    const [, updatedAnchors] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    const [, payload] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    const updatedAnchors = payload.anchors;
     expect(Array.isArray(updatedAnchors)).toBe(true);
     expect(updatedAnchors.map(anchor => anchor.startTime.year)).toEqual([1000, 1300]);
     expect(updatedAnchors[0].endTime.equals(new TimePoint(1300))).toBe(true);
@@ -230,7 +231,8 @@ describe('PropertiesTabView anchor UI', () => {
     getButtonByText(parent, '選択アンカー削除').click();
     await flushAsync();
 
-    const [, updatedAnchors] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    const [, payload] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    const updatedAnchors = payload.anchors;
     expect(updatedAnchors[0].endTime.equals(new TimePoint(1050))).toBe(true);
     expect(updatedAnchors[1].startTime.equals(new TimePoint(1300))).toBe(true);
   });
@@ -250,7 +252,8 @@ describe('PropertiesTabView anchor UI', () => {
     getButtonByText(parent, '選択アンカー削除').click();
     await flushAsync();
 
-    const [, updatedAnchors] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    const [, payload] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    const updatedAnchors = payload.anchors;
     expect(updatedAnchors.map(anchor => anchor.startTime.year)).toEqual([1100, 1300]);
   });
 
@@ -269,9 +272,80 @@ describe('PropertiesTabView anchor UI', () => {
     getButtonByText(parent, '選択アンカー削除').click();
     await flushAsync();
 
-    const [, updatedAnchors] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    const [, payload] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    const updatedAnchors = payload.anchors;
     expect(updatedAnchors.map(anchor => anchor.startTime.year)).toEqual([1000, 1100]);
     expect(updatedAnchors[1].endTime).toBeNull();
+  });
+
+  it('retries anchor deletion with conflict resolutions selected in dialog', async () => {
+    const featureA = globalThis.createAnchoredPoint('feature-1', ['v1'], [
+      createProperty(1000, 1100, 'A-1000'),
+      createProperty(1100, 1300, 'A-1100'),
+      createProperty(1300, null, 'A-1300')
+    ], 'layer-1');
+    const featureB = globalThis.createAnchoredPoint('feature-2', ['v2'], [
+      createProperty(1000, null, 'B-1000')
+    ], 'layer-1');
+    const world = {
+      features: [featureA, featureB],
+      vertices: [
+        { id: 'v1', x: 0, y: 0 },
+        { id: 'v2', x: 1, y: 1 }
+      ],
+      layers: [{ id: 'layer-1', name: 'Layer', order: 0, visible: true, opacity: 1 }]
+    };
+    const mapViewModel = {
+      getSelectionContextFeature: () => featureA,
+      getSelectedFeatureIds: () => new Set([featureA.id]),
+      getSelectedVertexIds: () => new Set(),
+      getVertexSelectionOwnerIds: () => new Set(),
+      getCurrentTime: () => new TimePoint(1100),
+      getCalendarConfig: () => ({ monthsPerYear: 12 }),
+      getDaysInMonth: () => 31,
+      createTimePoint: (year, month = null, day = null) => new TimePoint(year, month, day),
+      getFeatures: () => [featureA, featureB],
+      getWorld: () => world
+    };
+    const conflictError = new Error('同一レイヤー上の面情報が重なっています。解決方針を指定してください。');
+    conflictError.code = 'FEATURE_ANCHOR_CONFLICTS';
+    conflictError.conflicts = [{
+      id: 'polygon-overlap:feature-1::feature-2:1200:null:null',
+      timeLabel: '1200',
+      featureIdA: 'feature-1',
+      featureIdB: 'feature-2'
+    }];
+    const editingViewModel = {
+      updateFeatureProperties: vi.fn()
+        .mockRejectedValueOnce(conflictError)
+        .mockResolvedValueOnce(featureA),
+      deleteFeature: vi.fn(async () => {})
+    };
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getButtonByIncludedText(parent, 'A-1100').click();
+    getButtonByText(parent, '選択アンカー削除').click();
+    await flushAsync();
+
+    const dialog = document.querySelector('.anchor-conflict-resolution-dialog');
+    expect(dialog).not.toBeNull();
+    const preferredRadio = dialog.querySelector('input[type="radio"][value="feature-1"]');
+    preferredRadio.click();
+    const applyButton = [...dialog.querySelectorAll('button')]
+      .find(button => button.textContent.includes('解決を適用'));
+    applyButton.click();
+    await flushAsync();
+
+    expect(editingViewModel.updateFeatureProperties).toHaveBeenCalledTimes(2);
+    const firstPayload = editingViewModel.updateFeatureProperties.mock.calls[0][1];
+    expect(Array.isArray(firstPayload.anchors)).toBe(true);
+    expect(firstPayload.conflictResolutions).toEqual({});
+    const secondPayload = editingViewModel.updateFeatureProperties.mock.calls[1][1];
+    expect(secondPayload.conflictResolutions).toEqual({
+      'polygon-overlap:feature-1::feature-2:1200:null:null': { preferFeatureId: 'feature-1' }
+    });
+    expect(alertSpy).toHaveBeenCalledWith('履歴アンカーを削除しました。');
   });
 
   it('shows save failure message when timeline validation rejects end time', async () => {

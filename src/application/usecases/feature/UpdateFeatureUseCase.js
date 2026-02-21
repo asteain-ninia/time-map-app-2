@@ -92,6 +92,10 @@ export class UpdateFeatureUseCase {
     const timelineEditPayload = updates.anchorEdit || updates.propertyEdit || null;
     const hasAnchorsUpdate = Object.prototype.hasOwnProperty.call(updates, 'anchors');
     const timelineReplacePayload = hasAnchorsUpdate ? updates.anchors : null;
+    const hasAnchorConflictResolutions = Object.prototype.hasOwnProperty.call(updates, 'conflictResolutions');
+    const anchorConflictResolutions = hasAnchorConflictResolutions
+      ? updates.conflictResolutions
+      : undefined;
     if (updates.anchorEdit && updates.propertyEdit) {
       throw new Error('anchorEdit と propertyEdit は同時に指定できません。');
     }
@@ -222,11 +226,16 @@ export class UpdateFeatureUseCase {
 
     if (updatedFeature instanceof Polygon) {
       try {
-        if (timelineEditPayload) {
+        const shouldResolveAnchorConflicts = !!timelineEditPayload
+          || (hasAnchorsUpdate && hasAnchorConflictResolutions);
+        if (shouldResolveAnchorConflicts) {
+          const conflictResolutions = timelineEditPayload
+            ? timelineEditPayload.conflictResolutions
+            : anchorConflictResolutions;
           const resolvedIds = this._resolvePropertyEditConflictsOrThrow(
             updatedFeature,
             world,
-            timelineEditPayload.conflictResolutions
+            conflictResolutions
           );
           resolvedIds.forEach(id => conflictResolvedFeatureIds.add(id));
           const refreshedFeature = world.features.find(feature => feature.id === featureId);

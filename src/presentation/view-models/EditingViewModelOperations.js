@@ -205,27 +205,43 @@ async function unlinkSharedVertex(vertexId, featureId) {
  * @returns {Promise<Object>} 更新された地物インスタンス
  */
 async function updateFeatureProperties(featureId, propertyUpdate) {
-  let updatePayload = null;
-  if (Array.isArray(propertyUpdate)) {
-    if (propertyUpdate.length === 0) {
+  const buildAnchorsUpdatePayload = (anchors, includeConflictResolutions, conflictResolutions) => {
+    if (!Array.isArray(anchors) || anchors.length === 0) {
       throw new Error('Invalid anchors format. Expected a non-empty anchor timeline array.');
     }
-    const isAnchorArray = propertyUpdate.every(entry => entry instanceof FeatureAnchor);
+    const isAnchorArray = anchors.every(entry => entry instanceof FeatureAnchor);
     if (!isAnchorArray) {
       throw new Error('Invalid anchors format. Expected an array of FeatureAnchor instances.');
     }
-    updatePayload = { anchors: propertyUpdate };
+    const payload = { anchors };
+    if (includeConflictResolutions) {
+      payload.conflictResolutions = conflictResolutions;
+    }
+    return payload;
+  };
+
+  let updatePayload = null;
+  if (Array.isArray(propertyUpdate)) {
+    updatePayload = buildAnchorsUpdatePayload(propertyUpdate, false, undefined);
   } else if (propertyUpdate && typeof propertyUpdate === 'object') {
-    updatePayload = {
-      propertyEdit: {
-        editTime: propertyUpdate.editTime,
-        startTime: propertyUpdate.startTime,
-        endTime: propertyUpdate.endTime,
-        name: propertyUpdate.name,
-        description: propertyUpdate.description,
-        conflictResolutions: propertyUpdate.conflictResolutions
-      }
-    };
+    if (Object.prototype.hasOwnProperty.call(propertyUpdate, 'anchors')) {
+      updatePayload = buildAnchorsUpdatePayload(
+        propertyUpdate.anchors,
+        Object.prototype.hasOwnProperty.call(propertyUpdate, 'conflictResolutions'),
+        propertyUpdate.conflictResolutions
+      );
+    } else {
+      updatePayload = {
+        propertyEdit: {
+          editTime: propertyUpdate.editTime,
+          startTime: propertyUpdate.startTime,
+          endTime: propertyUpdate.endTime,
+          name: propertyUpdate.name,
+          description: propertyUpdate.description,
+          conflictResolutions: propertyUpdate.conflictResolutions
+        }
+      };
+    }
   } else {
     throw new Error("Invalid propertyUpdate format.");
   }

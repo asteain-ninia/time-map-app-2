@@ -334,4 +334,44 @@ describe("UpdateFeatureUseCase anchor updates", () => {
     expectNameAt(afterPastEdit.feature, 1300, "B");
     expectNameAt(afterPastEdit.feature, 1350, "B");
   });
+
+  it("routes polygon anchors updates with conflictResolutions through conflict resolver", async () => {
+    const rings = [{ id: "ring-1", vertexIds: ["v1", "v2", "v3"], ringType: "territory", parentId: null }];
+    const baseAnchor = new FeatureAnchor({
+      id: "anchor-poly-1000",
+      timeRange: { start: new TimePoint(1000), end: null },
+      property: { name: "Poly", description: "", attributes: {} },
+      shape: { type: "Polygon", rings },
+      placement: { layerId: "layer-1", parentId: "0", childIds: [] }
+    });
+    world.features.push(
+      globalThis.createAnchoredPolygon("poly-1", [baseAnchor], "layer-1", "0", [], rings)
+    );
+
+    const nextAnchor = new FeatureAnchor({
+      id: "anchor-poly-1000-updated",
+      timeRange: { start: new TimePoint(1000), end: null },
+      property: { name: "Poly Updated", description: "", attributes: {} },
+      shape: { type: "Polygon", rings },
+      placement: { layerId: "layer-1", parentId: "0", childIds: [] }
+    });
+    const conflictResolutions = {
+      "polygon-overlap:poly-1::poly-2:1200:null:null": { preferFeatureId: "poly-1" }
+    };
+    const resolveSpy = vi.fn(() => new Set());
+    const placementSpy = vi.fn();
+    useCase._resolvePropertyEditConflictsOrThrow = resolveSpy;
+    useCase._ensurePolygonPlacementOrRollback = placementSpy;
+
+    const result = await useCase.execute("poly-1", {
+      anchors: [nextAnchor],
+      conflictResolutions
+    });
+
+    expect(result.feature.anchors).toHaveLength(1);
+    expect(result.feature.anchors[0].name).toBe("Poly Updated");
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(resolveSpy.mock.calls[0][2]).toEqual(conflictResolutions);
+    expect(placementSpy).toHaveBeenCalledTimes(1);
+  });
 });

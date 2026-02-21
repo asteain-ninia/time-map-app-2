@@ -136,6 +136,39 @@ describe("EditingViewModelOperations.updateFeatureProperties", () => {
     expect(eventBus.publish).not.toHaveBeenCalledWith("FeatureUpdated", expect.anything());
   });
 
+  it("forwards anchors update payload with conflictResolutions", async () => {
+    const beforeFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
+    const afterFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1200, "After")], "layer-1");
+    const world = {
+      features: [beforeFeature],
+      vertices: [{ id: "v1", x: 0, y: 0 }],
+      layers: [{ id: "layer-1", order: 0 }],
+      metadata: {}
+    };
+    const { context, editFeatureUseCase, historyService, eventBus } = buildContext({
+      world,
+      updatedFeature: afterFeature
+    });
+
+    const conflictResolutions = {
+      "polygon-overlap:point-1::point-2:1200:null:null": { preferFeatureId: "point-1" }
+    };
+    const result = await operationMethods.updateFeatureProperties.call(context, "point-1", {
+      anchors: afterFeature.anchors,
+      conflictResolutions
+    });
+
+    expect(result).toBe(afterFeature);
+    expect(editFeatureUseCase.updateFeature).toHaveBeenCalledTimes(1);
+    expect(editFeatureUseCase.updateFeature).toHaveBeenCalledWith("point-1", {
+      anchors: afterFeature.anchors,
+      conflictResolutions
+    });
+    expect(historyService._stackManager.pushUndo).toHaveBeenCalledTimes(1);
+    expect(historyService._notifyHistoryChanged).toHaveBeenCalledTimes(1);
+    expect(eventBus.publish).toHaveBeenCalledWith("FeatureUpdated", { feature: afterFeature });
+  });
+
   it("records one batch history command when multiple features are updated", async () => {
     const beforeFeatureA = globalThis.createAnchoredPoint("point-a", ["v1"], [createProperty(1000, "A-before")], "layer-1");
     const beforeFeatureB = globalThis.createAnchoredPoint("point-b", ["v2"], [createProperty(1000, "B-before")], "layer-1");
