@@ -243,6 +243,186 @@ describe("VertexEditUseCase", () => {
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
 
+  it("returns anchor conflict error when editTime vertex delete introduces overlap without resolutions", async () => {
+    const t900 = new TimePoint(900);
+    const t1000 = new TimePoint(1000);
+    world.vertices = [
+      { id: "a1", x: 0, y: 0 },
+      { id: "a2", x: 8, y: 0 },
+      { id: "a3", x: 8, y: 8 },
+      { id: "a4", x: 4, y: 4 },
+      { id: "a5", x: 0, y: 8 },
+      { id: "b1", x: 3, y: 6 },
+      { id: "b2", x: 5, y: 6 },
+      { id: "b3", x: 5, y: 7 },
+      { id: "b4", x: 3, y: 7 }
+    ];
+    const placement = { layerId: "layer-1", parentId: "0", childIds: [] };
+    const deleteShape = {
+      type: "Polygon",
+      rings: [makeRing("ring-a", ["a1", "a2", "a3", "a4", "a5"])]
+    };
+    const rivalShape = {
+      type: "Polygon",
+      rings: [makeRing("ring-b", ["b1", "b2", "b3", "b4"])]
+    };
+    const deleteAnchors = [
+      new FeatureAnchor({
+        id: "anchor-delete-1000",
+        timeRange: { start: t1000, end: null },
+        property: { name: "poly-delete", description: "", attributes: {} },
+        shape: deleteShape,
+        placement
+      })
+    ];
+    const rivalAnchors = [
+      new FeatureAnchor({
+        id: "anchor-rival-900",
+        timeRange: { start: t900, end: null },
+        property: { name: "poly-rival", description: "", attributes: {} },
+        shape: rivalShape,
+        placement
+      })
+    ];
+    world.features = [
+      globalThis.createAnchoredPolygon(
+        "poly-delete",
+        [createPropertyWithRange(t1000, null, "poly-delete")],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-a", ["a1", "a2", "a3", "a4", "a5"])],
+        deleteAnchors
+      ),
+      globalThis.createAnchoredPolygon(
+        "poly-rival",
+        [createPropertyWithRange(t900, null, "poly-rival")],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-b", ["b1", "b2", "b3", "b4"])],
+        rivalAnchors
+      )
+    ];
+    vi.spyOn(layerService, "validatePolygonHierarchy").mockImplementation(() => true);
+    vi.spyOn(layerService, "isContainedInHigherLayerPolygon").mockImplementation(() => true);
+    vi.spyOn(layerService, "checkExclusivity").mockImplementation((targetPolygon, polygons) => {
+      if (!Array.isArray(polygons) || polygons.length <= 1) {
+        return true;
+      }
+      const ids = polygons.map((polygon) => polygon.id);
+      if (!(ids.includes("poly-delete") && ids.includes("poly-rival"))) {
+        return true;
+      }
+      const activeAnchor = Array.isArray(targetPolygon?.anchors) ? targetPolygon.anchors[0] : null;
+      return activeAnchor?.startTime?.year !== 1000;
+    });
+
+    await expect(
+      useCase.deleteVertices(["a4"], { editTime: t1000 })
+    ).rejects.toMatchObject({
+      code: "FEATURE_ANCHOR_CONFLICTS"
+    });
+
+    const polygonAfterFailure = world.features.find((feature) => feature.id === "poly-delete");
+    expect(polygonAfterFailure.getAnchorAt(t1000).shape.rings[0].vertexIds).toEqual(["a1", "a2", "a3", "a4", "a5"]);
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
+  it("applies conflict resolutions for editTime vertex delete and tracks resolved polygons", async () => {
+    const t900 = new TimePoint(900);
+    const t1000 = new TimePoint(1000);
+    world.vertices = [
+      { id: "a1", x: 0, y: 0 },
+      { id: "a2", x: 8, y: 0 },
+      { id: "a3", x: 8, y: 8 },
+      { id: "a4", x: 4, y: 4 },
+      { id: "a5", x: 0, y: 8 },
+      { id: "b1", x: 3, y: 6 },
+      { id: "b2", x: 5, y: 6 },
+      { id: "b3", x: 5, y: 7 },
+      { id: "b4", x: 3, y: 7 }
+    ];
+    const placement = { layerId: "layer-1", parentId: "0", childIds: [] };
+    const deleteShape = {
+      type: "Polygon",
+      rings: [makeRing("ring-a", ["a1", "a2", "a3", "a4", "a5"])]
+    };
+    const rivalShape = {
+      type: "Polygon",
+      rings: [makeRing("ring-b", ["b1", "b2", "b3", "b4"])]
+    };
+    const deleteAnchors = [
+      new FeatureAnchor({
+        id: "anchor-delete-1000",
+        timeRange: { start: t1000, end: null },
+        property: { name: "poly-delete", description: "", attributes: {} },
+        shape: deleteShape,
+        placement
+      })
+    ];
+    const rivalAnchors = [
+      new FeatureAnchor({
+        id: "anchor-rival-900",
+        timeRange: { start: t900, end: null },
+        property: { name: "poly-rival", description: "", attributes: {} },
+        shape: rivalShape,
+        placement
+      })
+    ];
+    world.features = [
+      globalThis.createAnchoredPolygon(
+        "poly-delete",
+        [createPropertyWithRange(t1000, null, "poly-delete")],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-a", ["a1", "a2", "a3", "a4", "a5"])],
+        deleteAnchors
+      ),
+      globalThis.createAnchoredPolygon(
+        "poly-rival",
+        [createPropertyWithRange(t900, null, "poly-rival")],
+        "layer-1",
+        "0",
+        [],
+        [makeRing("ring-b", ["b1", "b2", "b3", "b4"])],
+        rivalAnchors
+      )
+    ];
+    vi.spyOn(layerService, "validatePolygonHierarchy").mockImplementation(() => true);
+    vi.spyOn(layerService, "isContainedInHigherLayerPolygon").mockImplementation(() => true);
+    vi.spyOn(layerService, "checkExclusivity").mockImplementation((targetPolygon, polygons) => {
+      if (!Array.isArray(polygons) || polygons.length <= 1) {
+        return true;
+      }
+      const ids = polygons.map((polygon) => polygon.id);
+      if (!(ids.includes("poly-delete") && ids.includes("poly-rival"))) {
+        return true;
+      }
+      const activeAnchor = Array.isArray(targetPolygon?.anchors) ? targetPolygon.anchors[0] : null;
+      return activeAnchor?.startTime?.year !== 1000;
+    });
+
+    const conflictResolutions = {
+      "polygon-overlap:poly-delete::poly-rival:1000:null:null": { preferFeatureId: "poly-delete" }
+    };
+    const result = await useCase.deleteVertices(["a4"], {
+      editTime: t1000,
+      conflictResolutions
+    });
+
+    expect(result.deletedVertexIds).toEqual(["a4"]);
+    expect(result.updatedFeatureIds).toEqual(expect.arrayContaining(["poly-delete", "poly-rival"]));
+    expect(result.deletedFeatureIds).toEqual([]);
+    const polygonAfter = world.features.find((feature) => feature.id === "poly-delete");
+    expect(polygonAfter.getAnchorAt(t1000).shape.rings[0].vertexIds).toEqual(["a1", "a2", "a3", "a5"]);
+    const rivalAfter = world.features.find((feature) => feature.id === "poly-rival");
+    const rivalAnchor = rivalAfter.anchors.find(anchor => anchor.startTime.equals(t900));
+    expect(rivalAnchor.endTime.equals(t1000)).toBe(true);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
   it("moves a vertex and reports affected polygons", async () => {
     world.vertices = [
       { id: "v1", x: 0, y: 0 },

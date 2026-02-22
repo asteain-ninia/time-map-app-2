@@ -341,6 +341,44 @@ describe("History commands", () => {
     });
   });
 
+  it("passes conflictResolutions payload to DeleteVerticesCommand execute with editTime", async () => {
+    const serializer = new HistorySerializer();
+    const deleteResult = {
+      deletedVertexIds: ["vertex-remove"],
+      updatedFeatureIds: ["poly-delete", "poly-rival"],
+      deletedFeatureIds: []
+    };
+    const editFeatureUseCase = {
+      deleteVertices: vi.fn().mockResolvedValue(deleteResult)
+    };
+    const worldRepository = {
+      getWorld: vi.fn(async () => ({ vertices: [], features: [], layers: [] })),
+      saveWorld: vi.fn(async () => {})
+    };
+    const conflictResolutions = {
+      "polygon-overlap:poly-delete::poly-rival:1300:4:2": { preferFeatureId: "poly-delete" }
+    };
+    const payload = {
+      deletedVertexIds: ["vertex-remove"],
+      verticesToRestoreData: [],
+      affectedFeaturesBefore: [],
+      editTime: { year: 1300, month: 4, day: 2 },
+      conflictResolutions
+    };
+
+    const command = new DeleteVerticesCommand(payload, editFeatureUseCase, worldRepository, serializer);
+    await command.execute();
+
+    expect(editFeatureUseCase.deleteVertices).toHaveBeenCalledTimes(1);
+    expect(editFeatureUseCase.deleteVertices).toHaveBeenCalledWith(
+      ["vertex-remove"],
+      {
+        editTime: expect.any(TimePoint),
+        conflictResolutions
+      }
+    );
+  });
+
   it("updates anchor timeline through UpdatePropertiesCommand", async () => {
     const serializer = new HistorySerializer();
     const baseFeature = globalThis.createAnchoredPoint("feature-prop", ["vertex-prop"], [createProperty(1500, "Original")], "layer-1");

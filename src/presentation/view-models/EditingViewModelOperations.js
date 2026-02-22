@@ -9,6 +9,9 @@ import { DeleteVerticesCommand } from '../../application/services/history/comman
 import { BatchUpdatePropertiesCommand } from '../../application/services/history/commands/BatchUpdatePropertiesCommand.js';
 import { UpdatePropertiesCommand } from '../../application/services/history/commands/UpdatePropertiesCommand.js';
 import { UnlinkSharedVertexCommand } from '../../application/services/history/commands/UnlinkSharedVertexCommand.js';
+import { AnchorConflictResolutionDialog } from '../views/sidebar/AnchorConflictResolutionDialog.js';
+
+const MAX_CONFLICT_RETRY_COUNT = 4;
 
 function getFeatureTimelineAnchors(feature) {
   if (!feature || feature.id === null || feature.id === undefined) {
@@ -62,6 +65,36 @@ function collectFeatureVertexIdsAtTime(feature, editTime = null) {
   return [];
 }
 
+function isAnchorConflictError(error) {
+  return !!(
+    error &&
+    typeof error === 'object' &&
+    error.code === 'FEATURE_ANCHOR_CONFLICTS' &&
+    Array.isArray(error.conflicts)
+  );
+}
+
+function ensureAnchorConflictDialog(context) {
+  if (!context._anchorConflictResolutionDialog) {
+    context._anchorConflictResolutionDialog = new AnchorConflictResolutionDialog();
+  }
+  return context._anchorConflictResolutionDialog;
+}
+
+function formatFeatureLabel(feature, fallbackId, timePoint = null) {
+  if (!feature) {
+    return `ID: ${fallbackId}`;
+  }
+  const anchor = typeof feature.getAnchorAt === 'function'
+    ? feature.getAnchorAt(timePoint)
+    : null;
+  const name = anchor?.name;
+  if (typeof name === 'string' && name.trim() !== '') {
+    return `${name.trim()} (ID: ${fallbackId})`;
+  }
+  return `ID: ${fallbackId}`;
+}
+
 /**
  * 地物を削除
  * @param {string} featureId - 削除する地物のID
@@ -105,24 +138,74 @@ async function deleteVertices(vertexIds, options = undefined) {
     const worldRepository = this._editFeatureUseCase.getWorldRepository();
     const worldBefore = await worldRepository.getWorld();
     const editTime = options?.editTime instanceof TimePoint ? options.editTime : null;
-    const deleteOptions = editTime ? { editTime } : undefined;
+    let deleteOptions = editTime ? { editTime } : undefined;
 
     const verticesToRestore = vertexIds.map(id => {
       const vData = worldBefore.vertices.find(v => v.id === id);
       return vData ? new Vertex(vData.id, vData.x, vData.y) : null;
     }).filter(Boolean);
 
-    const affectedFeaturesBefore = [];
-    const deletedVertexIdsSet = new Set(vertexIds);
-    worldBefore.features.forEach(f => {
-      const vertexIdsAtTime = collectFeatureVertexIdsAtTime(f, editTime);
-      const usesAnyDeletedVertex = vertexIdsAtTime.some(id => deletedVertexIdsSet.has(id));
-      if (usesAnyDeletedVertex) {
-        affectedFeaturesBefore.push(f);
+    let result = null;
+    let retryCount = 0;
+    while (retryCount < MAX_CONFLICT_RETRY_COUNT) {
+      try {
+        result = await this._editFeatureUseCase.deleteVertices(vertexIds, deleteOptions);
+        break;
+      } catch (error) {
+        if (!isAnchorConflictError(error) || !(editTime instanceof TimePoint)) {
+          throw error;
+        }
+        const dialog = ensureAnchorConflictDialog(this);
+        const conflicts = Array.isArray(error.conflicts) ? error.conflicts : [];
+        const resolutions = await dialog.show({
+          conflicts,
+          resolveFeatureLabel: (featureId) => {
+            const feature = worldBefore.features.find(candidate => String(candidate?.id) === String(featureId));
+            return formatFeatureLabel(feature, String(featureId), editTime);
+          }
+        });
+        if (!resolutions) {
+          throw new Error('競合解決をキャンセルしました。');
+        }
+        deleteOptions = {
+          editTime,
+          conflictResolutions: resolutions
+        };
+        retryCount += 1;
       }
-    });
-    
-    const result = await this._editFeatureUseCase.deleteVertices(vertexIds, deleteOptions);
+    }
+
+    if (!result) {
+      throw new Error('競合解決の再試行回数が上限を超えました。');
+    }
+
+    const affectedFeatureIds = new Set();
+    if (Array.isArray(result.updatedFeatureIds)) {
+      result.updatedFeatureIds.forEach(featureId => {
+        if (featureId !== null && featureId !== undefined) {
+          affectedFeatureIds.add(featureId);
+        }
+      });
+    }
+    if (Array.isArray(result.deletedFeatureIds)) {
+      result.deletedFeatureIds.forEach(featureId => {
+        if (featureId !== null && featureId !== undefined) {
+          affectedFeatureIds.add(featureId);
+        }
+      });
+    }
+    if (affectedFeatureIds.size === 0) {
+      const deletedVertexIdsSet = new Set(vertexIds);
+      worldBefore.features.forEach(feature => {
+        const vertexIdsAtTime = collectFeatureVertexIdsAtTime(feature, editTime);
+        if (vertexIdsAtTime.some(id => deletedVertexIdsSet.has(id))) {
+          affectedFeatureIds.add(feature.id);
+        }
+      });
+    }
+    const affectedFeaturesBefore = [...affectedFeatureIds]
+      .map(featureId => worldBefore.features.find(feature => feature.id === featureId))
+      .filter(Boolean);
     
     const payload = {
       deletedVertexIds: result.deletedVertexIds,
@@ -132,6 +215,9 @@ async function deleteVertices(vertexIds, options = undefined) {
         ? { year: editTime.year, month: editTime.month, day: editTime.day }
         : null
     };
+    if (deleteOptions?.conflictResolutions && typeof deleteOptions.conflictResolutions === 'object') {
+      payload.conflictResolutions = deleteOptions.conflictResolutions;
+    }
     
     const command = new DeleteVerticesCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
     this._historyService._stackManager.pushUndo(command);

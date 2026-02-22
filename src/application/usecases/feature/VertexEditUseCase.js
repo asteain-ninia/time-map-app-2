@@ -42,7 +42,7 @@ export class VertexEditUseCase {
         return { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [] };
     }
     if (options?.editTime instanceof TimePoint) {
-      return this._deleteVerticesAtTime(vertexIdsToDelete, options.editTime);
+      return this._deleteVerticesAtTime(vertexIdsToDelete, options);
     }
 
     const world = await this._worldRepository.getWorld();
@@ -196,8 +196,16 @@ export class VertexEditUseCase {
     return result;
   }
 
-  async _deleteVerticesAtTime(vertexIdsToDelete, editTime) {
+  async _deleteVerticesAtTime(vertexIdsToDelete, options) {
+    const editTime = options?.editTime;
+    const conflictResolutions = options?.conflictResolutions;
+    if (!(editTime instanceof TimePoint)) {
+      throw new Error('編集時刻は TimePoint で指定してください。');
+    }
+
     const world = await this._worldRepository.getWorld();
+    const originalFeaturesSnapshot = [...world.features];
+    const originalVerticesSnapshot = world.vertices.map(vertex => ({ id: vertex.id, x: vertex.x, y: vertex.y }));
     const verticesToDeleteSet = new Set(vertexIdsToDelete);
     const cleanupCandidateVertexIds = new Set(vertexIdsToDelete);
     const updatedFeatures = [];
@@ -205,76 +213,108 @@ export class VertexEditUseCase {
     const deletedFeatureIds = new Set();
     const parentUpdatesNeeded = new Map();
 
-    for (const feature of world.features) {
-      if (!(feature instanceof Point || feature instanceof Line || feature instanceof Polygon)) {
-        updatedFeatures.push(feature);
-        continue;
-      }
-
-      if (!this._featureUsesAnyVertexAtTime(feature, verticesToDeleteSet, editTime)) {
-        updatedFeatures.push(feature);
-        continue;
-      }
-
-      const deletionOutcome = this._buildFeatureForAnchorScopedVertexDeletion(
-        feature,
-        editTime,
-        verticesToDeleteSet
-      );
-
-      if (deletionOutcome.deleted || !deletionOutcome.feature) {
-        deletedFeatureIds.add(feature.id);
-        this._collectFeatureVertexIdsAcrossTimeline(feature).forEach(vertexId => {
-          cleanupCandidateVertexIds.add(vertexId);
-        });
-        if (feature instanceof Polygon && feature.parentId && feature.parentId !== "0") {
-          if (!parentUpdatesNeeded.has(feature.parentId)) {
-            parentUpdatesNeeded.set(feature.parentId, []);
-          }
-          parentUpdatesNeeded.get(feature.parentId).push(feature.id);
+    try {
+      for (const feature of world.features) {
+        if (!(feature instanceof Point || feature instanceof Line || feature instanceof Polygon)) {
+          updatedFeatures.push(feature);
+          continue;
         }
-        continue;
-      }
 
-      updatedFeatures.push(deletionOutcome.feature);
-      if (deletionOutcome.changed) {
-        updatedFeatureIds.add(deletionOutcome.feature.id);
-      }
-    }
+        if (!this._featureUsesAnyVertexAtTime(feature, verticesToDeleteSet, editTime)) {
+          updatedFeatures.push(feature);
+          continue;
+        }
 
-    if (parentUpdatesNeeded.size > 0) {
-      const featuresWithUpdatedParents = [];
-      for (let feature of updatedFeatures) {
-        if (parentUpdatesNeeded.has(feature.id) && feature instanceof Polygon) {
-          const childrenToRemove = parentUpdatesNeeded.get(feature.id);
-          let updatedParent = feature;
-          childrenToRemove.forEach(childId => {
-            updatedParent = updatedParent.removeChildId(childId);
+        const deletionOutcome = this._buildFeatureForAnchorScopedVertexDeletion(
+          feature,
+          editTime,
+          verticesToDeleteSet
+        );
+
+        if (deletionOutcome.deleted || !deletionOutcome.feature) {
+          deletedFeatureIds.add(feature.id);
+          this._collectFeatureVertexIdsAcrossTimeline(feature).forEach(vertexId => {
+            cleanupCandidateVertexIds.add(vertexId);
           });
-          featuresWithUpdatedParents.push(updatedParent);
-          updatedFeatureIds.add(updatedParent.id);
-        } else {
-          featuresWithUpdatedParents.push(feature);
+          if (feature instanceof Polygon && feature.parentId && feature.parentId !== "0") {
+            if (!parentUpdatesNeeded.has(feature.parentId)) {
+              parentUpdatesNeeded.set(feature.parentId, []);
+            }
+            parentUpdatesNeeded.get(feature.parentId).push(feature.id);
+          }
+          continue;
+        }
+
+        updatedFeatures.push(deletionOutcome.feature);
+        if (deletionOutcome.changed) {
+          updatedFeatureIds.add(deletionOutcome.feature.id);
         }
       }
-      world.features = featuresWithUpdatedParents;
-    } else {
-      world.features = updatedFeatures;
+
+      if (parentUpdatesNeeded.size > 0) {
+        const featuresWithUpdatedParents = [];
+        for (let feature of updatedFeatures) {
+          if (parentUpdatesNeeded.has(feature.id) && feature instanceof Polygon) {
+            const childrenToRemove = parentUpdatesNeeded.get(feature.id);
+            let updatedParent = feature;
+            childrenToRemove.forEach(childId => {
+              updatedParent = updatedParent.removeChildId(childId);
+            });
+            featuresWithUpdatedParents.push(updatedParent);
+            updatedFeatureIds.add(updatedParent.id);
+          } else {
+            featuresWithUpdatedParents.push(feature);
+          }
+        }
+        world.features = featuresWithUpdatedParents;
+      } else {
+        world.features = updatedFeatures;
+      }
+
+      const updatedPolygons = [...updatedFeatureIds]
+        .map(featureId => world.features.find(feature => feature.id === featureId))
+        .filter(feature => feature instanceof Polygon);
+      if (updatedPolygons.length > 0) {
+        const conflictResolvedFeatureIds = resolvePolygonAnchorConflictsOrThrow({
+          editedPolygons: updatedPolygons,
+          world,
+          layerService: this._layerService,
+          geometryService: this._geometryService,
+          conflictResolutions
+        });
+        conflictResolvedFeatureIds.forEach(featureId => updatedFeatureIds.add(featureId));
+      }
+
+      const finalUpdatedPolygons = [...updatedFeatureIds]
+        .map(featureId => world.features.find(feature => feature.id === featureId))
+        .filter(feature => feature instanceof Polygon);
+      const constraintError = this._validatePolygonConstraints(
+        finalUpdatedPolygons,
+        world,
+        [...verticesToDeleteSet]
+      );
+      if (constraintError) {
+        throw constraintError;
+      }
+
+      const removedVertexIds = this._pruneUnusedVerticesByIds(world, cleanupCandidateVertexIds);
+      console.log(`[VertexEditUseCase] Physically deleted ${removedVertexIds.length} vertices from world.vertices (editTime scope).`);
+
+      console.log(`[VertexEditUseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
+      await this._worldRepository.saveWorld(world);
+
+      const result = {
+        deletedVertexIds: Array.from(verticesToDeleteSet),
+        updatedFeatureIds: Array.from(updatedFeatureIds),
+        deletedFeatureIds: Array.from(deletedFeatureIds)
+      };
+      console.log('[VertexEditUseCase] deleteVertices finished. Result:', result);
+      return result;
+    } catch (error) {
+      world.features = [...originalFeaturesSnapshot];
+      world.vertices = originalVerticesSnapshot.map(vertex => ({ id: vertex.id, x: vertex.x, y: vertex.y }));
+      throw error;
     }
-
-    const removedVertexIds = this._pruneUnusedVerticesByIds(world, cleanupCandidateVertexIds);
-    console.log(`[VertexEditUseCase] Physically deleted ${removedVertexIds.length} vertices from world.vertices (editTime scope).`);
-
-    console.log(`[VertexEditUseCase] Saving world... Features: ${world.features.length}, Vertices: ${world.vertices.length}`);
-    await this._worldRepository.saveWorld(world);
-
-    const result = {
-      deletedVertexIds: Array.from(verticesToDeleteSet),
-      updatedFeatureIds: Array.from(updatedFeatureIds),
-      deletedFeatureIds: Array.from(deletedFeatureIds)
-    };
-    console.log('[VertexEditUseCase] deleteVertices finished. Result:', result);
-    return result;
   }
 
   _buildFeatureForAnchorScopedVertexDeletion(feature, editTime, verticesToDeleteSet) {

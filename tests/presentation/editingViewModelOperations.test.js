@@ -291,6 +291,107 @@ describe("EditingViewModelOperations.deleteVertices", () => {
     expect(eventBus.publish).toHaveBeenCalledWith("ClearSelection");
   });
 
+  it("retries with conflict resolutions and stores resolved side effects in delete history payload", async () => {
+    const t900 = new TimePoint(900);
+    const t1000 = new TimePoint(1000);
+    const polyDelete = globalThis.createAnchoredPolygon(
+      "poly-delete",
+      [createProperty(1000, "Delete")],
+      "layer-1",
+      "0",
+      [],
+      [{ id: "ring-delete", vertexIds: ["a1", "a2", "a3", "a4", "a5"], ringType: "territory", parentId: null }],
+      [
+        new FeatureAnchor({
+          id: "anchor-delete-1000",
+          timeRange: { start: t1000, end: null },
+          property: { name: "Delete", description: "", attributes: {} },
+          shape: {
+            type: "Polygon",
+            rings: [{ id: "ring-delete", vertexIds: ["a1", "a2", "a3", "a4", "a5"], ringType: "territory", parentId: null }]
+          },
+          placement: { layerId: "layer-1", parentId: "0", childIds: [] }
+        })
+      ]
+    );
+    const polyRival = globalThis.createAnchoredPolygon(
+      "poly-rival",
+      [createProperty(900, "Rival")],
+      "layer-1",
+      "0",
+      [],
+      [{ id: "ring-rival", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }],
+      [
+        new FeatureAnchor({
+          id: "anchor-rival-900",
+          timeRange: { start: t900, end: null },
+          property: { name: "Rival", description: "", attributes: {} },
+          shape: {
+            type: "Polygon",
+            rings: [{ id: "ring-rival", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }]
+          },
+          placement: { layerId: "layer-1", parentId: "0", childIds: [] }
+        })
+      ]
+    );
+    const world = {
+      features: [polyDelete, polyRival],
+      vertices: [
+        { id: "a1", x: 0, y: 0 },
+        { id: "a2", x: 8, y: 0 },
+        { id: "a3", x: 8, y: 8 },
+        { id: "a4", x: 4, y: 4 },
+        { id: "a5", x: 0, y: 8 },
+        { id: "b1", x: 3, y: 6 },
+        { id: "b2", x: 5, y: 6 },
+        { id: "b3", x: 5, y: 7 },
+        { id: "b4", x: 3, y: 7 }
+      ],
+      layers: [{ id: "layer-1", order: 0 }],
+      metadata: {}
+    };
+    const { context, editFeatureUseCase, historyService } = buildContext({ world });
+    const conflictError = new Error("conflicts");
+    conflictError.code = "FEATURE_ANCHOR_CONFLICTS";
+    conflictError.conflicts = [
+      {
+        id: "polygon-overlap:poly-delete::poly-rival:1000:null:null",
+        featureIdA: "poly-delete",
+        featureIdB: "poly-rival"
+      }
+    ];
+    const conflictResolutions = {
+      "polygon-overlap:poly-delete::poly-rival:1000:null:null": { preferFeatureId: "poly-delete" }
+    };
+    editFeatureUseCase.deleteVertices = vi.fn()
+      .mockRejectedValueOnce(conflictError)
+      .mockResolvedValueOnce({
+        deletedVertexIds: ["a4"],
+        updatedFeatureIds: ["poly-delete", "poly-rival"],
+        deletedFeatureIds: []
+      });
+    context._anchorConflictResolutionDialog = {
+      show: vi.fn(async () => conflictResolutions)
+    };
+
+    await operationMethods.deleteVertices.call(context, ["a4"], { editTime: t1000 });
+
+    expect(editFeatureUseCase.deleteVertices).toHaveBeenCalledTimes(2);
+    expect(editFeatureUseCase.deleteVertices).toHaveBeenNthCalledWith(1, ["a4"], { editTime: t1000 });
+    expect(editFeatureUseCase.deleteVertices).toHaveBeenNthCalledWith(2, ["a4"], {
+      editTime: t1000,
+      conflictResolutions
+    });
+    expect(context._anchorConflictResolutionDialog.show).toHaveBeenCalledTimes(1);
+    const pushedCommand = historyService._stackManager.pushUndo.mock.calls[0][0];
+    expect(pushedCommand._payload.conflictResolutions).toEqual(conflictResolutions);
+    expect(pushedCommand._payload.affectedFeaturesBefore).toHaveLength(2);
+    expect(pushedCommand._payload.affectedFeaturesBefore.map(feature => feature.id).sort()).toEqual([
+      "poly-delete",
+      "poly-rival"
+    ]);
+  });
+
   it("stores null editTime in history payload when delete is executed without options", async () => {
     const pointFeature = globalThis.createAnchoredPoint("point-delete", ["vp"], [createProperty(1000, "Point")], "layer-1");
     const world = {

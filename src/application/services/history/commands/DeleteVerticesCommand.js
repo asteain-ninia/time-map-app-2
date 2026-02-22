@@ -18,6 +18,7 @@ export class DeleteVerticesCommand {
    * @param {Object[]} payload.verticesToRestoreData - 復元に必要な頂点のデータ（プレーンオブジェクト）
    * @param {Object[]} payload.affectedFeaturesBefore - 影響を受けた地物の操作前の状態（プレーンオブジェクト）
    * @param {{year:number,month:number|null,day:number|null}|null} [payload.editTime] - 時刻付き削除の編集時刻
+   * @param {Object|null} [payload.conflictResolutions] - 時刻付き削除で適用した競合解決方針
    * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
    * @param {WorldRepository} worldRepository - ワールドリポジトリ（直接操作用）
    * @param {HistorySerializer} serializer - シリアライザ
@@ -36,8 +37,16 @@ export class DeleteVerticesCommand {
   async execute() {
     const { deletedVertexIds } = this._payload;
     const editTime = this._deserializeEditTime(this._payload.editTime);
-    const deleteResult = editTime
-      ? await this._editFeatureUseCase.deleteVertices(deletedVertexIds, { editTime })
+    const conflictResolutions = this._deserializeConflictResolutions(this._payload.conflictResolutions);
+    let deleteOptions = undefined;
+    if (editTime) {
+      deleteOptions = { editTime };
+      if (conflictResolutions) {
+        deleteOptions.conflictResolutions = conflictResolutions;
+      }
+    }
+    const deleteResult = deleteOptions
+      ? await this._editFeatureUseCase.deleteVertices(deletedVertexIds, deleteOptions)
       : await this._editFeatureUseCase.deleteVertices(deletedVertexIds);
     // deleteVerticesは { deletedVertexIds, updatedFeatureIds, deletedFeatureIds } を返す
     return { deletedVertexResult: deleteResult, eventType: 'VerticesDeletedCustom', eventPayload: deleteResult };
@@ -104,5 +113,12 @@ export class DeleteVerticesCommand {
       editTimeData.month ?? null,
       editTimeData.day ?? null
     );
+  }
+
+  _deserializeConflictResolutions(conflictResolutionsData) {
+    if (!conflictResolutionsData || typeof conflictResolutionsData !== 'object') {
+      return null;
+    }
+    return conflictResolutionsData;
   }
 }
