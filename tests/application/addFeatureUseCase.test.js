@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddFeatureUseCase } from "../../src/application/usecases/feature/AddFeatureUseCase.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
+import { GeometryService } from "../../src/domain/services/GeometryService.js";
+import { LayerService } from "../../src/domain/services/LayerService.js";
 
 describe("AddFeatureUseCase", () => {
   let world;
@@ -29,15 +31,12 @@ describe("AddFeatureUseCase", () => {
       })
     };
 
-    geometryService = {
-      isPolygonSelfIntersecting: vi.fn(() => false)
-    };
+    geometryService = new GeometryService();
+    vi.spyOn(geometryService, "isPolygonSelfIntersecting").mockImplementation(() => false);
 
-    layerService = {
-      validatePolygonHierarchy: vi.fn(() => true),
-      isContainedInHigherLayerPolygon: vi.fn(() => true),
-      checkExclusivity: vi.fn(() => true)
-    };
+    layerService = new LayerService();
+    vi.spyOn(layerService, "validatePolygonHierarchy").mockImplementation(() => true);
+    vi.spyOn(layerService, "isContainedInHigherLayerPolygon").mockImplementation(() => true);
 
     const idCounters = {};
     generateId = vi.fn((type) => {
@@ -165,10 +164,6 @@ describe("AddFeatureUseCase", () => {
         parentId: "0"
       };
     });
-    layerService.checkExclusivity = vi.fn((_, polygons) => {
-      return !Array.isArray(polygons) || polygons.length <= 1;
-    });
-
     const useCase = new AddFeatureUseCase(
       worldRepository,
       geometryService,
@@ -255,10 +250,6 @@ describe("AddFeatureUseCase", () => {
         parentId: "0"
       };
     });
-    layerService.checkExclusivity = vi.fn((_, polygons) => {
-      return !Array.isArray(polygons) || polygons.length <= 1;
-    });
-
     const useCase = new AddFeatureUseCase(
       worldRepository,
       geometryService,
@@ -295,7 +286,9 @@ describe("AddFeatureUseCase", () => {
     );
     const existingAfter = world.features.find(feature => feature.id === "polygon-existing");
     expect(existingAfter).toBeTruthy();
+    expect(existingAfter.anchors.map(anchor => anchor.startTime.year)).toEqual([900, 1000]);
     expect(existingAfter.anchors[0].endTime?.year).toBe(1000);
+    expect(existingAfter.anchors[1].endTime).toBeNull();
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
 });

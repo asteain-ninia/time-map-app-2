@@ -589,8 +589,10 @@ describe("Polygon layer validation integration", () => {
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
     expect(result.feature.existsAt(new TimePoint(1250))).toBe(true);
     const polyBAfter = world.features.find(feature => feature.id === "poly-b");
-    expect(polyBAfter.existsAt(new TimePoint(1200))).toBe(false);
+    expect(polyBAfter.existsAt(new TimePoint(1200))).toBe(true);
+    expect(polyBAfter.anchors.map(anchor => anchor.startTime.year)).toEqual([900, 1000]);
     expect(polyBAfter.anchors[0].endTime.equals(new TimePoint(1000))).toBe(true);
+    expect(polyBAfter.anchors[1].endTime).toBeNull();
     const updatedIds = (result.updatedFeatures || []).map(feature => feature.id).sort();
     expect(updatedIds).toEqual(["poly-a", "poly-b"]);
   });

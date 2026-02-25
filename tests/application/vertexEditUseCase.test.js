@@ -845,17 +845,6 @@ describe("VertexEditUseCase", () => {
     ];
     vi.spyOn(layerService, "validatePolygonHierarchy").mockImplementation(() => true);
     vi.spyOn(layerService, "isContainedInHigherLayerPolygon").mockImplementation(() => true);
-    vi.spyOn(layerService, "checkExclusivity").mockImplementation((targetPolygon, polygons) => {
-      if (!Array.isArray(polygons) || polygons.length <= 1) {
-        return true;
-      }
-      const ids = polygons.map(polygon => polygon.id);
-      if (!(ids.includes("poly-move") && ids.includes("poly-rival"))) {
-        return true;
-      }
-      const activeAnchor = Array.isArray(targetPolygon?.anchors) ? targetPolygon.anchors[0] : null;
-      return activeAnchor?.startTime?.year !== 1100;
-    });
 
     await expect(
       useCase.moveVertices(
@@ -940,17 +929,6 @@ describe("VertexEditUseCase", () => {
     ];
     vi.spyOn(layerService, "validatePolygonHierarchy").mockImplementation(() => true);
     vi.spyOn(layerService, "isContainedInHigherLayerPolygon").mockImplementation(() => true);
-    vi.spyOn(layerService, "checkExclusivity").mockImplementation((targetPolygon, polygons) => {
-      if (!Array.isArray(polygons) || polygons.length <= 1) {
-        return true;
-      }
-      const ids = polygons.map(polygon => polygon.id);
-      if (!(ids.includes("poly-move") && ids.includes("poly-rival"))) {
-        return true;
-      }
-      const activeAnchor = Array.isArray(targetPolygon?.anchors) ? targetPolygon.anchors[0] : null;
-      return activeAnchor?.startTime?.year !== 1100;
-    });
     generateId.mockReset();
     generateId.mockReturnValueOnce("v2-1100");
     generateId.mockReturnValueOnce("anchor-1100");
@@ -970,9 +948,11 @@ describe("VertexEditUseCase", () => {
       expect.arrayContaining(["poly-move", "poly-rival"])
     );
     const rivalAfter = world.features.find(feature => feature.id === "poly-rival");
-    expect(rivalAfter.anchors).toHaveLength(1);
+    expect(rivalAfter.anchors).toHaveLength(2);
     expect(rivalAfter.anchors[0].startTime.year).toBe(900);
     expect(rivalAfter.anchors[0].endTime.equals(t1100)).toBe(true);
+    expect(rivalAfter.anchors[1].startTime.year).toBe(1100);
+    expect(rivalAfter.anchors[1].endTime).toBeNull();
   });
 
   it("moves a point at editTime without mutating other anchors", async () => {

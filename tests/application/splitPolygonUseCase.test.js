@@ -3,6 +3,7 @@ import { SplitPolygonUseCase } from "../../src/application/usecases/feature/Spli
 import { Polygon } from "../../src/domain/entities/Polygon.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
+import { GeometryService } from "../../src/domain/services/GeometryService.js";
 
 class InMemoryWorldRepository {
   constructor(world) {
@@ -33,27 +34,66 @@ const createLayerServiceStub = () => ({
   checkExclusivity: () => true
 });
 
-const createConflictLayerServiceStub = (conflictYear = 1500) => ({
-  validatePolygonHierarchy: () => true,
-  isContainedInHigherLayerPolygon: () => true,
-  checkExclusivity: (targetPolygon, layerPolygons) => {
-    if (!Array.isArray(layerPolygons) || layerPolygons.length <= 1) {
-      return true;
+const createConflictLayerServiceStub = () => {
+  const toBounds = (polygon, verticesMap) => {
+    const ring = (polygon?.rings || []).find(candidate => candidate.ringType === "territory");
+    if (!ring || !Array.isArray(ring.vertexIds) || ring.vertexIds.length < 3) {
+      return null;
     }
-    const ids = layerPolygons.map(polygon => polygon.id);
-    const includesConflictPair = ids.includes("polygon-1") && ids.includes("poly-rival");
-    if (!includesConflictPair) {
-      return true;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const vertexId of ring.vertexIds) {
+      const vertex = verticesMap.get(vertexId);
+      if (!vertex) {
+        return null;
+      }
+      minX = Math.min(minX, vertex.x);
+      minY = Math.min(minY, vertex.y);
+      maxX = Math.max(maxX, vertex.x);
+      maxY = Math.max(maxY, vertex.y);
     }
-    const activeAnchor = Array.isArray(targetPolygon?.anchors) ? targetPolygon.anchors[0] : null;
-    const startYear = activeAnchor?.startTime?.year ?? null;
-    return startYear !== conflictYear;
-  }
-});
+    return { minX, minY, maxX, maxY };
+  };
 
-const createGeometryServiceStub = () => ({
-  isPolygonSelfIntersecting: () => false
-});
+  const hasPositiveAreaOverlap = (polygonA, polygonB, vertices) => {
+    const verticesMap = new Map((vertices || []).map(vertex => [vertex.id, vertex]));
+    const boundsA = toBounds(polygonA, verticesMap);
+    const boundsB = toBounds(polygonB, verticesMap);
+    if (!boundsA || !boundsB) {
+      return false;
+    }
+    const overlapWidth = Math.min(boundsA.maxX, boundsB.maxX) - Math.max(boundsA.minX, boundsB.minX);
+    const overlapHeight = Math.min(boundsA.maxY, boundsB.maxY) - Math.max(boundsA.minY, boundsB.minY);
+    return overlapWidth > 0 && overlapHeight > 0;
+  };
+
+  return {
+    validatePolygonHierarchy: () => true,
+    isContainedInHigherLayerPolygon: () => true,
+    checkExclusivity: (targetPolygon, layerPolygons, vertices) => {
+      if (!Array.isArray(layerPolygons) || layerPolygons.length <= 1) {
+        return true;
+      }
+      for (const candidate of layerPolygons) {
+        if (!candidate || candidate.id === targetPolygon?.id) {
+          continue;
+        }
+        if (hasPositiveAreaOverlap(targetPolygon, candidate, vertices)) {
+          return false;
+        }
+      }
+      return true;
+    }
+  };
+};
+
+const createGeometryServiceStub = () => {
+  const geometryService = new GeometryService();
+  geometryService.isPolygonSelfIntersecting = () => false;
+  return geometryService;
+};
 
 const createAnchor = ({ id, startYear, endYear = null, name, vertexIds }) => {
   const start = new TimePoint(startYear);
@@ -188,14 +228,14 @@ const createWorldWithConflictRival = (anchors) => ({
           parentId: null
         }
       ],
-      [
-        createAnchor({
-          id: "anchor-rival-1200",
-          startYear: 1200,
-          endYear: null,
-          name: "Rival",
-          vertexIds: ["rv1", "rv2", "rv3", "rv4"]
-        })
+        [
+          createAnchor({
+            id: "anchor-rival-1500",
+            startYear: 1500,
+            endYear: null,
+            name: "Rival",
+            vertexIds: ["rv1", "rv2", "rv3", "rv4"]
+          })
       ]
     )
   ],
@@ -337,10 +377,11 @@ describe("SplitPolygonUseCase", () => {
       createAnchor({ id: "anchor-1000", startYear: 1000, endYear: null, name: "Base", vertexIds: ["v1", "v2", "v3", "v4"] })
     ];
     const worldRepository = new InMemoryWorldRepository(createWorldWithConflictRival(anchors));
+    const geometryService = createGeometryServiceStub();
     const useCase = new SplitPolygonUseCase(
       worldRepository,
-      createGeometryServiceStub(),
-      createConflictLayerServiceStub(1500),
+      geometryService,
+      createConflictLayerServiceStub(),
       createIdGenerator()
     );
     const newAnchor = createNewAnchorDraft();
@@ -352,16 +393,17 @@ describe("SplitPolygonUseCase", () => {
     });
   });
 
-  it("applies provided conflict resolutions and truncates losing polygon timeline", async () => {
+  it("applies provided conflict resolutions and clips losing polygon shape at conflict time", async () => {
     const anchors = [
       createAnchor({ id: "anchor-1000", startYear: 1000, endYear: null, name: "Base", vertexIds: ["v1", "v2", "v3", "v4"] })
     ];
 
     const firstRepository = new InMemoryWorldRepository(createWorldWithConflictRival(anchors));
+    const firstGeometryService = createGeometryServiceStub();
     const firstUseCase = new SplitPolygonUseCase(
       firstRepository,
-      createGeometryServiceStub(),
-      createConflictLayerServiceStub(1500),
+      firstGeometryService,
+      createConflictLayerServiceStub(),
       createIdGenerator()
     );
     const editTime = new TimePoint(1500);
@@ -378,10 +420,11 @@ describe("SplitPolygonUseCase", () => {
     expect(conflictId).toBe("polygon-overlap:poly-rival::polygon-1:1500:null:null");
 
     const secondRepository = new InMemoryWorldRepository(createWorldWithConflictRival(anchors));
+    const secondGeometryService = createGeometryServiceStub();
     const secondUseCase = new SplitPolygonUseCase(
       secondRepository,
-      createGeometryServiceStub(),
-      createConflictLayerServiceStub(1500),
+      secondGeometryService,
+      createConflictLayerServiceStub(),
       createIdGenerator()
     );
 
@@ -405,8 +448,8 @@ describe("SplitPolygonUseCase", () => {
 
     const worldAfter = await secondRepository.getWorld();
     const rival = worldAfter.features.find(feature => feature.id === "poly-rival");
-    const rivalAnchor = rival.anchors[0];
-    expect(rivalAnchor.startTime.year).toBe(1200);
-    expect(rivalAnchor.endTime.year).toBe(1500);
+    expect(rival.anchors.map(anchor => anchor.startTime.year)).toEqual([1500]);
+    expect(rival.anchors[0].endTime).toBeNull();
+    expect(rival.existsAt(new TimePoint(1600))).toBe(true);
   });
 });

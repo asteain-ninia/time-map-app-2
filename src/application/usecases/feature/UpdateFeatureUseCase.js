@@ -9,11 +9,10 @@ import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor';
 import { IPolygonEditService } from '../../services/IPolygonEditService.js';
 import { WorldRepository } from '../../WorldRepository.js'; // 型チェック用 (循環参照注意)
 import {
-  collectPolygonExclusivityConflicts,
   ensurePolygonLayerConstraints,
   normalizeAffectedTimeRange
 } from './polygonLayerValidation.js';
-import { FeatureAnchorConflictError } from './FeatureAnchorConflictError.js';
+import { resolvePolygonAnchorConflictsOrThrow } from './polygonAnchorConflictResolution.js';
 
 /**
  * 地理オブジェクトの更新（プロパティ、レイヤーID、形状）を専門に処理するユースケース
@@ -681,123 +680,14 @@ export class UpdateFeatureUseCase {
   }
 
   _resolvePropertyEditConflictsOrThrow(updatedPolygon, world, conflictResolutions, affectedTimeRange = null) {
-    const conflicts = collectPolygonExclusivityConflicts(
-      updatedPolygon,
+    return resolvePolygonAnchorConflictsOrThrow({
+      editedPolygons: [updatedPolygon],
       world,
-      this._layerService,
-      this._geometryService,
+      layerService: this._layerService,
+      geometryService: this._geometryService,
+      conflictResolutions,
       affectedTimeRange
-    );
-    if (conflicts.length === 0) {
-      return new Set();
-    }
-
-    const normalizedResolutions = this._normalizeConflictResolutions(conflictResolutions);
-    const unresolvedConflicts = conflicts.filter(conflict => !normalizedResolutions.has(conflict.id));
-    if (unresolvedConflicts.length > 0) {
-      throw new FeatureAnchorConflictError(
-        '同一レイヤー上の面情報が重なっています。解決方針を指定してください。',
-        conflicts
-      );
-    }
-
-    const changedFeatureIds = new Set();
-    for (const conflict of conflicts) {
-      const preferredFeatureId = normalizedResolutions.get(conflict.id);
-      if (preferredFeatureId !== conflict.featureIdA && preferredFeatureId !== conflict.featureIdB) {
-        throw new Error(`競合 ${conflict.id} の解決方針が不正です。`);
-      }
-      const loserFeatureId = preferredFeatureId === conflict.featureIdA
-        ? conflict.featureIdB
-        : conflict.featureIdA;
-      const didChange = this._truncateFeatureTimelineAt(world, loserFeatureId, conflict.timePoint);
-      if (didChange) {
-        changedFeatureIds.add(loserFeatureId);
-      }
-    }
-
-    const refreshedEditedFeature = world.features.find(feature => feature.id === updatedPolygon.id);
-    const remainingConflicts = collectPolygonExclusivityConflicts(
-      refreshedEditedFeature || updatedPolygon,
-      world,
-      this._layerService,
-      this._geometryService,
-      affectedTimeRange
-    );
-    if (remainingConflicts.length > 0) {
-      throw new FeatureAnchorConflictError(
-        '指定された解決方針では重なりを解消できません。別の方針を選択してください。',
-        remainingConflicts
-      );
-    }
-
-    return changedFeatureIds;
-  }
-
-  _normalizeConflictResolutions(conflictResolutions) {
-    const normalized = new Map();
-    if (!conflictResolutions || typeof conflictResolutions !== 'object') {
-      return normalized;
-    }
-    for (const [conflictId, value] of Object.entries(conflictResolutions)) {
-      if (!conflictId) {
-        continue;
-      }
-      if (typeof value === 'string' && value.trim() !== '') {
-        normalized.set(conflictId, value.trim());
-        continue;
-      }
-      if (
-        value &&
-        typeof value === 'object' &&
-        typeof value.preferFeatureId === 'string' &&
-        value.preferFeatureId.trim() !== ''
-      ) {
-        normalized.set(conflictId, value.preferFeatureId.trim());
-      }
-    }
-    return normalized;
-  }
-
-  _truncateFeatureTimelineAt(world, featureId, cutoffTime) {
-    const featureIndex = world.features.findIndex(feature => feature.id === featureId);
-    if (featureIndex === -1) {
-      throw new Error(`競合解決対象の地物が見つかりません: ${featureId}`);
-    }
-    const feature = world.features[featureIndex];
-    if (!feature || typeof feature.withAnchors !== 'function') {
-      throw new Error(`競合解決対象の地物が更新できません: ${featureId}`);
-    }
-
-    const anchors = this._normalizeAndValidateAnchorTimeline(this._getFeatureAnchors(feature));
-    const activeAnchorIndex = anchors.findIndex(anchor => anchor.isActiveAt(cutoffTime));
-    if (activeAnchorIndex === -1) {
-      return false;
-    }
-
-    const activeAnchor = anchors[activeAnchorIndex];
-    const start = activeAnchor.startTime;
-    if (!(start instanceof TimePoint)) {
-      throw new Error(`地物 ${featureId} の履歴アンカー開始時刻が不正です。`);
-    }
-
-    const nextAnchors = [...anchors];
-
-    if (start.equals(cutoffTime)) {
-      if (nextAnchors.length <= 1) {
-        throw new Error(`地物 ${featureId} の履歴アンカーが空になるため、この競合解決方針は適用できません。`);
-      }
-      nextAnchors.splice(activeAnchorIndex, 1);
-    } else {
-      if (activeAnchor.endTime instanceof TimePoint && activeAnchor.endTime.equals(cutoffTime)) {
-        return false;
-      }
-      nextAnchors[activeAnchorIndex] = activeAnchor.withTimeRange(activeAnchor.startTime, cutoffTime);
-    }
-
-    const normalizedTimeline = this._normalizeAndValidateAnchorTimeline(nextAnchors);
-    world.features[featureIndex] = feature.withAnchors(normalizedTimeline);
-    return true;
+    });
   }
 
   _ensurePolygonPlacementOrRollback(
