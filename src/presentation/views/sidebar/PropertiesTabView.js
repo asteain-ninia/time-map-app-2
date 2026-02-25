@@ -262,6 +262,7 @@ export class PropertiesTabView {
       `;
       button.addEventListener('click', () => {
         this._setSelectedAnchorKey(feature.id, anchorKey);
+        this._moveTimelineToAnchorStart(anchor);
         this.update();
       });
       list.appendChild(button);
@@ -286,6 +287,31 @@ export class PropertiesTabView {
 
     section.appendChild(actionRow);
     this._propertiesContainer.appendChild(section);
+  }
+
+  _moveTimelineToAnchorStart(anchorStartTime) {
+    if (!anchorStartTime) {
+      return;
+    }
+    if (typeof this._mapViewModel.moveToTime !== 'function') {
+      return;
+    }
+    const currentTime = typeof this._mapViewModel.getCurrentTime === 'function'
+      ? this._mapViewModel.getCurrentTime()
+      : null;
+    if (
+      currentTime &&
+      currentTime.year === anchorStartTime.year &&
+      currentTime.month === anchorStartTime.month &&
+      currentTime.day === anchorStartTime.day
+    ) {
+      return;
+    }
+    this._mapViewModel.moveToTime(
+      anchorStartTime.year,
+      anchorStartTime.month ?? null,
+      anchorStartTime.day ?? null
+    );
   }
 
   async _handleDuplicateAnchorAtCurrentTime(feature, selectedAnchor) {

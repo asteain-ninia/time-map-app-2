@@ -26,6 +26,7 @@ export class TimelineViewModel {
     this._eventBus.subscribe('ProjectSettingsLoaded', this._onProjectSettingsLoaded.bind(this));
     this._eventBus.subscribe('projectSettingsChanged', this._onProjectSettingsLoaded.bind(this));
     this._eventBus.subscribe('ProjectSettingsUpdated', this._onProjectSettingsLoaded.bind(this));
+    this._eventBus.subscribe('TimeChanged', this._onExternalTimeChanged.bind(this));
   }
 
   /**
@@ -48,6 +49,18 @@ export class TimelineViewModel {
         this.setTimeRange(sliderMin, sliderMax);
       }
     }
+  }
+
+  _onExternalTimeChanged(eventData) {
+    const nextTime = eventData?.time;
+    if (!nextTime || typeof nextTime !== 'object') {
+      return;
+    }
+    if (this._isSameTimePoint(this._currentTime, nextTime)) {
+      return;
+    }
+    this._currentTime = nextTime;
+    this._notifyObservers('currentTime');
   }
 
   getCalendarConfig() {
@@ -411,6 +424,17 @@ export class TimelineViewModel {
     for (const observer of this._observers) {
       observer(type, data);
     }
+  }
+
+  _isSameTimePoint(left, right) {
+    if (!left || !right) {
+      return false;
+    }
+    return (
+      left.year === right.year &&
+      left.month === right.month &&
+      left.day === right.day
+    );
   }
 
   /**

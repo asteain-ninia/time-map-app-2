@@ -27,6 +27,7 @@ function createFeature(properties) {
 }
 
 function createMapViewModel(feature, currentTime) {
+  let time = currentTime;
   const world = {
     features: [feature],
     vertices: [{ id: 'v1', x: 0, y: 0 }],
@@ -37,7 +38,11 @@ function createMapViewModel(feature, currentTime) {
     getSelectedFeatureIds: () => new Set([feature.id]),
     getSelectedVertexIds: () => new Set(),
     getVertexSelectionOwnerIds: () => new Set(),
-    getCurrentTime: () => currentTime,
+    getCurrentTime: () => time,
+    moveToTime: (year, month = null, day = null) => {
+      time = new TimePoint(year, month, day);
+      return time;
+    },
     getCalendarConfig: () => ({ monthsPerYear: 12 }),
     getDaysInMonth: () => 31,
     createTimePoint: (year, month = null, day = null) => new TimePoint(year, month, day),
@@ -143,6 +148,25 @@ describe('PropertiesTabView anchor UI', () => {
     expect(descInputAfter.value).toBe('desc-1000');
   });
 
+  it('moves current time to selected anchor start when an anchor is chosen', () => {
+    const feature = createFeature([
+      createProperty(1000, 1300, 'Anchor-1000'),
+      createProperty(1300, null, 'Anchor-1300')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(1100));
+    const moveToTimeSpy = vi.spyOn(mapViewModel, 'moveToTime');
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+
+    const futureAnchorButton = getButtonByIncludedText(parent, 'Anchor-1300');
+    futureAnchorButton.click();
+
+    expect(moveToTimeSpy).toHaveBeenCalledWith(1300, null, null);
+    expect(mapViewModel.getCurrentTime().year).toBe(1300);
+  });
+
   it('duplicates selected anchor at current time', async () => {
     const feature = createFeature([
       createProperty(1000, 1300, 'Base-1000', 'desc-base'),
@@ -154,9 +178,6 @@ describe('PropertiesTabView anchor UI', () => {
 
     view.update();
 
-    const futureAnchorButton = getButtonByIncludedText(parent, 'Future-1300');
-    futureAnchorButton.click();
-
     const duplicateButton = getButtonByText(parent, '現在時刻へ複製');
     duplicateButton.click();
     await flushAsync();
@@ -166,8 +187,8 @@ describe('PropertiesTabView anchor UI', () => {
     expect(featureId).toBe('feature-1');
     expect(payload.editTime.year).toBe(1200);
     expect(payload.startTime.year).toBe(1200);
-    expect(payload.name).toBe('Future-1300');
-    expect(payload.description).toBe('desc-future');
+    expect(payload.name).toBe('Base-1000');
+    expect(payload.description).toBe('desc-base');
   });
 
   it('rejects duplicate when an anchor already exists at current time', async () => {
@@ -372,6 +393,28 @@ describe('PropertiesTabView anchor UI', () => {
     expect(alertSpy).toHaveBeenCalledWith(
       'プロパティの保存に失敗: 存在終了は次の歴史の錨の開始時刻を超えられません。'
     );
+  });
+
+  it('saves selected anchor against the moved timeline time', async () => {
+    const feature = createFeature([
+      createProperty(1000, 1300, 'Anchor-1000', 'desc-1000'),
+      createProperty(1300, null, 'Anchor-1300', 'desc-1300')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(1100));
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getButtonByIncludedText(parent, 'Anchor-1300').click();
+    getButtonByText(parent, '保存').click();
+    await flushAsync();
+
+    expect(editingViewModel.updateFeatureProperties).toHaveBeenCalledTimes(1);
+    const [, payload] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    expect(payload.editTime.year).toBe(1300);
+    expect(payload.startTime.year).toBe(1300);
+    expect(payload.name).toBe('Anchor-1300');
+    expect(payload.description).toBe('desc-1300');
   });
 
   it('retries save with conflict resolutions selected in dialog', async () => {

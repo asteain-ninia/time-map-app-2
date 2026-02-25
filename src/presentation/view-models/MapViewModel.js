@@ -950,6 +950,19 @@ export class MapViewModel {
   }
 
   /**
+   * 指定時刻へ移動し、関連UIへ時間変更を通知する
+   * @param {number} year
+   * @param {number|null|undefined} [month]
+   * @param {number|null|undefined} [day]
+   * @returns {TimePoint}
+   */
+  moveToTime(year, month, day) {
+    const nextTime = this._navigateTimeUseCase.moveToTime(year, month, day);
+    this._eventBus.publish('TimeChanged', { time: nextTime });
+    return nextTime;
+  }
+
+  /**
    * プロジェクト設定を更新する
    * @param {object} newSettings - 新しい設定オブジェクト
    * @returns {Promise<void>}
