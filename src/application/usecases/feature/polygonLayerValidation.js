@@ -16,7 +16,66 @@ function compareTimePoints(left, right) {
   return left.isBefore(right) ? -1 : 1;
 }
 
-function collectValidationTimePoints(polygons) {
+export function normalizeAffectedTimeRange(affectedTimeRange) {
+  if (affectedTimeRange === undefined || affectedTimeRange === null) {
+    return null;
+  }
+  if (typeof affectedTimeRange !== 'object') {
+    throw new Error('affectedTimeRange の形式が不正です。');
+  }
+
+  const hasStart = Object.prototype.hasOwnProperty.call(affectedTimeRange, 'start');
+  const hasEnd = Object.prototype.hasOwnProperty.call(affectedTimeRange, 'end');
+
+  const start = hasStart ? affectedTimeRange.start : undefined;
+  const end = hasEnd ? affectedTimeRange.end : undefined;
+
+  if (hasStart && start !== undefined && start !== null && !(start instanceof TimePoint)) {
+    throw new Error('affectedTimeRange.start は TimePoint で指定してください。');
+  }
+  if (hasEnd && end !== undefined && end !== null && !(end instanceof TimePoint)) {
+    throw new Error('affectedTimeRange.end は TimePoint または null で指定してください。');
+  }
+
+  const normalizedStart = start instanceof TimePoint ? start : null;
+  const normalizedEnd = end instanceof TimePoint ? end : null;
+  if (
+    normalizedStart instanceof TimePoint &&
+    normalizedEnd instanceof TimePoint &&
+    !normalizedStart.isBefore(normalizedEnd)
+  ) {
+    throw new Error('affectedTimeRange.end は affectedTimeRange.start より後に設定してください。');
+  }
+  if (!normalizedStart && !normalizedEnd) {
+    return null;
+  }
+  return {
+    start: normalizedStart,
+    end: normalizedEnd
+  };
+}
+
+function isTimePointWithinAffectedRange(timePoint, normalizedAffectedTimeRange) {
+  if (!(timePoint instanceof TimePoint)) {
+    return false;
+  }
+  if (!normalizedAffectedTimeRange) {
+    return true;
+  }
+
+  const start = normalizedAffectedTimeRange.start;
+  const end = normalizedAffectedTimeRange.end;
+  if (start instanceof TimePoint && timePoint.isBefore(start)) {
+    return false;
+  }
+  if (end instanceof TimePoint && !timePoint.isBefore(end)) {
+    return false;
+  }
+  return true;
+}
+
+function collectValidationTimePoints(polygons, affectedTimeRange = undefined) {
+  const normalizedAffectedTimeRange = normalizeAffectedTimeRange(affectedTimeRange);
   const unique = new Map();
 
   for (const polygon of polygons) {
@@ -43,7 +102,10 @@ function collectValidationTimePoints(polygons) {
 
   const sorted = [...unique.values()];
   sorted.sort((left, right) => compareTimePoints(left, right));
-  return sorted;
+  if (!normalizedAffectedTimeRange) {
+    return sorted;
+  }
+  return sorted.filter(timePoint => isTimePointWithinAffectedRange(timePoint, normalizedAffectedTimeRange));
 }
 
 function formatTimePoint(timePoint) {
@@ -137,7 +199,13 @@ function buildPolygonSnapshotAtTime(polygon, timePoint) {
   );
 }
 
-export function collectPolygonExclusivityConflicts(polygon, world, layerService, geometryService) {
+export function collectPolygonExclusivityConflicts(
+  polygon,
+  world,
+  layerService,
+  geometryService,
+  affectedTimeRange = undefined
+) {
   if (!(polygon instanceof Polygon)) {
     return [];
   }
@@ -148,7 +216,7 @@ export function collectPolygonExclusivityConflicts(polygon, world, layerService,
     ? worldPolygons.map(existing => (existing.id === polygon.id ? polygon : existing))
     : [...worldPolygons, polygon];
 
-  const validationTimes = collectValidationTimePoints(candidatePolygons);
+  const validationTimes = collectValidationTimePoints(candidatePolygons, affectedTimeRange);
   const conflictsByPair = new Map();
 
   for (const timePoint of validationTimes) {
@@ -213,7 +281,13 @@ export function collectPolygonExclusivityConflicts(polygon, world, layerService,
  * @param {GeometryService} geometryService
  * @throws {Error} いずれかの検証に失敗した場合
  */
-export function ensurePolygonLayerConstraints(polygon, world, layerService, geometryService) {
+export function ensurePolygonLayerConstraints(
+  polygon,
+  world,
+  layerService,
+  geometryService,
+  affectedTimeRange = undefined
+) {
   if (!(polygon instanceof Polygon)) {
     return;
   }
@@ -224,7 +298,7 @@ export function ensurePolygonLayerConstraints(polygon, world, layerService, geom
     ? worldPolygons.map(existing => (existing.id === polygon.id ? polygon : existing))
     : [...worldPolygons, polygon];
 
-  const validationTimes = collectValidationTimePoints(candidatePolygons);
+  const validationTimes = collectValidationTimePoints(candidatePolygons, affectedTimeRange);
   for (const timePoint of validationTimes) {
     if (!polygon.existsAt(timePoint)) {
       continue;

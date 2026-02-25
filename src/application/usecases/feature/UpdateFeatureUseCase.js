@@ -10,7 +10,8 @@ import { IPolygonEditService } from '../../services/IPolygonEditService.js';
 import { WorldRepository } from '../../WorldRepository.js'; // 型チェック用 (循環参照注意)
 import {
   collectPolygonExclusivityConflicts,
-  ensurePolygonLayerConstraints
+  ensurePolygonLayerConstraints,
+  normalizeAffectedTimeRange
 } from './polygonLayerValidation.js';
 import { FeatureAnchorConflictError } from './FeatureAnchorConflictError.js';
 
@@ -70,6 +71,7 @@ export class UpdateFeatureUseCase {
    *                           },
    *                           affectedTimeRange?: { start?: TimePoint, end?: TimePoint | null }
    *                         }
+   *                         affectedTimeRange?: { start?: TimePoint, end?: TimePoint | null }
    *                         geometry (Polygonの場合): {
    *                           newRingCoordinates?: { points: {x,y}[], ringType: 'territory' | 'hole', parentId?: string }[],
    *                           existingRingData?: { id: string, vertexIds: string[], ringType: 'territory' | 'hole', parentId?: string }[],
@@ -96,12 +98,19 @@ export class UpdateFeatureUseCase {
     const conflictResolvedFeatureIds = new Set();
 
     const timelineEditPayload = updates.anchorEdit || updates.propertyEdit || null;
+    const timelineAffectedTimeRange = timelineEditPayload
+      ? normalizeAffectedTimeRange(timelineEditPayload.affectedTimeRange)
+      : null;
     const hasAnchorsUpdate = Object.prototype.hasOwnProperty.call(updates, 'anchors');
     const timelineReplacePayload = hasAnchorsUpdate ? updates.anchors : null;
     const hasAnchorConflictResolutions = Object.prototype.hasOwnProperty.call(updates, 'conflictResolutions');
     const anchorConflictResolutions = hasAnchorConflictResolutions
       ? updates.conflictResolutions
       : undefined;
+    const topLevelAffectedTimeRange = Object.prototype.hasOwnProperty.call(updates, 'affectedTimeRange')
+      ? normalizeAffectedTimeRange(updates.affectedTimeRange)
+      : null;
+    const affectedTimeRange = timelineAffectedTimeRange || topLevelAffectedTimeRange;
     if (updates.anchorEdit && updates.propertyEdit) {
       throw new Error('anchorEdit と propertyEdit は同時に指定できません。');
     }
@@ -241,7 +250,8 @@ export class UpdateFeatureUseCase {
           const resolvedIds = this._resolvePropertyEditConflictsOrThrow(
             updatedFeature,
             world,
-            conflictResolutions
+            conflictResolutions,
+            affectedTimeRange
           );
           resolvedIds.forEach(id => conflictResolvedFeatureIds.add(id));
           const refreshedFeature = world.features.find(feature => feature.id === featureId);
@@ -255,7 +265,8 @@ export class UpdateFeatureUseCase {
           world,
           currentFeature,
           originalVerticesSnapshot,
-          featureIndex
+          featureIndex,
+          affectedTimeRange
         );
       } catch (error) {
         world.features = [...originalFeaturesSnapshot];
@@ -669,12 +680,13 @@ export class UpdateFeatureUseCase {
     return candidate;
   }
 
-  _resolvePropertyEditConflictsOrThrow(updatedPolygon, world, conflictResolutions) {
+  _resolvePropertyEditConflictsOrThrow(updatedPolygon, world, conflictResolutions, affectedTimeRange = null) {
     const conflicts = collectPolygonExclusivityConflicts(
       updatedPolygon,
       world,
       this._layerService,
-      this._geometryService
+      this._geometryService,
+      affectedTimeRange
     );
     if (conflicts.length === 0) {
       return new Set();
@@ -709,7 +721,8 @@ export class UpdateFeatureUseCase {
       refreshedEditedFeature || updatedPolygon,
       world,
       this._layerService,
-      this._geometryService
+      this._geometryService,
+      affectedTimeRange
     );
     if (remainingConflicts.length > 0) {
       throw new FeatureAnchorConflictError(
@@ -787,13 +800,26 @@ export class UpdateFeatureUseCase {
     return true;
   }
 
-  _ensurePolygonPlacementOrRollback(updatedPolygon, world, originalPolygon, originalVerticesSnapshot, featureIndex) {
+  _ensurePolygonPlacementOrRollback(
+    updatedPolygon,
+    world,
+    originalPolygon,
+    originalVerticesSnapshot,
+    featureIndex,
+    affectedTimeRange = null
+  ) {
     if (!(updatedPolygon instanceof Polygon)) {
       return;
     }
 
     try {
-      ensurePolygonLayerConstraints(updatedPolygon, world, this._layerService, this._geometryService);
+      ensurePolygonLayerConstraints(
+        updatedPolygon,
+        world,
+        this._layerService,
+        this._geometryService,
+        affectedTimeRange
+      );
     } catch (error) {
       world.features[featureIndex] = originalPolygon;
       this._restoreWorldVertices(world, originalVerticesSnapshot);

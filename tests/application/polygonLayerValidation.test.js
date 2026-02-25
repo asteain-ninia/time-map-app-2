@@ -354,6 +354,102 @@ describe("Polygon layer validation integration", () => {
     expect(result.feature.existsAt(new TimePoint(1200))).toBe(false);
   });
 
+  it("limits overlap validation to affectedTimeRange when provided in property edits", async () => {
+    const layers = [new Layer("layer-base", "Base", 0, true, 1, "")];
+    const world = {
+      layers,
+      vertices: [
+        new Vertex("a1", 0, 0),
+        new Vertex("a2", 10, 0),
+        new Vertex("a3", 10, 10),
+        new Vertex("a4", 0, 10),
+        new Vertex("f1", 20, 20),
+        new Vertex("f2", 30, 20),
+        new Vertex("f3", 30, 30),
+        new Vertex("f4", 20, 30),
+        new Vertex("b1", 5, 5),
+        new Vertex("b2", 15, 5),
+        new Vertex("b3", 15, 15),
+        new Vertex("b4", 5, 15)
+      ],
+      features: [
+        globalThis.createAnchoredPolygon("poly-a", [
+          new FeatureAnchor({
+            id: "anchor-a-1000",
+            timeRange: { start: new TimePoint(1000), end: new TimePoint(1300) },
+            property: { name: "A-1000", description: "", attributes: {} },
+            shape: {
+              type: "Polygon",
+              rings: [{ id: "ring-a-past", vertexIds: ["a1", "a2", "a3", "a4"], ringType: "territory", parentId: null }]
+            },
+            placement: { layerId: "layer-base", parentId: "0", childIds: [] }
+          }),
+          new FeatureAnchor({
+            id: "anchor-a-1300",
+            timeRange: { start: new TimePoint(1300), end: null },
+            property: { name: "A-1300", description: "", attributes: {} },
+            shape: {
+              type: "Polygon",
+              rings: [{ id: "ring-a-future", vertexIds: ["f1", "f2", "f3", "f4"], ringType: "territory", parentId: null }]
+            },
+            placement: { layerId: "layer-base", parentId: "0", childIds: [] }
+          })
+        ], "layer-base", "0", [], []),
+        globalThis.createAnchoredPolygon("poly-b", [createPropertyWithRange(900, null, "B")], "layer-base", "0", [], [
+          { id: "ring-b", vertexIds: ["b1", "b2", "b3", "b4"], ringType: "territory", parentId: null }
+        ])
+      ],
+      metadata: {}
+    };
+
+    const worldRepository = makeWorldRepository(world);
+    const processGeometry = makeProcessGeometry();
+    const polygonEditService = {
+      removeRingFromPolygon: vi.fn(),
+      updateRingVertices: vi.fn(),
+      addRingToPolygon: vi.fn(),
+      addRingWithId: vi.fn()
+    };
+
+    const useCase = new UpdateFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      processGeometry,
+      getVerticesFromIds,
+      polygonEditService
+    );
+
+    await expect(
+      useCase.execute("poly-a", {
+        propertyEdit: {
+          editTime: new TimePoint(1300),
+          startTime: new TimePoint(1300),
+          endTime: null,
+          name: "A-1300-edited",
+          description: ""
+        }
+      })
+    ).rejects.toThrow(/重なっています/);
+
+    const result = await useCase.execute("poly-a", {
+      propertyEdit: {
+        editTime: new TimePoint(1300),
+        startTime: new TimePoint(1300),
+        endTime: null,
+        name: "A-1300-edited",
+        description: "",
+        affectedTimeRange: {
+          start: new TimePoint(1300),
+          end: null
+        }
+      }
+    });
+
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+    expect(result.feature.getAnchorAt(new TimePoint(1300)).name).toBe("A-1300-edited");
+  });
+
   it("returns conflict details when property edit introduces overlap without resolutions", async () => {
     const layers = [new Layer("layer-base", "Base", 0, true, 1, "")];
     const world = {
