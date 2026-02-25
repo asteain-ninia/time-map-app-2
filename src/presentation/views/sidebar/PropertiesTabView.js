@@ -145,7 +145,7 @@ export class PropertiesTabView {
     const form = document.createElement('form');
     form.addEventListener('submit', e => {
       e.preventDefault();
-      this._handleSaveProperties(feature, form);
+      this._handleSaveProperties(feature, selectedAnchor, form);
     });
 
     // 基本プロパティ (名前, 説明)
@@ -448,10 +448,11 @@ export class PropertiesTabView {
   /**
    * 地物プロパティの保存
    * @param {Feature} feature - 地物インスタンス
+   * @param {FeatureAnchor} selectedAnchor - 編集対象の履歴アンカー
    * @param {HTMLFormElement} formElement - プロパティフォーム
    * @private
    */
-  async _handleSaveProperties(feature, formElement) {
+  async _handleSaveProperties(feature, selectedAnchor, formElement) {
     const featureId = feature.id;
     const editTime = this._mapViewModel.getCurrentTime();
     const formData = new FormData(formElement);
@@ -470,13 +471,19 @@ export class PropertiesTabView {
     const startTp = startResult.value;
     const endTp = endResult.value;
 
-    if (startTp && !startTp.equals(editTime)) {
-      alert('存在開始はタイムラインの現在時刻と一致させてください。');
+    if (!startTp) {
+      alert('存在開始を入力してください。');
       return;
     }
 
-    if (endTp && !editTime.isBefore(endTp)) {
-      alert('存在終了は現在時刻より後に設定してください。');
+    if (endTp && !startTp.isBefore(endTp)) {
+      alert('存在終了は存在開始より後に設定してください。');
+      return;
+    }
+
+    const selectedStart = getPropertyStartAnchor(selectedAnchor);
+    if (!selectedAnchor || !selectedAnchor.id || !selectedStart || typeof selectedStart.equals !== 'function') {
+      alert('編集対象の履歴アンカーが不正です。再選択してください。');
       return;
     }
 
@@ -486,8 +493,17 @@ export class PropertiesTabView {
         startTime: startTp,
         endTime: endTp,
         name,
-        description
+        description,
+        boundaryEdit: {
+          targetAnchorId: selectedAnchor.id,
+          newStart: startTp,
+          newEnd: endTp
+        }
       });
+      this._setSelectedAnchorKey(feature.id, getAnchorKey(startTp));
+      if (!startTp.equals(editTime)) {
+        this._moveTimelineToAnchorStart(startTp);
+      }
       alert('プロパティを保存しました。');
       // update() は SidebarView経由で呼ばれるのでここでは不要
     } catch (error) {
@@ -496,7 +512,7 @@ export class PropertiesTabView {
     }
   }
 
-  _buildExistenceSection(form, currentProperty) {
+  _buildExistenceSection(form, currentAnchor) {
     const section = document.createElement('div');
     section.style.marginBottom = '15px';
 
@@ -506,9 +522,9 @@ export class PropertiesTabView {
     label.style.marginBottom = '6px';
     section.appendChild(label);
 
-    const startTime = this._mapViewModel.getCurrentTime();
+    const startTime = getPropertyStartAnchor(currentAnchor) || this._mapViewModel.getCurrentTime();
     section.appendChild(this._createTimeInputRow('start', '開始', startTime));
-    section.appendChild(this._createTimeInputRow('end', '終了', currentProperty.endTime));
+    section.appendChild(this._createTimeInputRow('end', '終了', currentAnchor?.endTime ?? null));
 
     form.appendChild(section);
   }

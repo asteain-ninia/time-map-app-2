@@ -104,6 +104,45 @@ describe("EditingViewModelOperations.updateFeatureProperties", () => {
     expect(eventBus.publish).toHaveBeenCalledWith("FeatureUpdated", { feature: afterFeature });
   });
 
+  it("forwards boundaryEdit in propertyEdit payload", async () => {
+    const beforeFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
+    const afterFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(900, "After")], "layer-1");
+    const world = {
+      features: [beforeFeature],
+      vertices: [{ id: "v1", x: 0, y: 0 }],
+      layers: [{ id: "layer-1", order: 0 }],
+      metadata: {}
+    };
+    const { context, editFeatureUseCase } = buildContext({
+      world,
+      updatedFeature: afterFeature
+    });
+
+    await operationMethods.updateFeatureProperties.call(context, "point-1", {
+      editTime: new TimePoint(1100),
+      startTime: new TimePoint(900),
+      endTime: new TimePoint(1300),
+      name: "After",
+      description: "boundary",
+      boundaryEdit: {
+        targetAnchorId: beforeFeature.anchors[0].id,
+        newStart: new TimePoint(900),
+        newEnd: new TimePoint(1300)
+      }
+    });
+
+    expect(editFeatureUseCase.updateFeature).toHaveBeenCalledWith("point-1", {
+      propertyEdit: expect.objectContaining({
+        startTime: expect.objectContaining({ year: 900 }),
+        boundaryEdit: {
+          targetAnchorId: beforeFeature.anchors[0].id,
+          newStart: expect.objectContaining({ year: 900 }),
+          newEnd: expect.objectContaining({ year: 1300 })
+        }
+      })
+    });
+  });
+
   it("does not record history when property update fails validation", async () => {
     const beforeFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
     const world = {

@@ -324,7 +324,9 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
           endTime: propertyUpdate.endTime,
           name: propertyUpdate.name,
           description: propertyUpdate.description,
-          conflictResolutions: propertyUpdate.conflictResolutions
+          conflictResolutions: propertyUpdate.conflictResolutions,
+          boundaryEdit: propertyUpdate.boundaryEdit,
+          affectedTimeRange: propertyUpdate.affectedTimeRange
         }
       };
     }

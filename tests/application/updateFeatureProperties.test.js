@@ -225,23 +225,56 @@ describe("UpdateFeatureUseCase anchor updates", () => {
     expect(worldRepository.saveWorld).not.toHaveBeenCalled();
   });
 
-  it("rejects edits when start time does not match the timeline time", async () => {
+  it("applies boundary edits when start time differs from the timeline time", async () => {
     const past = createProperty(1000, "Past");
     const future = createProperty(1300, "Future");
     world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [past, future], "layer-1"));
 
-    await expect(
-      useCase.execute("point-1", {
-        propertyEdit: {
-          editTime: new TimePoint(1100),
-          startTime: new TimePoint(1000),
-          endTime: null,
-          name: "Edited",
-          description: ""
+    const result = await useCase.execute("point-1", {
+      propertyEdit: {
+        editTime: new TimePoint(1100),
+        startTime: new TimePoint(900),
+        endTime: new TimePoint(1300),
+        name: "Edited",
+        description: "boundary-edited"
+      }
+    });
+
+    expect(result.feature.anchors).toHaveLength(2);
+    expect(result.feature.anchors[0].startTime.equals(new TimePoint(900))).toBe(true);
+    expect(result.feature.anchors[0].endTime.equals(new TimePoint(1300))).toBe(true);
+    expect(result.feature.anchors[0].name).toBe("Edited");
+    expect(result.feature.anchors[0].description).toBe("boundary-edited");
+    expect(result.feature.anchors[1].startTime.equals(new TimePoint(1300))).toBe(true);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
+  it("reorganizes neighboring anchors when boundary edit overlaps previous anchor", async () => {
+    const older = createPropertyWithEnd(800, 1000, "Older");
+    const target = createPropertyWithEnd(1000, 1300, "Target");
+    const future = createProperty(1300, "Future");
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [older, target, future], "layer-1"));
+
+    const result = await useCase.execute("point-1", {
+      propertyEdit: {
+        editTime: new TimePoint(1100),
+        startTime: new TimePoint(900),
+        endTime: new TimePoint(1300),
+        name: "Target shifted",
+        description: "",
+        boundaryEdit: {
+          targetAnchorId: target.id,
+          newStart: new TimePoint(900),
+          newEnd: new TimePoint(1300)
         }
-      })
-    ).rejects.toThrow(/現在時刻と一致/);
-    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+      }
+    });
+
+    expect(result.feature.anchors.map(anchor => anchor.startTime.year)).toEqual([800, 900, 1300]);
+    expect(result.feature.anchors[0].endTime.equals(new TimePoint(900))).toBe(true);
+    expect(result.feature.anchors[1].name).toBe("Target shifted");
+    expect(result.feature.anchors[1].endTime.equals(new TimePoint(1300))).toBe(true);
+    expect(result.feature.anchors[2].name).toBe("Future");
   });
 
   it("updates an existing anchor without creating duplicates", async () => {

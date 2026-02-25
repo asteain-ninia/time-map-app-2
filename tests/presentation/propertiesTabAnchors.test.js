@@ -395,6 +395,32 @@ describe('PropertiesTabView anchor UI', () => {
     );
   });
 
+  it('sends boundaryEdit when start time is changed from selected anchor start', async () => {
+    const feature = createFeature([
+      createProperty(1000, 1300, 'Anchor-1000', 'desc-1000'),
+      createProperty(1300, null, 'Anchor-1300', 'desc-1300')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(1100));
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    const startYearInput = parent.querySelector('input[name="startYear"]');
+    startYearInput.value = '900';
+    getButtonByText(parent, '保存').click();
+    await flushAsync();
+
+    expect(editingViewModel.updateFeatureProperties).toHaveBeenCalledTimes(1);
+    const [, payload] = editingViewModel.updateFeatureProperties.mock.calls[0];
+    expect(payload.editTime.year).toBe(1100);
+    expect(payload.startTime.year).toBe(900);
+    expect(payload.boundaryEdit).toEqual({
+      targetAnchorId: feature.anchors[0].id,
+      newStart: payload.startTime,
+      newEnd: payload.endTime
+    });
+  });
+
   it('saves selected anchor against the moved timeline time', async () => {
     const feature = createFeature([
       createProperty(1000, 1300, 'Anchor-1000', 'desc-1000'),

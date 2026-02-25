@@ -62,7 +62,13 @@ export class UpdateFeatureUseCase {
    *                           endTime?: TimePoint | null,
    *                           name?: string,
    *                           description?: string,
-   *                           conflictResolutions?: Record<string, { preferFeatureId: string }>
+   *                           conflictResolutions?: Record<string, { preferFeatureId: string }>,
+   *                           boundaryEdit?: {
+   *                             targetAnchorId: string,
+   *                             newStart?: TimePoint,
+   *                             newEnd?: TimePoint | null
+   *                           },
+   *                           affectedTimeRange?: { start?: TimePoint, end?: TimePoint | null }
    *                         }
    *                         geometry (Polygonの場合): {
    *                           newRingCoordinates?: { points: {x,y}[], ringType: 'territory' | 'hole', parentId?: string }[],
@@ -290,22 +296,22 @@ export class UpdateFeatureUseCase {
       throw new Error('編集時刻は TimePoint で指定してください。');
     }
 
-    if (anchorEdit.startTime !== undefined && anchorEdit.startTime !== null) {
-      if (!(anchorEdit.startTime instanceof TimePoint)) {
-        throw new Error('存在開始は TimePoint で指定してください。');
-      }
-      if (!anchorEdit.startTime.equals(editTime)) {
-        throw new Error('存在開始はタイムラインの現在時刻と一致させてください。');
-      }
-    }
-
     let existing = this._getFeatureAnchors(feature);
     if (existing.length === 0) {
       throw new Error('編集対象の履歴アンカーが存在しません。');
     }
     existing = this._normalizeAndValidateAnchorTimeline(existing);
 
-    const exactAnchorIndex = existing.findIndex(anchor => anchor.startTime.equals(editTime));
+    const resolvedEditAnchor = this._resolveAnchorAtEditTime(feature, existing, editTime);
+    const boundaryEdit = this._extractBoundaryEdit(anchorEdit, existing, resolvedEditAnchor, editTime);
+    if (boundaryEdit) {
+      return this._buildAnchorsForBoundaryEdit(existing, anchorEdit, boundaryEdit);
+    }
+    return this._buildAnchorsForPointInTimeEdit(feature.id, existing, resolvedEditAnchor, anchorEdit, editTime);
+  }
+
+  _resolveAnchorAtEditTime(feature, anchors, editTime) {
+    const exactAnchorIndex = anchors.findIndex(anchor => anchor.startTime.equals(editTime));
     const activeAnchor = typeof feature.getAnchorAt === 'function'
       ? feature.getAnchorAt(editTime)
       : null;
@@ -315,21 +321,84 @@ export class UpdateFeatureUseCase {
 
     const activeAnchorIndex = exactAnchorIndex !== -1
       ? exactAnchorIndex
-      : this._findActiveAnchorIndex(existing, activeAnchor, editTime);
+      : this._findActiveAnchorIndex(anchors, activeAnchor, editTime);
     if (activeAnchorIndex === -1) {
       throw new Error('編集時刻で有効な履歴アンカーが見つかりません。');
     }
 
-    const baseAnchor = exactAnchorIndex !== -1 ? existing[exactAnchorIndex] : existing[activeAnchorIndex];
-    const nextFutureAnchorStart = this._findNextFutureAnchorStart(existing, editTime);
+    return {
+      exactAnchorIndex,
+      activeAnchorIndex,
+      baseAnchor: exactAnchorIndex !== -1 ? anchors[exactAnchorIndex] : anchors[activeAnchorIndex]
+    };
+  }
+
+  _extractBoundaryEdit(anchorEdit, anchors, resolvedEditAnchor, editTime) {
+    const hasStartTime = Object.prototype.hasOwnProperty.call(anchorEdit, 'startTime');
+    if (hasStartTime && anchorEdit.startTime !== null && !(anchorEdit.startTime instanceof TimePoint)) {
+      throw new Error('存在開始は TimePoint で指定してください。');
+    }
+
+    const explicitBoundaryEdit = anchorEdit.boundaryEdit;
+    if (explicitBoundaryEdit === undefined || explicitBoundaryEdit === null) {
+      if (hasStartTime && anchorEdit.startTime instanceof TimePoint && !anchorEdit.startTime.equals(editTime)) {
+        return {
+          targetAnchorId: resolvedEditAnchor.baseAnchor.id,
+          hasNewStart: true,
+          newStart: anchorEdit.startTime,
+          hasNewEnd: Object.prototype.hasOwnProperty.call(anchorEdit, 'endTime'),
+          newEnd: anchorEdit.endTime
+        };
+      }
+      return null;
+    }
+
+    if (typeof explicitBoundaryEdit !== 'object') {
+      throw new Error('boundaryEdit の形式が不正です。');
+    }
+
+    const targetAnchorId = typeof explicitBoundaryEdit.targetAnchorId === 'string'
+      ? explicitBoundaryEdit.targetAnchorId.trim()
+      : '';
+    if (targetAnchorId === '') {
+      throw new Error('boundaryEdit.targetAnchorId は必須です。');
+    }
+    if (!anchors.some(anchor => anchor.id === targetAnchorId)) {
+      throw new Error(`boundaryEdit.targetAnchorId に対応する履歴アンカーが見つかりません: ${targetAnchorId}`);
+    }
+
+    const hasNewStart = Object.prototype.hasOwnProperty.call(explicitBoundaryEdit, 'newStart');
+    const newStart = hasNewStart ? explicitBoundaryEdit.newStart : undefined;
+    if (hasNewStart && !(newStart instanceof TimePoint)) {
+      throw new Error('boundaryEdit.newStart は TimePoint で指定してください。');
+    }
+
+    const hasNewEnd = Object.prototype.hasOwnProperty.call(explicitBoundaryEdit, 'newEnd');
+    const newEnd = hasNewEnd ? explicitBoundaryEdit.newEnd : undefined;
+    if (hasNewEnd && newEnd !== null && !(newEnd instanceof TimePoint)) {
+      throw new Error('boundaryEdit.newEnd は TimePoint または null で指定してください。');
+    }
+
+    return {
+      targetAnchorId,
+      hasNewStart,
+      newStart,
+      hasNewEnd,
+      newEnd
+    };
+  }
+
+  _buildAnchorsForPointInTimeEdit(featureId, anchors, resolvedEditAnchor, anchorEdit, editTime) {
+    const baseAnchor = resolvedEditAnchor.baseAnchor;
+    const nextFutureAnchorStart = this._findNextFutureAnchorStart(anchors, editTime);
     const hasExplicitEndTime = Object.prototype.hasOwnProperty.call(anchorEdit, 'endTime');
     const requestedEndTime = hasExplicitEndTime ? anchorEdit.endTime : baseAnchor.endTime;
     const normalizedEndTime = this._normalizeAnchorEndTime(editTime, requestedEndTime, nextFutureAnchorStart);
 
     const mergedAnchor = new FeatureAnchor({
-      id: exactAnchorIndex !== -1
+      id: resolvedEditAnchor.exactAnchorIndex !== -1
         ? baseAnchor.id
-        : this._buildGeneratedAnchorId(feature.id, editTime, existing),
+        : this._buildGeneratedAnchorId(featureId, editTime, anchors),
       timeRange: { start: editTime, end: normalizedEndTime },
       property: {
         name: typeof anchorEdit.name === 'string' ? anchorEdit.name : baseAnchor.name,
@@ -340,21 +409,127 @@ export class UpdateFeatureUseCase {
       placement: baseAnchor.placement
     });
 
-    const merged = [...existing];
-    if (exactAnchorIndex === -1) {
+    const merged = [...anchors];
+    if (resolvedEditAnchor.exactAnchorIndex === -1) {
       merged.push(mergedAnchor);
-      const sourceAnchor = merged[activeAnchorIndex];
+      const sourceAnchor = merged[resolvedEditAnchor.activeAnchorIndex];
       if (
         sourceAnchor.startTime.isBefore(editTime) &&
         (!sourceAnchor.endTime || editTime.isBefore(sourceAnchor.endTime))
       ) {
-        merged[activeAnchorIndex] = sourceAnchor.withTimeRange(sourceAnchor.startTime, editTime);
+        merged[resolvedEditAnchor.activeAnchorIndex] = sourceAnchor.withTimeRange(sourceAnchor.startTime, editTime);
       }
     } else {
-      merged[exactAnchorIndex] = mergedAnchor;
+      merged[resolvedEditAnchor.exactAnchorIndex] = mergedAnchor;
     }
 
     return this._normalizeAndValidateAnchorTimeline(merged);
+  }
+
+  _buildAnchorsForBoundaryEdit(anchors, anchorEdit, boundaryEdit) {
+    const targetAnchorIndex = anchors.findIndex(anchor => anchor.id === boundaryEdit.targetAnchorId);
+    if (targetAnchorIndex === -1) {
+      throw new Error(`boundaryEdit.targetAnchorId に対応する履歴アンカーが見つかりません: ${boundaryEdit.targetAnchorId}`);
+    }
+    const targetAnchor = anchors[targetAnchorIndex];
+
+    const requestedStartTime = this._resolveBoundaryStartTime(targetAnchor, anchorEdit, boundaryEdit);
+    const requestedEndTime = this._resolveBoundaryEndTime(targetAnchor, anchorEdit, boundaryEdit, requestedStartTime);
+
+    const editedAnchor = new FeatureAnchor({
+      id: targetAnchor.id,
+      timeRange: { start: requestedStartTime, end: requestedEndTime },
+      property: {
+        name: typeof anchorEdit.name === 'string' ? anchorEdit.name : targetAnchor.name,
+        description: typeof anchorEdit.description === 'string' ? anchorEdit.description : targetAnchor.description,
+        attributes: targetAnchor.getAttributes()
+      },
+      shape: targetAnchor.shape,
+      placement: targetAnchor.placement
+    });
+
+    const rebuiltTimeline = this._rebuildTimelineForBoundaryEdit(anchors, targetAnchorIndex, editedAnchor);
+    return this._normalizeAndValidateAnchorTimeline(rebuiltTimeline);
+  }
+
+  _resolveBoundaryStartTime(targetAnchor, anchorEdit, boundaryEdit) {
+    const hasPayloadStartTime = Object.prototype.hasOwnProperty.call(anchorEdit, 'startTime');
+    let startTime = targetAnchor.startTime;
+
+    if (boundaryEdit.hasNewStart) {
+      startTime = boundaryEdit.newStart;
+    } else if (hasPayloadStartTime && anchorEdit.startTime instanceof TimePoint) {
+      startTime = anchorEdit.startTime;
+    }
+
+    if (!(startTime instanceof TimePoint)) {
+      throw new Error('存在開始は TimePoint で指定してください。');
+    }
+
+    return startTime;
+  }
+
+  _resolveBoundaryEndTime(targetAnchor, anchorEdit, boundaryEdit, startTime) {
+    const hasPayloadEndTime = Object.prototype.hasOwnProperty.call(anchorEdit, 'endTime');
+    let endTime = targetAnchor.endTime;
+
+    if (boundaryEdit.hasNewEnd) {
+      endTime = boundaryEdit.newEnd;
+    } else if (hasPayloadEndTime) {
+      endTime = anchorEdit.endTime;
+    }
+
+    if (endTime !== null && endTime !== undefined) {
+      if (!(endTime instanceof TimePoint)) {
+        throw new Error('存在終了は TimePoint で指定してください。');
+      }
+      if (!startTime.isBefore(endTime)) {
+        throw new Error('存在終了は開始時刻より後に設定してください。');
+      }
+      return endTime;
+    }
+
+    return null;
+  }
+
+  _rebuildTimelineForBoundaryEdit(anchors, targetAnchorIndex, editedAnchor) {
+    const before = [];
+    const after = [];
+
+    for (let index = 0; index < anchors.length; index += 1) {
+      if (index === targetAnchorIndex) {
+        continue;
+      }
+      const anchor = anchors[index];
+      if (anchor.startTime.isBefore(editedAnchor.startTime)) {
+        before.push(anchor);
+      } else {
+        after.push(anchor);
+      }
+    }
+
+    if (before.length > 0) {
+      const previousIndex = before.length - 1;
+      const previousAnchor = before[previousIndex];
+      if (previousAnchor.endTime === null || editedAnchor.startTime.isBefore(previousAnchor.endTime)) {
+        before[previousIndex] = previousAnchor.withTimeRange(previousAnchor.startTime, editedAnchor.startTime);
+      }
+    }
+
+    let adjustedAfter = [];
+    if (editedAnchor.endTime instanceof TimePoint) {
+      for (const anchor of after) {
+        if (anchor.startTime.isBefore(editedAnchor.endTime)) {
+          if (!(anchor.endTime instanceof TimePoint) || editedAnchor.endTime.isBefore(anchor.endTime)) {
+            adjustedAfter.push(anchor.withTimeRange(editedAnchor.endTime, anchor.endTime));
+          }
+          continue;
+        }
+        adjustedAfter.push(anchor);
+      }
+    }
+
+    return [...before, editedAnchor, ...adjustedAfter];
   }
 
   _applyAnchorsToFeature(feature, anchors, featureId) {
