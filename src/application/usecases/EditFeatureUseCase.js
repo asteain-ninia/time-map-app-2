@@ -90,8 +90,11 @@ export class EditFeatureUseCase {
     return this._worldRepository;
   }
 
-  async addFeature(featureType, anchors, geometry, layerId) {
-    return this._addFeatureUseCase.execute(featureType, anchors, geometry, layerId);
+  async addFeature(featureType, anchors, geometry, layerId, options = undefined) {
+    if (options === undefined) {
+      return this._addFeatureUseCase.execute(featureType, anchors, geometry, layerId);
+    }
+    return this._addFeatureUseCase.execute(featureType, anchors, geometry, layerId, options);
   }
 
   async updateFeature(featureId, updates) {

@@ -2,6 +2,39 @@ import { FeatureAnchor } from '../../domain/value-objects/FeatureAnchor.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { AddFeatureCommand } from '../../application/services/history/commands/AddFeatureCommand.js';
 import { AddRingCommand } from '../../application/services/history/commands/AddRingCommand.js';
+import { AnchorConflictResolutionDialog } from '../views/sidebar/AnchorConflictResolutionDialog.js';
+
+const MAX_CONFLICT_RETRY_COUNT = 4;
+
+function isAnchorConflictError(error) {
+  return !!(
+    error &&
+    typeof error === 'object' &&
+    error.code === 'FEATURE_ANCHOR_CONFLICTS' &&
+    Array.isArray(error.conflicts)
+  );
+}
+
+function ensureAnchorConflictDialog(context) {
+  if (!context._anchorConflictResolutionDialog) {
+    context._anchorConflictResolutionDialog = new AnchorConflictResolutionDialog();
+  }
+  return context._anchorConflictResolutionDialog;
+}
+
+function formatFeatureLabel(feature, fallbackId, timePoint = null) {
+  if (!feature) {
+    return `ID: ${fallbackId}`;
+  }
+  const anchor = typeof feature.getAnchorAt === 'function'
+    ? feature.getAnchorAt(timePoint)
+    : null;
+  const name = anchor?.name;
+  if (typeof name === 'string' && name.trim() !== '') {
+    return `${name.trim()} (ID: ${fallbackId})`;
+  }
+  return `ID: ${fallbackId}`;
+}
 
 /**
  * 穴/飛び地追加モードを開始 (MapViewから呼び出される)
@@ -187,20 +220,92 @@ async function confirmAddFeature(anchors, layerId) {
 
   const geometryData = { vertices: [...this._addingPoints] };
   const featureType = this._tool;
+  const worldRepository = this._editFeatureUseCase.getWorldRepository();
+  const worldBefore = await worldRepository.getWorld();
+  const anchorStartTime = anchors[0].startTime ?? null;
   
   try {
-    const feature = await this._editFeatureUseCase.addFeature(featureType, anchors, geometryData, layerId);
+    let retryCount = 0;
+    let addOptions = { returnDetails: true };
+    let addResult = null;
+    while (retryCount < MAX_CONFLICT_RETRY_COUNT) {
+      try {
+        addResult = await this._editFeatureUseCase.addFeature(
+          featureType,
+          anchors,
+          geometryData,
+          layerId,
+          addOptions
+        );
+        break;
+      } catch (error) {
+        if (!isAnchorConflictError(error)) {
+          throw error;
+        }
+        const dialog = ensureAnchorConflictDialog(this);
+        const conflicts = Array.isArray(error.conflicts) ? error.conflicts : [];
+        const resolutions = await dialog.show({
+          conflicts,
+          resolveFeatureLabel: (featureId) => {
+            const feature = worldBefore.features.find(candidate => String(candidate?.id) === String(featureId));
+            return formatFeatureLabel(feature, String(featureId), anchorStartTime);
+          }
+        });
+        if (!resolutions) {
+          throw new Error('競合解決をキャンセルしました。');
+        }
+        addOptions = {
+          returnDetails: true,
+          conflictResolutions: resolutions
+        };
+        retryCount += 1;
+      }
+    }
+    if (!addResult) {
+      throw new Error('競合解決の再試行回数が上限を超えました。');
+    }
+
+    const feature = addResult?.feature || addResult;
+    const updatedFeatures = Array.isArray(addResult?.updatedFeatures) && addResult.updatedFeatures.length > 0
+      ? addResult.updatedFeatures
+      : [feature];
+    const additionalFeatureChanges = updatedFeatures
+      .filter(updatedFeature => (
+        updatedFeature &&
+        updatedFeature.id !== feature.id
+      ))
+      .map(updatedFeature => {
+        const beforeFeature = worldBefore.features.find(candidate => candidate.id === updatedFeature.id);
+        if (!beforeFeature) {
+          return null;
+        }
+        return {
+          featureId: updatedFeature.id,
+          beforeFeatureData: this._historyService._serializer.serialize(beforeFeature),
+          afterFeatureData: this._historyService._serializer.serialize(updatedFeature)
+        };
+      })
+      .filter(Boolean);
 
     const payload = {
       featureId: feature.id,
       featureData: this._historyService._serializer.serialize(feature),
       addedVerticesData: await this._historyService._getVerticesDataForFeatureForHistory(feature)
     };
+    if (additionalFeatureChanges.length > 0) {
+      payload.additionalFeatureChanges = additionalFeatureChanges;
+    }
     const command = new AddFeatureCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
     this._historyService._stackManager.pushUndo(command);
     this._historyService._notifyHistoryChanged();
 
     this._clearAddingState();
+    additionalFeatureChanges.forEach(change => {
+      const updatedFeature = updatedFeatures.find(candidate => candidate?.id === change.featureId);
+      if (updatedFeature) {
+        this._eventBus.publish('FeatureUpdated', { feature: updatedFeature });
+      }
+    });
     this._eventBus.publish('FeatureAdded', { feature });
     return feature;
 

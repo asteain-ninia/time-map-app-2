@@ -66,7 +66,7 @@ describe("History commands", () => {
     const result = await command.execute();
 
     expect(worldRepository.getWorld).toHaveBeenCalledTimes(1);
-    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(2);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
     expect(world.vertices).toEqual([{ id: "vertex-1", x: 10, y: 20 }]);
     expect(world.features).toHaveLength(1);
     expect(world.features[0].id).toBe("feature-1");
@@ -92,6 +92,72 @@ describe("History commands", () => {
 
     expect(editFeatureUseCase.deleteFeature).toHaveBeenCalledWith("feature-undo");
     expect(reverseResult).toEqual({ deletedFeatureId: "feature-undo" });
+  });
+
+  it("applies additional feature changes in AddFeatureCommand execute and reverse", async () => {
+    const serializer = new HistorySerializer();
+    const vertex = new Vertex("vertex-additional", 3, 4);
+    const addedFeature = createPoint("feature-additional", vertex.id);
+    const beforeRival = createPolygon("poly-rival", [
+      {
+        id: "rival-ring",
+        vertexIds: ["rival-1", "rival-2", "rival-3"],
+        ringType: "territory",
+        parentId: null
+      }
+    ]);
+    const afterRival = beforeRival.withAnchors(beforeRival.anchors.map(anchor =>
+      anchor.withTimeRange(anchor.startTime, new TimePoint(2000))
+    ));
+
+    const payload = {
+      featureId: addedFeature.id,
+      featureData: serializer.serialize(addedFeature),
+      addedVerticesData: [serializer.serialize(vertex)],
+      additionalFeatureChanges: [
+        {
+          featureId: beforeRival.id,
+          beforeFeatureData: serializer.serialize(beforeRival),
+          afterFeatureData: serializer.serialize(afterRival)
+        }
+      ]
+    };
+
+    const world = {
+      vertices: [
+        { id: "rival-1", x: 0, y: 0 },
+        { id: "rival-2", x: 1, y: 0 },
+        { id: "rival-3", x: 0, y: 1 }
+      ],
+      features: [beforeRival],
+      layers: []
+    };
+    const worldRepository = {
+      getWorld: vi.fn(async () => world),
+      saveWorld: vi.fn(async () => {})
+    };
+    const editFeatureUseCase = {
+      deleteFeature: vi.fn(async () => {
+        world.features = world.features.filter(feature => feature.id !== payload.featureId);
+      })
+    };
+
+    const command = new AddFeatureCommand(payload, editFeatureUseCase, worldRepository, serializer);
+    const executeResult = await command.execute();
+    expect(executeResult.addedFeature.id).toBe("feature-additional");
+    expect(executeResult.updatedFeatures).toHaveLength(1);
+    expect(executeResult.updatedFeatures[0].id).toBe("poly-rival");
+    expect(world.features.some(feature => feature.id === "feature-additional")).toBe(true);
+    const rivalAfterExecute = world.features.find(feature => feature.id === "poly-rival");
+    expect(rivalAfterExecute.anchors[0].endTime?.year).toBe(2000);
+
+    const reverseResult = await command.reverse();
+    expect(reverseResult.deletedFeatureId).toBe("feature-additional");
+    expect(reverseResult.updatedFeatures).toHaveLength(1);
+    expect(reverseResult.updatedFeatures[0].id).toBe("poly-rival");
+    const rivalAfterReverse = world.features.find(feature => feature.id === "poly-rival");
+    expect(rivalAfterReverse.anchors[0].endTime).toBeNull();
+    expect(world.features.some(feature => feature.id === "feature-additional")).toBe(false);
   });
 
   it("restores deleted entities when undoing DeleteFeatureCommand", async () => {

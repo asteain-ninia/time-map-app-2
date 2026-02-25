@@ -106,4 +106,196 @@ describe("AddFeatureUseCase", () => {
     expect(geometryService.isPolygonSelfIntersecting).toHaveBeenCalledTimes(2);
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
+
+  it("throws FEATURE_ANCHOR_CONFLICTS and rolls back vertices when polygon add has unresolved overlap", async () => {
+    const existingAnchor = new FeatureAnchor({
+      id: "anchor-existing-900",
+      timeRange: { start: new TimePoint(900), end: null },
+      property: { name: "Existing", description: "", attributes: {} },
+      shape: {
+        type: "Polygon",
+        rings: [
+          {
+            id: "ring-existing",
+            vertexIds: ["ex-1", "ex-2", "ex-3"],
+            ringType: "territory",
+            parentId: null
+          }
+        ]
+      },
+      placement: { layerId: "layer-0", parentId: "0", childIds: [] }
+    });
+    world.vertices = [
+      { id: "ex-1", x: 0, y: 0 },
+      { id: "ex-2", x: 10, y: 0 },
+      { id: "ex-3", x: 0, y: 10 }
+    ];
+    world.features = [
+      globalThis.createAnchoredPolygon(
+        "polygon-existing",
+        [existingAnchor],
+        "layer-0",
+        "0",
+        [],
+        [
+          {
+            id: "ring-existing",
+            vertexIds: ["ex-1", "ex-2", "ex-3"],
+            ringType: "territory",
+            parentId: null
+          }
+        ]
+      )
+    ];
+
+    const processGeometryWithNewVertices = vi.fn((_, targetWorld) => {
+      const additions = [
+        { id: "new-1", x: 1, y: 1 },
+        { id: "new-2", x: 9, y: 1 },
+        { id: "new-3", x: 1, y: 9 }
+      ];
+      additions.forEach(vertex => {
+        if (!targetWorld.vertices.some(entry => entry.id === vertex.id)) {
+          targetWorld.vertices.push(vertex);
+        }
+      });
+      return {
+        vertexIds: additions.map(vertex => vertex.id),
+        holesVertexIds: [],
+        parentId: "0"
+      };
+    });
+    layerService.checkExclusivity = vi.fn((_, polygons) => {
+      return !Array.isArray(polygons) || polygons.length <= 1;
+    });
+
+    const useCase = new AddFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      generateId,
+      processGeometryWithNewVertices,
+      getVerticesFromIds
+    );
+    const addAnchor = new FeatureAnchor({
+      id: "anchor-draft",
+      timeRange: { start: new TimePoint(1000), end: null },
+      property: { name: "New", description: "", attributes: {} },
+      shape: {},
+      placement: {}
+    });
+
+    await expect(
+      useCase.execute("polygon", [addAnchor], { vertices: [] }, "layer-0")
+    ).rejects.toMatchObject({
+      code: "FEATURE_ANCHOR_CONFLICTS"
+    });
+
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+    expect(world.features).toHaveLength(1);
+    expect(world.features[0].id).toBe("polygon-existing");
+    expect(world.vertices.map(vertex => vertex.id)).toEqual(["ex-1", "ex-2", "ex-3"]);
+  });
+
+  it("accepts conflict resolutions on polygon add and returns updated side effects when requested", async () => {
+    const existingAnchor = new FeatureAnchor({
+      id: "anchor-existing-900",
+      timeRange: { start: new TimePoint(900), end: null },
+      property: { name: "Existing", description: "", attributes: {} },
+      shape: {
+        type: "Polygon",
+        rings: [
+          {
+            id: "ring-existing",
+            vertexIds: ["ex-1", "ex-2", "ex-3"],
+            ringType: "territory",
+            parentId: null
+          }
+        ]
+      },
+      placement: { layerId: "layer-0", parentId: "0", childIds: [] }
+    });
+    world.vertices = [
+      { id: "ex-1", x: 0, y: 0 },
+      { id: "ex-2", x: 10, y: 0 },
+      { id: "ex-3", x: 0, y: 10 }
+    ];
+    world.features = [
+      globalThis.createAnchoredPolygon(
+        "polygon-existing",
+        [existingAnchor],
+        "layer-0",
+        "0",
+        [],
+        [
+          {
+            id: "ring-existing",
+            vertexIds: ["ex-1", "ex-2", "ex-3"],
+            ringType: "territory",
+            parentId: null
+          }
+        ]
+      )
+    ];
+
+    const processGeometryWithNewVertices = vi.fn((_, targetWorld) => {
+      const additions = [
+        { id: "new-1", x: 1, y: 1 },
+        { id: "new-2", x: 9, y: 1 },
+        { id: "new-3", x: 1, y: 9 }
+      ];
+      additions.forEach(vertex => {
+        if (!targetWorld.vertices.some(entry => entry.id === vertex.id)) {
+          targetWorld.vertices.push(vertex);
+        }
+      });
+      return {
+        vertexIds: additions.map(vertex => vertex.id),
+        holesVertexIds: [],
+        parentId: "0"
+      };
+    });
+    layerService.checkExclusivity = vi.fn((_, polygons) => {
+      return !Array.isArray(polygons) || polygons.length <= 1;
+    });
+
+    const useCase = new AddFeatureUseCase(
+      worldRepository,
+      geometryService,
+      layerService,
+      generateId,
+      processGeometryWithNewVertices,
+      getVerticesFromIds
+    );
+    const addAnchor = new FeatureAnchor({
+      id: "anchor-draft",
+      timeRange: { start: new TimePoint(1000), end: null },
+      property: { name: "New", description: "", attributes: {} },
+      shape: {},
+      placement: {}
+    });
+    const conflictId = "polygon-overlap:polygon-1::polygon-existing:1000:null:null";
+
+    const result = await useCase.execute(
+      "polygon",
+      [addAnchor],
+      { vertices: [] },
+      "layer-0",
+      {
+        returnDetails: true,
+        conflictResolutions: {
+          [conflictId]: { preferFeatureId: "polygon-1" }
+        }
+      }
+    );
+
+    expect(result.feature.id).toBe("polygon-1");
+    expect(result.updatedFeatures.map(feature => feature.id)).toEqual(
+      expect.arrayContaining(["polygon-1", "polygon-existing"])
+    );
+    const existingAfter = world.features.find(feature => feature.id === "polygon-existing");
+    expect(existingAfter).toBeTruthy();
+    expect(existingAfter.anchors[0].endTime?.year).toBe(1000);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
 });

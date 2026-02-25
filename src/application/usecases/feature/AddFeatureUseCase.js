@@ -5,6 +5,7 @@ import { Line } from '../../../domain/entities/Line';
 import { Polygon } from '../../../domain/entities/Polygon';
 import { FeatureAnchor } from '../../../domain/value-objects/FeatureAnchor';
 import { ensurePolygonLayerConstraints } from './polygonLayerValidation.js';
+import { resolvePolygonAnchorConflictsOrThrow } from './polygonAnchorConflictResolution.js';
 
 /**
  * 地理オブジェクトの追加を専門に処理するユースケース
@@ -33,14 +34,20 @@ export class AddFeatureUseCase {
    * @param {FeatureAnchor[]} anchors - 履歴アンカー（FeatureAnchorインスタンスの配列、要素数1を期待）
    * @param {Object} geometry - 形状情報 { vertices?: {x,y}[], vertexIds?: string[], holesVertexIds?: string[][], parentId?: string, isMultiPolygon?: boolean, subPolygons?: object[] }
    * @param {string} layerId - レイヤーID
-   * @returns {Promise<Feature>} 追加されたオブジェクト
+   * @param {{conflictResolutions?: Record<string, {preferFeatureId: string}>, returnDetails?: boolean}} [options]
+   * @returns {Promise<Feature|{feature: Feature, updatedFeatures?: Feature[]}>} 追加されたオブジェクト（詳細要求時は副作用更新を含む）
    */
-  async execute(featureType, anchors, geometry, layerId) {
+  async execute(featureType, anchors, geometry, layerId, options = undefined) {
     if (!Array.isArray(anchors) || anchors.length !== 1 || !(anchors[0] instanceof FeatureAnchor)) {
       throw new Error("Invalid anchors format for AddFeatureUseCase. Expected a single FeatureAnchor instance in an array.");
     }
+    const conflictResolutions = options && typeof options === 'object'
+      ? options.conflictResolutions
+      : undefined;
+    const returnDetails = !!(options && typeof options === 'object' && options.returnDetails === true);
     const world = await this._worldRepository.getWorld();
-    const existingVertexIds = new Set(world.vertices.map(vertex => vertex.id));
+    const originalFeaturesSnapshot = [...world.features];
+    const originalVerticesSnapshot = world.vertices.map(vertex => ({ id: vertex.id, x: vertex.x, y: vertex.y }));
 
     const featureId = this._generateId(featureType);
 
@@ -159,19 +166,55 @@ export class AddFeatureUseCase {
             );
           }
 
-          ensurePolygonLayerConstraints(feature, world, this._layerService, this._geometryService);
           break;
         default:
           throw new Error(`Unknown feature type: ${featureType}`);
       }
+
+      world.features.push(feature);
+
+      const updatedFeatureIds = new Set([feature.id]);
+      if (feature instanceof Polygon) {
+        const conflictResolvedFeatureIds = resolvePolygonAnchorConflictsOrThrow({
+          editedPolygons: [feature],
+          world,
+          layerService: this._layerService,
+          geometryService: this._geometryService,
+          conflictResolutions
+        });
+        conflictResolvedFeatureIds.forEach(id => updatedFeatureIds.add(id));
+
+        const polygonsToValidate = [...updatedFeatureIds]
+          .map(id => world.features.find(candidate => candidate.id === id))
+          .filter(candidate => candidate instanceof Polygon);
+        polygonsToValidate.forEach(polygon => {
+          ensurePolygonLayerConstraints(polygon, world, this._layerService, this._geometryService);
+        });
+      }
+
+      const refreshedFeature = world.features.find(candidate => candidate.id === feature.id);
+      if (!refreshedFeature) {
+        throw new Error(`追加した地物が見つかりません: ${feature.id}`);
+      }
+
+      await this._worldRepository.saveWorld(world);
+
+      if (!returnDetails) {
+        return refreshedFeature;
+      }
+
+      const updatedFeatures = [...updatedFeatureIds]
+        .map(id => world.features.find(candidate => candidate.id === id))
+        .filter(Boolean);
+      return {
+        feature: refreshedFeature,
+        updatedFeatures: updatedFeatures.length > 0 ? updatedFeatures : undefined
+      };
     } catch (error) {
-      this._revertNewVertices(world, existingVertexIds);
+      world.features = [...originalFeaturesSnapshot];
+      world.vertices = originalVerticesSnapshot.map(vertex => ({ id: vertex.id, x: vertex.x, y: vertex.y }));
       throw error;
     }
-
-    world.features.push(feature);
-    await this._worldRepository.saveWorld(world);
-    return feature;
   }
 
   _createAnchorsForNewFeature(featureId, anchors, shape, placement) {

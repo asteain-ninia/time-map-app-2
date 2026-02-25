@@ -16,6 +16,7 @@ export class AddFeatureCommand {
    * @param {string} payload.featureId - 追加された地物のID
    * @param {Object} payload.featureData - 追加された地物のデータ（プレーンオブジェクト）
    * @param {Object[]} payload.addedVerticesData - 追加された頂点のデータ（プレーンオブジェクト）
+   * @param {Array<{featureId:string,beforeFeatureData:Object,afterFeatureData:Object}>} [payload.additionalFeatureChanges]
    * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
    * @param {WorldRepository} worldRepository - ワールドリポジトリ（直接操作用）
    * @param {HistorySerializer} serializer - シリアライザ
@@ -33,35 +34,64 @@ export class AddFeatureCommand {
    */
   async execute() {
     const world = await this._worldRepository.getWorld();
+    let hasChanges = false;
 
     // 1. 頂点を復元
     if (this._payload.addedVerticesData && Array.isArray(this._payload.addedVerticesData)) {
-      let verticesAdded = false;
       this._payload.addedVerticesData.forEach(vData => {
         const vertexInstance = this._serializer.deserialize(vData);
         if (vertexInstance instanceof Vertex && !world.vertices.some(v => v.id === vertexInstance.id)) {
           world.vertices.push({ id: vertexInstance.id, x: vertexInstance.x, y: vertexInstance.y });
-          verticesAdded = true;
+          hasChanges = true;
         }
       });
-      if (verticesAdded) {
-        await this._worldRepository.saveWorld(world);
-      }
     }
     
     // 2. 地物を復元
     const featureInstance = this._serializer.deserialize(this._payload.featureData);
-    if (featureInstance && !world.features.some(f => f.id === featureInstance.id)) {
+    if (featureInstance) {
       const existingFeatureIndex = world.features.findIndex(f => f.id === featureInstance.id);
       if (existingFeatureIndex !== -1) {
           world.features[existingFeatureIndex] = featureInstance;
       } else {
           world.features.push(featureInstance);
       }
-      await this._worldRepository.saveWorld(world);
-      return { addedFeature: featureInstance };
+      hasChanges = true;
     }
-    return {};
+    const additionalUpdatedFeatures = [];
+    const additionalFeatureChanges = Array.isArray(this._payload.additionalFeatureChanges)
+      ? this._payload.additionalFeatureChanges
+      : [];
+    for (const change of additionalFeatureChanges) {
+      const afterFeatureData = change?.afterFeatureData;
+      if (!afterFeatureData) {
+        continue;
+      }
+      const afterFeature = this._serializer.deserialize(afterFeatureData);
+      if (!afterFeature || afterFeature.id === featureInstance?.id) {
+        continue;
+      }
+      const index = world.features.findIndex(feature => feature.id === afterFeature.id);
+      if (index !== -1) {
+        world.features[index] = afterFeature;
+      } else {
+        world.features.push(afterFeature);
+      }
+      hasChanges = true;
+      additionalUpdatedFeatures.push(afterFeature);
+    }
+    if (hasChanges) {
+      await this._worldRepository.saveWorld(world);
+    }
+
+    const result = {};
+    if (featureInstance) {
+      result.addedFeature = featureInstance;
+    }
+    if (additionalUpdatedFeatures.length > 0) {
+      result.updatedFeatures = additionalUpdatedFeatures;
+    }
+    return result;
   }
 
   /**
@@ -70,6 +100,42 @@ export class AddFeatureCommand {
    */
   async reverse() {
     await this._editFeatureUseCase.deleteFeature(this._payload.featureId);
-    return { deletedFeatureId: this._payload.featureId };
+    const additionalUpdatedFeatures = [];
+    const additionalFeatureChanges = Array.isArray(this._payload.additionalFeatureChanges)
+      ? this._payload.additionalFeatureChanges
+      : [];
+
+    if (additionalFeatureChanges.length > 0) {
+      const world = await this._worldRepository.getWorld();
+      let hasChanges = false;
+      for (const change of additionalFeatureChanges) {
+        const beforeFeatureData = change?.beforeFeatureData;
+        if (!beforeFeatureData) {
+          continue;
+        }
+        const beforeFeature = this._serializer.deserialize(beforeFeatureData);
+        if (!beforeFeature || beforeFeature.id === this._payload.featureId) {
+          continue;
+        }
+        const index = world.features.findIndex(feature => feature.id === beforeFeature.id);
+        if (index !== -1) {
+          world.features[index] = beforeFeature;
+        } else {
+          world.features.push(beforeFeature);
+        }
+        hasChanges = true;
+        additionalUpdatedFeatures.push(beforeFeature);
+      }
+
+      if (hasChanges) {
+        await this._worldRepository.saveWorld(world);
+      }
+    }
+
+    const result = { deletedFeatureId: this._payload.featureId };
+    if (additionalUpdatedFeatures.length > 0) {
+      result.updatedFeatures = additionalUpdatedFeatures;
+    }
+    return result;
   }
 }
