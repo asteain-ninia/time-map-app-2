@@ -80,13 +80,30 @@ const buildContext = ({
     deserialize: vi.fn((value) => value)
   };
 
-  const historyService = {
+  let historyService = null;
+  historyService = {
     _serializer: serializer,
     _stackManager: {
       pushUndo: vi.fn()
     },
     _notifyHistoryChanged: vi.fn(),
-    _worldRepository: worldRepository
+    _worldRepository: worldRepository,
+    getSerializer: vi.fn(() => serializer),
+    getWorldRepository: vi.fn(() => worldRepository),
+    serializeForHistory: vi.fn((value) => serializer.serialize(value)),
+    getVerticesDataForFeatureForHistory: vi.fn(async (feature) => {
+      if (!feature) {
+        return [];
+      }
+      const vertexIds = Array.isArray(feature.vertexIds) ? feature.vertexIds : [];
+      return world.vertices
+        .filter(vertex => vertexIds.includes(vertex.id))
+        .map(vertex => ({ id: vertex.id, x: vertex.x, y: vertex.y }));
+    }),
+    recordCommand: vi.fn((command) => {
+      historyService._stackManager.pushUndo(command);
+      historyService._notifyHistoryChanged();
+    })
   };
 
   const eventBus = {

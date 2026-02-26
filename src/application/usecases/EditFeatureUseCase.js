@@ -118,6 +118,15 @@ export class EditFeatureUseCase {
     return this._worldRepository;
   }
 
+  /**
+   * 指定タイプのIDを生成
+   * @param {string} type
+   * @returns {string}
+   */
+  generateId(type) {
+    return this._generateId(type);
+  }
+
   async addFeature(featureType, anchors, geometry, layerId, options = undefined) {
     if (options === undefined) {
       return this._addFeatureUseCase.execute(featureType, anchors, geometry, layerId);

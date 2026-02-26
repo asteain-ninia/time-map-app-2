@@ -53,12 +53,20 @@ describe("EditingViewModelAdding.confirmAddFeature conflict flow", () => {
     const serializer = {
       serialize: vi.fn((value) => value)
     };
-    const historyService = {
+    let historyService = null;
+    historyService = {
       _serializer: serializer,
       _stackManager: { pushUndo: vi.fn() },
       _notifyHistoryChanged: vi.fn(),
       _worldRepository: worldRepository,
-      _getVerticesDataForFeatureForHistory: vi.fn(async () => [{ id: "v-new", x: 1, y: 1 }])
+      getSerializer: vi.fn(() => serializer),
+      getWorldRepository: vi.fn(() => worldRepository),
+      serializeForHistory: vi.fn((value) => serializer.serialize(value)),
+      getVerticesDataForFeatureForHistory: vi.fn(async () => [{ id: "v-new", x: 1, y: 1 }]),
+      recordCommand: vi.fn((command) => {
+        historyService._stackManager.pushUndo(command);
+        historyService._notifyHistoryChanged();
+      })
     };
     const eventBus = {
       publish: vi.fn()
@@ -146,12 +154,21 @@ describe("EditingViewModelAdding.confirmAddFeature conflict flow", () => {
         throw conflictError;
       })
     };
-    const historyService = {
-      _serializer: { serialize: vi.fn((value) => value) },
+    const serializer = { serialize: vi.fn((value) => value) };
+    let historyService = null;
+    historyService = {
+      _serializer: serializer,
       _stackManager: { pushUndo: vi.fn() },
       _notifyHistoryChanged: vi.fn(),
       _worldRepository: worldRepository,
-      _getVerticesDataForFeatureForHistory: vi.fn(async () => [])
+      getSerializer: vi.fn(() => serializer),
+      getWorldRepository: vi.fn(() => worldRepository),
+      serializeForHistory: vi.fn((value) => serializer.serialize(value)),
+      getVerticesDataForFeatureForHistory: vi.fn(async () => []),
+      recordCommand: vi.fn((command) => {
+        historyService._stackManager.pushUndo(command);
+        historyService._notifyHistoryChanged();
+      })
     };
     const eventBus = { publish: vi.fn() };
     const context = {

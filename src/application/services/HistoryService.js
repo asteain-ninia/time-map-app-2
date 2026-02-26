@@ -148,6 +148,49 @@ export class HistoryService {
     this._notifyHistoryChanged();
   }
 
+  /**
+   * 履歴用のシリアライザを取得
+   * @returns {HistorySerializer}
+   */
+  getSerializer() {
+    return this._serializer;
+  }
+
+  /**
+   * ワールドリポジトリを取得
+   * @returns {WorldRepository}
+   */
+  getWorldRepository() {
+    return this._worldRepository;
+  }
+
+  /**
+   * 履歴ペイロード向けにオブジェクトをシリアライズ
+   * @param {any} value
+   * @returns {any}
+   */
+  serializeForHistory(value) {
+    return this._serializer.serialize(value);
+  }
+
+  /**
+   * 地物に紐づく頂点データを履歴用形式で取得
+   * @param {Object} feature
+   * @returns {Promise<Object[]>}
+   */
+  async getVerticesDataForFeatureForHistory(feature) {
+    return this._getVerticesDataForFeatureForHistory(feature);
+  }
+
+  /**
+   * コマンドをアンドゥ履歴へ記録
+   * @param {Object} command
+   */
+  recordCommand(command) {
+    this._stackManager.pushUndo(command);
+    this._notifyHistoryChanged();
+  }
+
   canUndo() {
     return this._stackManager.canUndo();
   }

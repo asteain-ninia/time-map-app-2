@@ -148,19 +148,19 @@ async function confirmSplit(inheritSideIndex, newAnchor, editTime) {
         }
         return {
           featureId: feature.id,
-          beforeFeatureData: this._historyService._serializer.serialize(beforeFeature),
-          afterFeatureData: this._historyService._serializer.serialize(feature)
+          beforeFeatureData: this._historyService.serializeForHistory(beforeFeature),
+          afterFeatureData: this._historyService.serializeForHistory(feature)
         };
       })
       .filter(Boolean);
 
     const payload = {
       polygonId,
-      originalPolygonData: this._historyService._serializer.serialize(originalPolygon),
-      updatedPolygonData: this._historyService._serializer.serialize(result.updatedPolygon),
-      newPolygonData: this._historyService._serializer.serialize(result.newPolygon),
+      originalPolygonData: this._historyService.serializeForHistory(originalPolygon),
+      updatedPolygonData: this._historyService.serializeForHistory(result.updatedPolygon),
+      newPolygonData: this._historyService.serializeForHistory(result.newPolygon),
       addedVerticesData: (result.addedVerticesData || []).map(vData =>
-        this._historyService._serializer.serialize(new Vertex(vData.id, vData.x, vData.y))
+        this._historyService.serializeForHistory(new Vertex(vData.id, vData.x, vData.y))
       ),
       additionalFeatureChanges
     };
@@ -168,11 +168,10 @@ async function confirmSplit(inheritSideIndex, newAnchor, editTime) {
     const command = new SplitPolygonCommand(
       payload,
       this._editFeatureUseCase,
-      this._historyService._worldRepository,
-      this._historyService._serializer
+      this._historyService.getWorldRepository(),
+      this._historyService.getSerializer()
     );
-    this._historyService._stackManager.pushUndo(command);
-    this._historyService._notifyHistoryChanged();
+    this._historyService.recordCommand(command);
 
     this._eventBus.publish('FeatureUpdated', { feature: result.updatedPolygon });
     additionalFeatureChanges.forEach(change => {

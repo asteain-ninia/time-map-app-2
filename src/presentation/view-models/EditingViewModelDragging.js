@@ -145,12 +145,16 @@ async function endVerticesDrag(options = {}) {
         segmentEndVertexId: pendingInfo.segmentEndVertexId,
         newVertexId: pendingInfo.newVertexId,
         newVertexPosition: finalPosition,
-        addedVertexData: this._historyService._serializer.serialize(new Vertex(pendingInfo.newVertexId, finalPosition.x, finalPosition.y)),
+        addedVertexData: this._historyService.serializeForHistory(new Vertex(pendingInfo.newVertexId, finalPosition.x, finalPosition.y)),
         featureBeforeData: pendingInfo.featureBeforeData 
       };
-      const command = new AddVertexToEdgeCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
-      this._historyService._stackManager.pushUndo(command);
-      this._historyService._notifyHistoryChanged();
+      const command = new AddVertexToEdgeCommand(
+        payload,
+        this._editFeatureUseCase,
+        this._historyService.getWorldRepository(),
+        this._historyService.getSerializer()
+      );
+      this._historyService.recordCommand(command);
 
       this._eventBus.publish('FeatureUpdated', { feature: result.updatedFeature });
     } catch (error) {
@@ -173,8 +177,8 @@ async function endVerticesDrag(options = {}) {
       vertexUpdatesForUseCase.push({ vertexId, newPosition: info.currentPosition });
       historyPayloadUpdates.push({
         vertexId,
-        oldPosition: this._historyService._serializer.serialize(new Vertex(vertexId, info.originalPosition.x, info.originalPosition.y)),
-        newPosition: this._historyService._serializer.serialize(new Vertex(vertexId, info.currentPosition.x, info.currentPosition.y))
+        oldPosition: this._historyService.serializeForHistory(new Vertex(vertexId, info.originalPosition.x, info.originalPosition.y)),
+        newPosition: this._historyService.serializeForHistory(new Vertex(vertexId, info.currentPosition.x, info.currentPosition.y))
       });
     }
 
@@ -231,13 +235,13 @@ async function endVerticesDrag(options = {}) {
           const featureChanges = featureChangesRaw
             .map(change => ({
               featureId: change.featureId,
-              beforeFeatureData: this._historyService._serializer.serialize(change.beforeFeature),
-              afterFeatureData: this._historyService._serializer.serialize(change.afterFeature)
+              beforeFeatureData: this._historyService.serializeForHistory(change.beforeFeature),
+              afterFeatureData: this._historyService.serializeForHistory(change.afterFeature)
             }))
             .filter(change => change.beforeFeatureData && change.afterFeatureData);
 
           const addedVertices = addedVerticesRaw
-            .map(vertex => this._historyService._serializer.serialize(new Vertex(vertex.id, vertex.x, vertex.y)))
+            .map(vertex => this._historyService.serializeForHistory(new Vertex(vertex.id, vertex.x, vertex.y)))
             .filter(Boolean);
 
           if (featureChanges.length > 0) {
@@ -251,11 +255,10 @@ async function endVerticesDrag(options = {}) {
         const command = new MoveVerticesCommand(
           payload,
           this._editFeatureUseCase,
-          this._historyService._serializer,
-          this._historyService._worldRepository
+          this._historyService.getSerializer(),
+          this._historyService.getWorldRepository()
         );
-        this._historyService._stackManager.pushUndo(command);
-        this._historyService._notifyHistoryChanged();
+        this._historyService.recordCommand(command);
 
         if (moveResult?.requiresWorldRefresh) {
           this._eventBus.publish('WorldUpdated');
@@ -485,12 +488,16 @@ async function _shareVerticesWithHistory(vertexId1, vertexId2, options = {}) {
     vertexId1,
     vertexId2,
     keptVertexId: shareResult.keptVertex ? shareResult.keptVertex.id : null,
-    removedVertexData: this._historyService._serializer.serialize(new Vertex(removedVertex.id, removedVertex.x, removedVertex.y)),
-    affectedFeaturesBefore: affectedBefore.map(feature => this._historyService._serializer.serialize(feature))
+    removedVertexData: this._historyService.serializeForHistory(new Vertex(removedVertex.id, removedVertex.x, removedVertex.y)),
+    affectedFeaturesBefore: affectedBefore.map(feature => this._historyService.serializeForHistory(feature))
   };
-  const command = new ShareVerticesCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
-  this._historyService._stackManager.pushUndo(command);
-  this._historyService._notifyHistoryChanged();
+  const command = new ShareVerticesCommand(
+    payload,
+    this._editFeatureUseCase,
+    this._historyService.getWorldRepository(),
+    this._historyService.getSerializer()
+  );
+  this._historyService.recordCommand(command);
 
   return { removedVertexId: removedVertex.id };
 }
@@ -621,7 +628,7 @@ async function addVertexToEdge(edgeInfo) {
       throw new Error(`対象の地物が見つかりません: ${edgeInfo.featureId}`);
     }
 
-    const newVertexId = this._editFeatureUseCase._idGenerationService.generateId('vertex');
+    const newVertexId = this._editFeatureUseCase.generateId('vertex');
     const newVertex = new Vertex(newVertexId, edgeInfo.projectionPoint.x, edgeInfo.projectionPoint.y);
     
     this._pendingVertexAdditionInfo = {
@@ -630,7 +637,7 @@ async function addVertexToEdge(edgeInfo) {
       segmentStartVertexId: edgeInfo.segmentStartVertexId,
       segmentEndVertexId: edgeInfo.segmentEndVertexId,
       newVertexId: newVertex.id,
-      featureBeforeData: this._historyService._serializer.serialize(featureBeforeUpdate)
+      featureBeforeData: this._historyService.serializeForHistory(featureBeforeUpdate)
     };
 
     this.addTemporaryElement({

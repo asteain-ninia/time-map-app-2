@@ -33,11 +33,19 @@ const buildContext = ({ splitResult, splitError = null }) => {
   const serializer = {
     serialize: vi.fn((value) => value)
   };
-  const historyService = {
+  let historyService = null;
+  historyService = {
     _serializer: serializer,
     _stackManager: { pushUndo: vi.fn() },
     _notifyHistoryChanged: vi.fn(),
-    _worldRepository: worldRepository
+    _worldRepository: worldRepository,
+    getSerializer: vi.fn(() => serializer),
+    getWorldRepository: vi.fn(() => worldRepository),
+    serializeForHistory: vi.fn((value) => serializer.serialize(value)),
+    recordCommand: vi.fn((command) => {
+      historyService._stackManager.pushUndo(command);
+      historyService._notifyHistoryChanged();
+    })
   };
   const eventBus = {
     publish: vi.fn()
@@ -146,11 +154,19 @@ describe("EditingViewModelSplit.confirmSplit", () => {
         .mockResolvedValueOnce(splitResult)
     };
     const serializer = { serialize: vi.fn(value => value) };
-    const historyService = {
+    let historyService = null;
+    historyService = {
       _serializer: serializer,
       _stackManager: { pushUndo: vi.fn() },
       _notifyHistoryChanged: vi.fn(),
-      _worldRepository: worldRepository
+      _worldRepository: worldRepository,
+      getSerializer: vi.fn(() => serializer),
+      getWorldRepository: vi.fn(() => worldRepository),
+      serializeForHistory: vi.fn((value) => serializer.serialize(value)),
+      recordCommand: vi.fn((command) => {
+        historyService._stackManager.pushUndo(command);
+        historyService._notifyHistoryChanged();
+      })
     };
     const eventBus = { publish: vi.fn() };
     const context = {

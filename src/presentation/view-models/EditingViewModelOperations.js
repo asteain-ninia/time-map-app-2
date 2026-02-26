@@ -106,16 +106,20 @@ async function deleteFeature(featureId, feature) {
   
   const payload = {
     featureId: featureId,
-    featureData: this._historyService._serializer.serialize(feature),
-    verticesToRestoreData: await this._historyService._getVerticesDataForFeatureForHistory(feature)
+    featureData: this._historyService.serializeForHistory(feature),
+    verticesToRestoreData: await this._historyService.getVerticesDataForFeatureForHistory(feature)
   };
 
   try {
     await this._editFeatureUseCase.deleteFeature(featureId);
 
-    const command = new DeleteFeatureCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
-    this._historyService._stackManager.pushUndo(command);
-    this._historyService._notifyHistoryChanged();
+    const command = new DeleteFeatureCommand(
+      payload,
+      this._editFeatureUseCase,
+      this._historyService.getWorldRepository(),
+      this._historyService.getSerializer()
+    );
+    this._historyService.recordCommand(command);
 
     this._eventBus.publish('FeatureDeleted', { featureId });
     this._eventBus.publish('ClearSelection');
@@ -209,8 +213,8 @@ async function deleteVertices(vertexIds, options = undefined) {
     
     const payload = {
       deletedVertexIds: result.deletedVertexIds,
-      verticesToRestoreData: verticesToRestore.map(v => this._historyService._serializer.serialize(v)),
-      affectedFeaturesBefore: affectedFeaturesBefore.map(f => this._historyService._serializer.serialize(f)),
+      verticesToRestoreData: verticesToRestore.map(v => this._historyService.serializeForHistory(v)),
+      affectedFeaturesBefore: affectedFeaturesBefore.map(f => this._historyService.serializeForHistory(f)),
       editTime: editTime
         ? { year: editTime.year, month: editTime.month, day: editTime.day }
         : null
@@ -219,9 +223,13 @@ async function deleteVertices(vertexIds, options = undefined) {
       payload.conflictResolutions = deleteOptions.conflictResolutions;
     }
     
-    const command = new DeleteVerticesCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
-    this._historyService._stackManager.pushUndo(command);
-    this._historyService._notifyHistoryChanged();
+    const command = new DeleteVerticesCommand(
+      payload,
+      this._editFeatureUseCase,
+      this._historyService.getWorldRepository(),
+      this._historyService.getSerializer()
+    );
+    this._historyService.recordCommand(command);
 
     if (result?.deletedFeatureIds?.length > 0) { result.deletedFeatureIds.forEach(id => this._eventBus.publish('FeatureDeleted', { featureId: id })); }
     if (result?.updatedFeatureIds?.length > 0) {
@@ -273,12 +281,16 @@ async function unlinkSharedVertex(vertexId, featureId) {
     vertexId,
     featureId,
     newVertexId: newVertex.id,
-    newVertexData: this._historyService._serializer.serialize(new Vertex(newVertex.id, newVertex.x, newVertex.y)),
-    featureBeforeData: this._historyService._serializer.serialize(featureBefore)
+    newVertexData: this._historyService.serializeForHistory(new Vertex(newVertex.id, newVertex.x, newVertex.y)),
+    featureBeforeData: this._historyService.serializeForHistory(featureBefore)
   };
-  const command = new UnlinkSharedVertexCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
-  this._historyService._stackManager.pushUndo(command);
-  this._historyService._notifyHistoryChanged();
+  const command = new UnlinkSharedVertexCommand(
+    payload,
+    this._editFeatureUseCase,
+    this._historyService.getWorldRepository(),
+    this._historyService.getSerializer()
+  );
+  this._historyService.recordCommand(command);
 
   this._eventBus.publish('WorldUpdated');
   return result;
@@ -433,8 +445,8 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
         const afterAnchors = getFeatureTimelineAnchors(feature);
         return {
           featureId: feature.id,
-          oldAnchors: beforeAnchors.map(anchor => this._historyService._serializer.serialize(anchor)),
-          newAnchors: afterAnchors.map(anchor => this._historyService._serializer.serialize(anchor))
+          oldAnchors: beforeAnchors.map(anchor => this._historyService.serializeForHistory(anchor)),
+          newAnchors: afterAnchors.map(anchor => this._historyService.serializeForHistory(anchor))
         };
       });
 
@@ -446,17 +458,16 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
       ? new BatchUpdatePropertiesCommand(
           { updates: updatesPayload },
           this._editFeatureUseCase,
-          this._historyService._serializer,
-          this._historyService._worldRepository
+          this._historyService.getSerializer(),
+          this._historyService.getWorldRepository()
         )
       : new UpdatePropertiesCommand(
           updatesPayload[0],
           this._editFeatureUseCase,
-          this._historyService._serializer,
-          this._historyService._worldRepository
+          this._historyService.getSerializer(),
+          this._historyService.getWorldRepository()
         );
-    this._historyService._stackManager.pushUndo(command);
-    this._historyService._notifyHistoryChanged();
+    this._historyService.recordCommand(command);
 
     updatedFeatures.forEach(feature => {
       this._eventBus.publish('FeatureUpdated', { feature });

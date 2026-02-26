@@ -40,11 +40,20 @@ describe("EditingViewModelDragging.endVerticesDrag conflict resolution", () => {
         .mockResolvedValueOnce(moveResult),
       getWorldRepository: vi.fn(() => worldRepository)
     };
-    const historyService = {
-      _serializer: { serialize: vi.fn(value => value) },
+    const serializer = { serialize: vi.fn(value => value) };
+    let historyService = null;
+    historyService = {
+      _serializer: serializer,
       _stackManager: { pushUndo: vi.fn() },
       _notifyHistoryChanged: vi.fn(),
-      _worldRepository: worldRepository
+      _worldRepository: worldRepository,
+      getSerializer: vi.fn(() => serializer),
+      getWorldRepository: vi.fn(() => worldRepository),
+      serializeForHistory: vi.fn((value) => serializer.serialize(value)),
+      recordCommand: vi.fn((command) => {
+        historyService._stackManager.pushUndo(command);
+        historyService._notifyHistoryChanged();
+      })
     };
     const eventBus = { publish: vi.fn() };
     const context = {

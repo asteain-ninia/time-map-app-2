@@ -281,23 +281,27 @@ async function confirmAddFeature(anchors, layerId) {
         }
         return {
           featureId: updatedFeature.id,
-          beforeFeatureData: this._historyService._serializer.serialize(beforeFeature),
-          afterFeatureData: this._historyService._serializer.serialize(updatedFeature)
+          beforeFeatureData: this._historyService.serializeForHistory(beforeFeature),
+          afterFeatureData: this._historyService.serializeForHistory(updatedFeature)
         };
       })
       .filter(Boolean);
 
     const payload = {
       featureId: feature.id,
-      featureData: this._historyService._serializer.serialize(feature),
-      addedVerticesData: await this._historyService._getVerticesDataForFeatureForHistory(feature)
+      featureData: this._historyService.serializeForHistory(feature),
+      addedVerticesData: await this._historyService.getVerticesDataForFeatureForHistory(feature)
     };
     if (additionalFeatureChanges.length > 0) {
       payload.additionalFeatureChanges = additionalFeatureChanges;
     }
-    const command = new AddFeatureCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
-    this._historyService._stackManager.pushUndo(command);
-    this._historyService._notifyHistoryChanged();
+    const command = new AddFeatureCommand(
+      payload,
+      this._editFeatureUseCase,
+      this._historyService.getWorldRepository(),
+      this._historyService.getSerializer()
+    );
+    this._historyService.recordCommand(command);
 
     this._clearAddingState();
     additionalFeatureChanges.forEach(change => {
@@ -345,12 +349,16 @@ async function confirmAddHole() {
       polygonId: polygonId,
       addedRing: addedRingPlain ? { ...addedRingPlain } : null,
       addedVerticesData: newlyAddedVerticesData.map(vData => 
-        this._historyService._serializer.serialize(new Vertex(vData.id, vData.x, vData.y))
+        this._historyService.serializeForHistory(new Vertex(vData.id, vData.x, vData.y))
       )
     };
-    const command = new AddRingCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
-    this._historyService._stackManager.pushUndo(command);
-    this._historyService._notifyHistoryChanged();
+    const command = new AddRingCommand(
+      payload,
+      this._editFeatureUseCase,
+      this._historyService.getWorldRepository(),
+      this._historyService.getSerializer()
+    );
+    this._historyService.recordCommand(command);
 
     this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
     this._clearAddingState();
@@ -393,12 +401,16 @@ async function confirmAddEnclave() {
       polygonId: polygonId,
       addedRing: addedRingPlain ? { ...addedRingPlain } : null,
       addedVerticesData: newlyAddedVerticesData.map(vData => 
-        this._historyService._serializer.serialize(new Vertex(vData.id, vData.x, vData.y))
+        this._historyService.serializeForHistory(new Vertex(vData.id, vData.x, vData.y))
       )
     };
-    const command = new AddRingCommand(payload, this._editFeatureUseCase, this._historyService._worldRepository, this._historyService._serializer);
-    this._historyService._stackManager.pushUndo(command);
-    this._historyService._notifyHistoryChanged();
+    const command = new AddRingCommand(
+      payload,
+      this._editFeatureUseCase,
+      this._historyService.getWorldRepository(),
+      this._historyService.getSerializer()
+    );
+    this._historyService.recordCommand(command);
     
     this._eventBus.publish('FeatureUpdated', { feature: updatedPolygon });
     this._clearAddingState();
