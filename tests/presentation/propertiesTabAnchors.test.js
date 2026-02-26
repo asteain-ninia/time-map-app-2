@@ -90,6 +90,10 @@ function getAnchorTimebarViewport(parent) {
   return parent.querySelector('.anchor-timebar-viewport');
 }
 
+function getAnchorTimebarLabel(parent, anchorKey) {
+  return parent.querySelector(`.anchor-timebar-item-label[data-anchor-key="${anchorKey}"]`);
+}
+
 function flushAsync() {
   return new Promise(resolve => setTimeout(resolve, 0));
 }
@@ -288,9 +292,47 @@ describe('PropertiesTabView anchor UI', () => {
     await flushAsync();
 
     const firstAnchorButton = parent.querySelector('button[data-anchor-key="0||"]');
+    const firstAnchorLabel = getAnchorTimebarLabel(parent, '0||');
     expect(firstAnchorButton).not.toBeNull();
-    expect(firstAnchorButton.textContent).toBe('');
+    expect(firstAnchorLabel).not.toBeNull();
+    expect(firstAnchorLabel.style.display).toBe('none');
+    expect(firstAnchorLabel.textContent).toBe('');
     expect(firstAnchorButton.title).toContain('Anchor-0');
+  });
+
+  it('keeps anchor name inside viewport when occupancy is high in zoomed view', async () => {
+    const feature = createFeature([
+      createProperty(0, 600, 'Anchor-0'),
+      createProperty(600, null, 'Anchor-600')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(0));
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getAnchorModeButton(parent, 'bar').click();
+    await flushAsync();
+
+    let viewport = getAnchorTimebarViewport(parent);
+    for (let i = 0; i < 8; i += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+      viewport = getAnchorTimebarViewport(parent);
+    }
+    await flushAsync();
+
+    viewport = getAnchorTimebarViewport(parent);
+    viewport.scrollTop = 180;
+    viewport.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await flushAsync();
+
+    const label = getAnchorTimebarLabel(parent, '0||');
+    expect(label).not.toBeNull();
+    expect(label.textContent).toContain('Anchor-0');
+
+    const labelTop = Number.parseFloat(label.style.top || '0');
+    const viewportHeight = viewport.clientHeight || Number.parseFloat(viewport.style.height || '240');
+    expect(labelTop).toBeGreaterThanOrEqual(viewport.scrollTop);
+    expect(labelTop).toBeLessThanOrEqual(viewport.scrollTop + viewportHeight);
   });
 
   it('switches selected anchor and reflects it in form fields', () => {

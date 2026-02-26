@@ -401,6 +401,7 @@ export class PropertiesTabView {
       const button = this._createAnchorSelectionButton(feature, property);
       button.classList.add('anchor-timebar-item');
       const fullLabel = button.textContent;
+      button.textContent = '';
       button.style.cssText = `
         position: absolute;
         left: 66px;
@@ -421,9 +422,32 @@ export class PropertiesTabView {
       `;
       button.title = fullLabel;
       button.setAttribute('aria-label', fullLabel);
+
+      const label = document.createElement('span');
+      label.className = 'anchor-timebar-item-label';
+      label.dataset.anchorKey = anchorKey;
+      label.textContent = '';
+      label.style.cssText = `
+        position: absolute;
+        left: 72px;
+        right: 12px;
+        top: ${renderedTop + (renderedHeight / 2)}px;
+        transform: translateY(-50%);
+        color: #1a202c;
+        font-size: 0.82em;
+        line-height: 1.2;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        pointer-events: none;
+        display: none;
+      `;
+
       content.appendChild(button);
+      content.appendChild(label);
       anchorItems.push({
         button,
+        label,
         fullLabel,
         top: renderedTop,
         bottom: renderedTop + renderedHeight
@@ -473,10 +497,24 @@ export class PropertiesTabView {
       bottomBoundaryLabel.textContent = `下端 ${this._formatTimelineBoundary(bottomScalar)}`;
 
       anchorItems.forEach(item => {
-        const visibleHeight = Math.max(0, Math.min(item.bottom, viewportBottom) - Math.max(item.top, scrollTop));
+        const visibleTop = Math.max(item.top, scrollTop);
+        const visibleBottom = Math.min(item.bottom, viewportBottom);
+        const visibleHeight = Math.max(0, visibleBottom - visibleTop);
         const visibleRatio = visibleHeight / viewportHeight;
         const shouldShowName = visibleHeight >= 16 && visibleRatio >= minLabelScreenRatio;
-        item.button.textContent = shouldShowName ? item.fullLabel : '';
+        if (!shouldShowName) {
+          item.label.style.display = 'none';
+          item.label.textContent = '';
+          return;
+        }
+
+        const minLabelTop = scrollTop + 10;
+        const maxLabelTop = Math.max(minLabelTop, viewportBottom - 10);
+        const centeredTop = (visibleTop + visibleBottom) / 2;
+        const labelTop = this._clampScalar(centeredTop, minLabelTop, maxLabelTop);
+        item.label.style.top = `${labelTop}px`;
+        item.label.style.display = 'block';
+        item.label.textContent = item.fullLabel;
       });
     };
 
