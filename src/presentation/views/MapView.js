@@ -335,19 +335,32 @@ export class MapView {
     const delayMs = this._getZoomRenderDelayMs();
     if (delayMs <= 0) {
       this._zoomRenderTimeoutId = null;
-      const viewport = this._viewportManager.getViewport();
-      if (this._renderer && typeof this._renderer.updateZoomScale === 'function') {
-        this._renderer.updateZoomScale(viewport);
-      }
+      this._applyZoomSettledRender();
       return;
     }
     this._zoomRenderTimeoutId = setTimeout(() => {
       this._zoomRenderTimeoutId = null;
-      const viewport = this._viewportManager.getViewport();
-      if (this._renderer && typeof this._renderer.updateZoomScale === 'function') {
-        this._renderer.updateZoomScale(viewport);
-      }
+      this._applyZoomSettledRender();
     }, delayMs);
+  }
+
+  _applyZoomSettledRender() {
+    const viewport = this._viewportManager.getViewport();
+    if (this._renderer && typeof this._renderer.updateZoomScale === 'function') {
+      this._renderer.updateZoomScale(viewport);
+    }
+
+    const world = this._viewModel.getWorld();
+    const currentTime = this._viewModel.getCurrentTime();
+    const projectSettings = this._viewModel.getProjectSettings();
+    const canRefreshPolygonLabels = this._renderer && typeof this._renderer.refreshPolygonLabels === 'function';
+    if (canRefreshPolygonLabels && world && currentTime && projectSettings) {
+      this._renderer.refreshPolygonLabels(world, viewport, currentTime, projectSettings);
+      this._requestRender('overlay-full');
+      return;
+    }
+
+    this._requestRender();
   }
 
   _requestRender(mode = 'full') {

@@ -232,6 +232,136 @@ export class SVGRenderer {
   }
 
   /**
+   * 面情報ラベルのみを再計算・再描画する。
+   * パス再生成を避け、ズーム確定時の負荷を抑える。
+   * @param {Object} world
+   * @param {Object} viewport
+   * @param {TimePoint} currentTime
+   * @param {Object} projectSettings
+   */
+  refreshPolygonLabels(world, viewport, currentTime, projectSettings) {
+    if (!world || !viewport || !currentTime || !this._featuresGroup) return;
+
+    const polygonGroups = new Map();
+    const renderedPolygonGroups = this._featuresGroup.querySelectorAll('g[data-id][class^="polygon-"]');
+    renderedPolygonGroups.forEach(group => {
+      const polygonId = group.getAttribute('data-id');
+      if (polygonId) {
+        polygonGroups.set(polygonId, group);
+      }
+    });
+
+    if (polygonGroups.size === 0) return;
+
+    const verticesMap = new Map(world.vertices.map(vertex => [vertex.id, vertex]));
+    const renderOffsets = this.getRenderOffsets(viewport);
+    const sortedLayers = [...world.layers].sort((a, b) => a.order - b.order);
+
+    for (const layer of sortedLayers) {
+      if (!layer.visible) continue;
+      const layerPolygons = world.features.filter(feature =>
+        feature instanceof Polygon &&
+        (typeof feature.getLayerIdAt === 'function' ? feature.getLayerIdAt(currentTime) : feature.layerId) === layer.id &&
+        feature.existsAt(currentTime)
+      );
+
+      for (const polygon of layerPolygons) {
+        const polygonGroup = polygonGroups.get(polygon.id);
+        if (!polygonGroup) continue;
+        this._refreshSinglePolygonLabelGroup(
+          polygonGroup,
+          polygon,
+          verticesMap,
+          currentTime,
+          viewport,
+          projectSettings,
+          renderOffsets
+        );
+      }
+    }
+  }
+
+  _refreshSinglePolygonLabelGroup(group, polygon, verticesMap, currentTime, viewport, projectSettings, renderOffsets) {
+    const removableLabels = [];
+    for (const node of Array.from(group.childNodes)) {
+      if (node.nodeType === 1 && node.tagName && node.tagName.toLowerCase() === 'text') {
+        removableLabels.push(node);
+      }
+    }
+    removableLabels.forEach(node => node.remove());
+
+    const property = polygon.getPropertyAt(currentTime);
+    if (!property) return;
+
+    const style = this._getPolygonStyle(property);
+    if (!property.name || !style.showLabel) return;
+
+    const rings = typeof polygon.getRingsAt === 'function'
+      ? polygon.getRingsAt(currentTime)
+      : polygon.rings;
+    if (!rings || rings.length === 0) return;
+
+    const childrenByRingId = new Map();
+    for (const ring of rings) {
+      childrenByRingId.set(ring.id, []);
+    }
+    for (const ring of rings) {
+      if (ring.parentId !== null && ring.parentId !== undefined) {
+        const bucket = childrenByRingId.get(ring.parentId);
+        if (bucket) bucket.push(ring);
+      }
+    }
+
+    const ringVerticesCache = new Map();
+    for (const ring of rings) {
+      const ringVertices = ring.vertexIds
+        .map(id => verticesMap.get(id))
+        .filter(vertex => vertex);
+      ringVerticesCache.set(ring.id, ringVertices);
+    }
+
+    const labelAnchors = determinePolygonLabelAnchors(
+      polygon,
+      childrenByRingId,
+      viewport,
+      ringVerticesCache,
+      resolveMinLabelScreenRatio(projectSettings)
+    );
+    if (labelAnchors.length === 0) return;
+
+    const zoom = viewport.zoom;
+    if (!Number.isFinite(zoom) || zoom <= 0) return;
+
+    const baseFontSize = style.fontSize || 12;
+    const finalOffsets = Array.isArray(renderOffsets) && renderOffsets.length > 0
+      ? renderOffsets
+      : [0];
+
+    for (const offsetX of finalOffsets) {
+      for (const anchorInfo of labelAnchors) {
+        const anchor = anchorInfo.anchor;
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", this._toScreenX(anchor.x + offsetX, viewport));
+        text.setAttribute("y", -this._toScreenY(anchor.y, viewport));
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("dominant-baseline", "middle");
+        text.setAttribute(
+          "font-size",
+          Math.max(6 / zoom, Math.min(20 / zoom, baseFontSize / zoom))
+        );
+        text.setAttribute("fill", style.textColor);
+        text.style.textShadow = "1px 1px 0 #fff, -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff";
+        text.textContent = property.name;
+        text.setAttribute("pointer-events", "none");
+        text.dataset.baseFontSize = String(baseFontSize);
+        text.dataset.baseFontMin = "6";
+        text.dataset.baseFontMax = "20";
+        group.appendChild(text);
+      }
+    }
+  }
+
+  /**
  * 地図を描画
  * @param {Object} world - 世界データ
  * @param {Object} viewport - ビューポート情報 { x, y, zoom, width, height }
