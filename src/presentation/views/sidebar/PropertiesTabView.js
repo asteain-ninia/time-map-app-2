@@ -8,6 +8,10 @@ import {
 import { AnchorConflictResolutionDialog } from './AnchorConflictResolutionDialog.js';
 
 // MapViewModel, EditingViewModel はコンストラクタで受け取る想定
+const ANCHOR_DISPLAY_MODE_LIST = 'list';
+const ANCHOR_DISPLAY_MODE_BAR = 'bar';
+const ANCHOR_BAR_MIN_ZOOM_PERCENT = 100;
+const ANCHOR_BAR_ZOOM_STEP_PERCENT = 10;
 
 export class PropertiesTabView {
   /**
@@ -25,6 +29,9 @@ export class PropertiesTabView {
     this._propertiesContainer = null; // プロパティフォームを保持するコンテナ
     this._timeFieldRefs = {};
     this._selectedAnchorKeysByFeature = new Map();
+    this._anchorDisplayMode = ANCHOR_DISPLAY_MODE_LIST;
+    this._anchorBarZoomPercent = ANCHOR_BAR_MIN_ZOOM_PERCENT;
+    this._anchorBarScrollTopByFeature = new Map();
     this._anchorConflictResolutionDialog = new AnchorConflictResolutionDialog();
 
     this._initializeDOM();
@@ -243,31 +250,14 @@ export class PropertiesTabView {
     title.style.cssText = 'font-weight: bold; margin-bottom: 6px;';
     section.appendChild(title);
 
-    const selectedAnchorKey = selectedAnchor ? getAnchorKey(getPropertyStartAnchor(selectedAnchor)) : '';
+    section.appendChild(this._buildAnchorDisplayModeToggle());
 
-    const list = document.createElement('div');
-    list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;';
-    sortedProperties.forEach(property => {
-      const anchor = getPropertyStartAnchor(property);
-      const anchorKey = getAnchorKey(anchor);
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = `${this._formatTimePoint(anchor)}  ${property.name || '名称未設定'}`;
-      button.style.cssText = `
-        text-align: left;
-        border: 1px solid ${anchorKey === selectedAnchorKey ? '#2b6cb0' : '#ccc'};
-        background: ${anchorKey === selectedAnchorKey ? '#ebf8ff' : '#fff'};
-        padding: 4px 6px;
-        cursor: pointer;
-      `;
-      button.addEventListener('click', () => {
-        this._setSelectedAnchorKey(feature.id, anchorKey);
-        this._moveTimelineToAnchorStart(anchor);
-        this.update();
-      });
-      list.appendChild(button);
-    });
-    section.appendChild(list);
+    const selectedAnchorKey = selectedAnchor ? getAnchorKey(getPropertyStartAnchor(selectedAnchor)) : '';
+    if (this._anchorDisplayMode === ANCHOR_DISPLAY_MODE_BAR) {
+      section.appendChild(this._buildAnchorBarView(feature, sortedProperties, selectedAnchorKey));
+    } else {
+      section.appendChild(this._buildAnchorListView(feature, sortedProperties, selectedAnchorKey));
+    }
 
     const actionRow = document.createElement('div');
     actionRow.style.cssText = 'display: flex; gap: 6px; flex-wrap: wrap;';
@@ -287,6 +277,393 @@ export class PropertiesTabView {
 
     section.appendChild(actionRow);
     this._propertiesContainer.appendChild(section);
+  }
+
+  _buildAnchorDisplayModeToggle() {
+    const row = document.createElement('div');
+    row.style.cssText = 'display: flex; gap: 6px; margin-bottom: 8px;';
+
+    const createToggleButton = (mode, label) => {
+      const button = document.createElement('button');
+      const isActive = this._anchorDisplayMode === mode;
+      button.type = 'button';
+      button.textContent = label;
+      button.dataset.anchorViewMode = mode;
+      button.style.cssText = `
+        border: 1px solid ${isActive ? '#2b6cb0' : '#ccc'};
+        background: ${isActive ? '#ebf8ff' : '#fff'};
+        padding: 4px 8px;
+        cursor: pointer;
+      `;
+      button.addEventListener('click', () => this._setAnchorDisplayMode(mode));
+      return button;
+    };
+
+    row.appendChild(createToggleButton(ANCHOR_DISPLAY_MODE_LIST, 'リスト表示'));
+    row.appendChild(createToggleButton(ANCHOR_DISPLAY_MODE_BAR, '時間バー表示'));
+    return row;
+  }
+
+  _setAnchorDisplayMode(mode) {
+    if (mode !== ANCHOR_DISPLAY_MODE_LIST && mode !== ANCHOR_DISPLAY_MODE_BAR) {
+      return;
+    }
+    if (this._anchorDisplayMode === mode) {
+      return;
+    }
+    this._anchorDisplayMode = mode;
+    this.update();
+  }
+
+  _buildAnchorListView(feature, sortedProperties, selectedAnchorKey) {
+    const list = document.createElement('div');
+    list.className = 'anchor-list-view';
+    list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;';
+    sortedProperties.forEach(property => {
+      const anchor = getPropertyStartAnchor(property);
+      const anchorKey = getAnchorKey(anchor);
+      const button = this._createAnchorSelectionButton(feature, property);
+      button.style.cssText = `
+        text-align: left;
+        border: 1px solid ${anchorKey === selectedAnchorKey ? '#2b6cb0' : '#ccc'};
+        background: ${anchorKey === selectedAnchorKey ? '#ebf8ff' : '#fff'};
+        padding: 4px 6px;
+        cursor: pointer;
+      `;
+      list.appendChild(button);
+    });
+    return list;
+  }
+
+  _buildAnchorBarView(feature, sortedProperties, selectedAnchorKey) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'anchor-timebar-wrapper';
+    wrapper.style.cssText = 'margin-bottom: 8px;';
+
+    const range = this._resolveAnchorBarRange(sortedProperties);
+    const topBoundaryLabel = document.createElement('div');
+    topBoundaryLabel.className = 'anchor-timebar-boundary-top';
+    topBoundaryLabel.style.cssText = 'font-size: 0.75em; color: #4a5568; margin-bottom: 4px;';
+    wrapper.appendChild(topBoundaryLabel);
+
+    const scrollEnabled = this._anchorBarZoomPercent > ANCHOR_BAR_MIN_ZOOM_PERCENT;
+    const viewport = document.createElement('div');
+    viewport.className = 'anchor-timebar-viewport';
+    viewport.dataset.anchorZoomPercent = String(this._anchorBarZoomPercent);
+    viewport.dataset.scrollEnabled = scrollEnabled ? 'true' : 'false';
+    viewport.style.cssText = `
+      border: 1px solid #ccc;
+      background: #f8fafc;
+      height: 240px;
+      overflow-y: ${scrollEnabled ? 'auto' : 'hidden'};
+      overflow-x: hidden;
+      position: relative;
+      padding: 4px;
+    `;
+
+    viewport.addEventListener('wheel', event => this._handleAnchorBarWheel(event, feature.id), { passive: false });
+
+    const featureKey = String(feature.id);
+
+    const contentHeight = Math.max(240, Math.round(240 * (this._anchorBarZoomPercent / 100)));
+    const content = document.createElement('div');
+    content.className = 'anchor-timebar-content';
+    content.style.cssText = `position: relative; height: ${contentHeight}px; min-height: 240px;`;
+
+    const axis = document.createElement('div');
+    axis.className = 'anchor-timebar-axis';
+    axis.style.cssText = 'position: absolute; left: 58px; top: 0; bottom: 0; width: 2px; background: #a0aec0;';
+    content.appendChild(axis);
+
+    const topPadding = 16;
+    const bottomPadding = 16;
+    const availableHeight = Math.max(1, contentHeight - topPadding - bottomPadding);
+    const anchorItems = [];
+    const minLabelScreenRatio = this._getAnchorLabelMinScreenRatio();
+    sortedProperties.forEach(property => {
+      const start = getPropertyStartAnchor(property);
+      if (!start) {
+        return;
+      }
+      const anchorKey = getAnchorKey(start);
+      const startScalar = this._toTimeScalar(start);
+      const endScalar = property.endTime ? this._toTimeScalar(property.endTime) : range.endScalar;
+      const clampedStart = this._clampScalar(startScalar, range.startScalar, range.endScalar);
+      const clampedEnd = this._clampScalar(endScalar, range.startScalar, range.endScalar);
+      const segmentStart = Math.min(clampedStart, clampedEnd);
+      const segmentEnd = Math.max(clampedStart, clampedEnd);
+      const segmentTop = topPadding + this._mapScalarToOffset(segmentStart, range.startScalar, range.endScalar, availableHeight);
+      const segmentBottom = topPadding + this._mapScalarToOffset(segmentEnd, range.startScalar, range.endScalar, availableHeight);
+      const segmentHeight = Math.max(18, segmentBottom - segmentTop);
+      const renderedTop = Math.max(0, Math.min(contentHeight - 18, segmentTop));
+      const renderedHeight = Math.max(18, Math.min(contentHeight - renderedTop, segmentHeight));
+
+      const button = this._createAnchorSelectionButton(feature, property);
+      button.classList.add('anchor-timebar-item');
+      const fullLabel = button.textContent;
+      button.style.cssText = `
+        position: absolute;
+        left: 66px;
+        right: 6px;
+        top: ${renderedTop}px;
+        height: ${renderedHeight}px;
+        border: 1px solid ${anchorKey === selectedAnchorKey ? '#2b6cb0' : '#90cdf4'};
+        background: ${anchorKey === selectedAnchorKey ? '#bee3f8' : '#ebf8ff'};
+        color: #1a202c;
+        text-align: left;
+        font-size: 0.82em;
+        line-height: 1.2;
+        padding: 2px 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+      `;
+      button.title = fullLabel;
+      button.setAttribute('aria-label', fullLabel);
+      content.appendChild(button);
+      anchorItems.push({
+        button,
+        fullLabel,
+        top: renderedTop,
+        bottom: renderedTop + renderedHeight
+      });
+    });
+
+    viewport.appendChild(content);
+    wrapper.appendChild(viewport);
+
+    const bottomBoundaryLabel = document.createElement('div');
+    bottomBoundaryLabel.className = 'anchor-timebar-boundary-bottom';
+    bottomBoundaryLabel.style.cssText = 'font-size: 0.75em; color: #4a5568; margin-top: 4px;';
+    wrapper.appendChild(bottomBoundaryLabel);
+
+    const refreshViewportLabelsAndAnchorNames = () => {
+      const viewportHeight = Math.max(
+        1,
+        viewport.clientHeight || Number.parseFloat(viewport.style.height) || 240
+      );
+      const storedScrollTop = this._anchorBarScrollTopByFeature.get(featureKey);
+      const maxScrollTop = Math.max(0, Math.max(viewport.scrollHeight, contentHeight) - viewportHeight);
+      let scrollTop = viewport.scrollTop;
+      if (
+        (!Number.isFinite(scrollTop) || scrollTop === 0) &&
+        Number.isFinite(storedScrollTop) &&
+        storedScrollTop > 0 &&
+        maxScrollTop > 0
+      ) {
+        scrollTop = Math.min(storedScrollTop, maxScrollTop);
+      }
+      const viewportBottom = scrollTop + viewportHeight;
+      const topScalar = this._offsetToScalar(
+        scrollTop,
+        topPadding,
+        availableHeight,
+        range.startScalar,
+        range.endScalar
+      );
+      const bottomScalar = this._offsetToScalar(
+        viewportBottom,
+        topPadding,
+        availableHeight,
+        range.startScalar,
+        range.endScalar
+      );
+      topBoundaryLabel.textContent = `上端 ${this._formatTimelineBoundary(topScalar)}`;
+      bottomBoundaryLabel.textContent = `下端 ${this._formatTimelineBoundary(bottomScalar)}`;
+
+      anchorItems.forEach(item => {
+        const visibleHeight = Math.max(0, Math.min(item.bottom, viewportBottom) - Math.max(item.top, scrollTop));
+        const visibleRatio = visibleHeight / viewportHeight;
+        const shouldShowName = visibleHeight >= 16 && visibleRatio >= minLabelScreenRatio;
+        item.button.textContent = shouldShowName ? item.fullLabel : '';
+      });
+    };
+
+    viewport.addEventListener('scroll', () => {
+      this._anchorBarScrollTopByFeature.set(featureKey, viewport.scrollTop);
+      refreshViewportLabelsAndAnchorNames();
+    });
+
+    refreshViewportLabelsAndAnchorNames();
+
+    const savedScrollTop = this._anchorBarScrollTopByFeature.get(featureKey);
+    queueMicrotask(() => {
+      if (typeof savedScrollTop === 'number' && savedScrollTop > 0) {
+        const viewportHeight = Math.max(
+          1,
+          viewport.clientHeight || Number.parseFloat(viewport.style.height) || 240
+        );
+        const maxScrollTop = Math.max(0, Math.max(viewport.scrollHeight, contentHeight) - viewportHeight);
+        viewport.scrollTop = Math.min(savedScrollTop, maxScrollTop);
+      }
+      refreshViewportLabelsAndAnchorNames();
+    });
+
+    const hint = document.createElement('div');
+    hint.className = 'anchor-timebar-hint';
+    hint.textContent = `ホイールで拡大/縮小 (${this._anchorBarZoomPercent}%)`;
+    hint.style.cssText = 'font-size: 0.75em; color: #4a5568; margin-top: 4px;';
+    wrapper.appendChild(hint);
+
+    return wrapper;
+  }
+
+  _createAnchorSelectionButton(feature, property) {
+    const anchor = getPropertyStartAnchor(property);
+    const anchorKey = getAnchorKey(anchor);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.anchorKey = anchorKey;
+    button.textContent = `${this._formatTimePoint(anchor)}  ${property.name || '名称未設定'}`;
+    button.addEventListener('click', () => {
+      this._setSelectedAnchorKey(feature.id, anchorKey);
+      this._moveTimelineToAnchorStart(anchor);
+      this.update();
+    });
+    return button;
+  }
+
+  _handleAnchorBarWheel(event, featureId) {
+    event.preventDefault();
+    const direction = event.deltaY < 0 ? 1 : -1;
+    const nextZoom = Math.max(
+      ANCHOR_BAR_MIN_ZOOM_PERCENT,
+      this._anchorBarZoomPercent + direction * ANCHOR_BAR_ZOOM_STEP_PERCENT
+    );
+    if (nextZoom === this._anchorBarZoomPercent) {
+      return;
+    }
+    if (event.currentTarget && typeof event.currentTarget.scrollTop === 'number') {
+      this._anchorBarScrollTopByFeature.set(String(featureId), event.currentTarget.scrollTop);
+    }
+    this._anchorBarZoomPercent = nextZoom;
+    this.update();
+  }
+
+  _resolveAnchorBarRange(sortedProperties) {
+    const sliderRange = typeof this._mapViewModel.getTimeSliderRange === 'function'
+      ? this._mapViewModel.getTimeSliderRange()
+      : null;
+    if (Number.isFinite(sliderRange?.min) && Number.isFinite(sliderRange?.max) && sliderRange.max > sliderRange.min) {
+      return {
+        startScalar: sliderRange.min,
+        endScalar: sliderRange.max
+      };
+    }
+
+    let rangeStart = this._toTimeScalar(getPropertyStartAnchor(sortedProperties[0])) || 0;
+    let rangeEnd = rangeStart + 1;
+
+    sortedProperties.forEach(property => {
+      const startScalar = this._toTimeScalar(getPropertyStartAnchor(property));
+      const endScalar = property.endTime ? this._toTimeScalar(property.endTime) : null;
+      if (Number.isFinite(startScalar)) {
+        rangeStart = Math.min(rangeStart, startScalar);
+        rangeEnd = Math.max(rangeEnd, startScalar);
+      }
+      if (Number.isFinite(endScalar)) {
+        rangeStart = Math.min(rangeStart, endScalar);
+        rangeEnd = Math.max(rangeEnd, endScalar);
+      }
+    });
+
+    if (!Number.isFinite(rangeStart)) {
+      rangeStart = 0;
+    }
+    if (!Number.isFinite(rangeEnd)) {
+      rangeEnd = rangeStart + 1;
+    }
+    if (rangeEnd <= rangeStart) {
+      rangeEnd = rangeStart + 1;
+    }
+
+    return { startScalar: rangeStart, endScalar: rangeEnd };
+  }
+
+  _getAnchorLabelMinScreenRatio() {
+    const projectSettings = typeof this._mapViewModel.getProjectSettings === 'function'
+      ? this._mapViewModel.getProjectSettings()
+      : null;
+    const configuredRatio = projectSettings?.rendering?.minLabelScreenRatio;
+    if (Number.isFinite(configuredRatio) && configuredRatio > 0) {
+      return Math.max(0.02, Math.min(0.3, Math.sqrt(configuredRatio)));
+    }
+    return 0.05;
+  }
+
+  _toTimeScalar(timePoint) {
+    if (!timePoint) {
+      return NaN;
+    }
+    const baseYear = Number(timePoint.year);
+    if (!Number.isFinite(baseYear)) {
+      return NaN;
+    }
+    if (timePoint.month === null || timePoint.month === undefined) {
+      return baseYear;
+    }
+
+    const calendar = typeof this._mapViewModel.getCalendarConfig === 'function'
+      ? this._mapViewModel.getCalendarConfig()
+      : null;
+    const monthsPerYear = Number.isFinite(calendar?.monthsPerYear) && calendar.monthsPerYear > 0
+      ? calendar.monthsPerYear
+      : 12;
+    const month = Math.max(1, Math.min(monthsPerYear, Number(timePoint.month)));
+    if (!Number.isFinite(month)) {
+      return baseYear;
+    }
+
+    let scalar = baseYear + (month - 1) / monthsPerYear;
+    if (timePoint.day !== null && timePoint.day !== undefined) {
+      let daysInMonth = 30;
+      if (typeof this._mapViewModel.getDaysInMonth === 'function') {
+        const resolvedDays = this._mapViewModel.getDaysInMonth(baseYear, month);
+        if (Number.isFinite(resolvedDays) && resolvedDays > 0) {
+          daysInMonth = resolvedDays;
+        }
+      }
+      const day = Math.max(1, Math.min(daysInMonth, Number(timePoint.day)));
+      if (Number.isFinite(day)) {
+        scalar += ((day - 1) / daysInMonth) / monthsPerYear;
+      }
+    }
+
+    return scalar;
+  }
+
+  _clampScalar(value, min, max) {
+    if (!Number.isFinite(value)) {
+      return min;
+    }
+    return Math.max(min, Math.min(max, value));
+  }
+
+  _mapScalarToOffset(value, start, end, size) {
+    if (!Number.isFinite(value) || !Number.isFinite(start) || !Number.isFinite(end) || end <= start || size <= 0) {
+      return 0;
+    }
+    const ratio = (value - start) / (end - start);
+    return Math.max(0, Math.min(size, ratio * size));
+  }
+
+  _offsetToScalar(offset, padding, size, start, end) {
+    if (!Number.isFinite(offset) || !Number.isFinite(padding) || !Number.isFinite(size) || size <= 0 || end <= start) {
+      return start;
+    }
+    const ratio = this._clampScalar((offset - padding) / size, 0, 1);
+    return start + (end - start) * ratio;
+  }
+
+  _formatTimelineBoundary(value) {
+    if (!Number.isFinite(value)) {
+      return '不明';
+    }
+    if (Number.isInteger(value)) {
+      return `${value}`;
+    }
+    return value.toFixed(2).replace(/\.00$/, '');
   }
 
   _moveTimelineToAnchorStart(anchorStartTime) {

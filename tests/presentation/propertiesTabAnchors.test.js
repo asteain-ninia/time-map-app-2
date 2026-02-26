@@ -28,6 +28,7 @@ function createFeature(properties) {
 
 function createMapViewModel(feature, currentTime) {
   let time = currentTime;
+  const sliderRange = { min: 0, max: 1000 };
   const world = {
     features: [feature],
     vertices: [{ id: 'v1', x: 0, y: 0 }],
@@ -46,6 +47,8 @@ function createMapViewModel(feature, currentTime) {
     getCalendarConfig: () => ({ monthsPerYear: 12 }),
     getDaysInMonth: () => 31,
     createTimePoint: (year, month = null, day = null) => new TimePoint(year, month, day),
+    getTimeSliderRange: () => sliderRange,
+    getProjectSettings: () => ({ rendering: { minLabelScreenRatio: 0.0005 } }),
     getFeatures: () => [feature],
     getWorld: () => world
   };
@@ -68,8 +71,7 @@ function getAnchorButtons(parent) {
   if (!section) {
     return [];
   }
-  const list = section.children[1];
-  return [...list.querySelectorAll('button')];
+  return [...section.querySelectorAll('button[data-anchor-key]')];
 }
 
 function getButtonByText(parent, text) {
@@ -78,6 +80,14 @@ function getButtonByText(parent, text) {
 
 function getButtonByIncludedText(parent, fragment) {
   return [...parent.querySelectorAll('button')].find(button => button.textContent.includes(fragment)) || null;
+}
+
+function getAnchorModeButton(parent, mode) {
+  return parent.querySelector(`button[data-anchor-view-mode="${mode}"]`);
+}
+
+function getAnchorTimebarViewport(parent) {
+  return parent.querySelector('.anchor-timebar-viewport');
 }
 
 function flushAsync() {
@@ -121,6 +131,166 @@ describe('PropertiesTabView anchor UI', () => {
     expect(names[0]).toContain('Anchor-1000');
     expect(names[1]).toContain('Anchor-1100');
     expect(names[2]).toContain('Anchor-1300');
+  });
+
+  it('switches anchor display mode between list and time bar', () => {
+    const feature = createFeature([
+      createProperty(1000, 1300, 'Anchor-1000'),
+      createProperty(1300, null, 'Anchor-1300')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(1100));
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    expect(parent.querySelector('.anchor-list-view')).not.toBeNull();
+    expect(getAnchorTimebarViewport(parent)).toBeNull();
+
+    getAnchorModeButton(parent, 'bar').click();
+    expect(parent.querySelector('.anchor-list-view')).toBeNull();
+    expect(getAnchorTimebarViewport(parent)).not.toBeNull();
+
+    getAnchorModeButton(parent, 'list').click();
+    expect(parent.querySelector('.anchor-list-view')).not.toBeNull();
+    expect(getAnchorTimebarViewport(parent)).toBeNull();
+  });
+
+  it('zooms time bar by wheel and never goes below 100 percent', () => {
+    const feature = createFeature([
+      createProperty(1000, 1100, 'Anchor-1000'),
+      createProperty(1300, null, 'Anchor-1300')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(1000));
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getAnchorModeButton(parent, 'bar').click();
+
+    let viewport = getAnchorTimebarViewport(parent);
+    expect(viewport.dataset.anchorZoomPercent).toBe('100');
+    expect(viewport.dataset.scrollEnabled).toBe('false');
+
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+    viewport = getAnchorTimebarViewport(parent);
+    expect(viewport.dataset.anchorZoomPercent).toBe('110');
+    expect(viewport.dataset.scrollEnabled).toBe('true');
+
+    for (let i = 0; i < 20; i += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }));
+      viewport = getAnchorTimebarViewport(parent);
+    }
+
+    expect(viewport.dataset.anchorZoomPercent).toBe('100');
+    expect(viewport.dataset.scrollEnabled).toBe('false');
+  });
+
+  it('keeps timeline boundary labels within screen area while zooming', async () => {
+    const feature = createFeature([
+      createProperty(1000, 1100, 'Anchor-1000'),
+      createProperty(1300, null, 'Anchor-1300')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(1000));
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getAnchorModeButton(parent, 'bar').click();
+    await flushAsync();
+
+    const viewport = getAnchorTimebarViewport(parent);
+    const topBoundaryLabel = parent.querySelector('.anchor-timebar-boundary-top');
+    const bottomBoundaryLabel = parent.querySelector('.anchor-timebar-boundary-bottom');
+    expect(topBoundaryLabel).not.toBeNull();
+    expect(bottomBoundaryLabel).not.toBeNull();
+    expect(topBoundaryLabel.textContent).toContain('上端');
+    expect(bottomBoundaryLabel.textContent).toContain('下端');
+    expect(topBoundaryLabel.closest('.anchor-timebar-content')).toBeNull();
+    expect(bottomBoundaryLabel.closest('.anchor-timebar-content')).toBeNull();
+
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+    await flushAsync();
+    const topBoundaryLabelAfterZoom = parent.querySelector('.anchor-timebar-boundary-top');
+    const bottomBoundaryLabelAfterZoom = parent.querySelector('.anchor-timebar-boundary-bottom');
+    expect(topBoundaryLabelAfterZoom).not.toBeNull();
+    expect(bottomBoundaryLabelAfterZoom).not.toBeNull();
+    expect(topBoundaryLabelAfterZoom.closest('.anchor-timebar-content')).toBeNull();
+    expect(bottomBoundaryLabelAfterZoom.closest('.anchor-timebar-content')).toBeNull();
+  });
+
+  it('shows viewport edge times and updates them when scrolled in zoomed view', async () => {
+    const feature = createFeature([
+      createProperty(0, 200, 'Anchor-0'),
+      createProperty(200, 400, 'Anchor-200'),
+      createProperty(400, 600, 'Anchor-400'),
+      createProperty(600, 800, 'Anchor-600'),
+      createProperty(800, null, 'Anchor-800')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(0));
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getAnchorModeButton(parent, 'bar').click();
+    await flushAsync();
+
+    let topBoundaryLabel = parent.querySelector('.anchor-timebar-boundary-top');
+    let bottomBoundaryLabel = parent.querySelector('.anchor-timebar-boundary-bottom');
+    expect(topBoundaryLabel.textContent).toContain('上端 0');
+    expect(bottomBoundaryLabel.textContent).toContain('下端 1000');
+
+    let viewport = getAnchorTimebarViewport(parent);
+    for (let i = 0; i < 8; i += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+      viewport = getAnchorTimebarViewport(parent);
+    }
+    await flushAsync();
+    viewport = getAnchorTimebarViewport(parent);
+    viewport.scrollTop = 120;
+    viewport.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await flushAsync();
+
+    topBoundaryLabel = parent.querySelector('.anchor-timebar-boundary-top');
+    bottomBoundaryLabel = parent.querySelector('.anchor-timebar-boundary-bottom');
+    expect(topBoundaryLabel.textContent).not.toContain('上端 0');
+    expect(bottomBoundaryLabel.textContent).not.toContain('下端 1000');
+  });
+
+  it('hides anchor name when visible screen occupancy is too small', async () => {
+    const feature = createFeature([
+      createProperty(0, 200, 'Anchor-0'),
+      createProperty(200, 400, 'Anchor-200'),
+      createProperty(400, 600, 'Anchor-400'),
+      createProperty(600, 800, 'Anchor-600'),
+      createProperty(800, null, 'Anchor-800')
+    ]);
+    const mapViewModel = createMapViewModel(feature, new TimePoint(0));
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+    getAnchorModeButton(parent, 'bar').click();
+    await flushAsync();
+
+    let viewport = getAnchorTimebarViewport(parent);
+    for (let i = 0; i < 8; i += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+      viewport = getAnchorTimebarViewport(parent);
+    }
+    await flushAsync();
+
+    viewport = getAnchorTimebarViewport(parent);
+    const firstAnchorButtonBefore = parent.querySelector('button[data-anchor-key="0||"]');
+    const topOffset = Number.parseFloat(firstAnchorButtonBefore.style.top || '0');
+    const height = Number.parseFloat(firstAnchorButtonBefore.style.height || '0');
+    viewport.scrollTop = Math.max(1, Math.round(topOffset + height - 6));
+    viewport.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await flushAsync();
+
+    const firstAnchorButton = parent.querySelector('button[data-anchor-key="0||"]');
+    expect(firstAnchorButton).not.toBeNull();
+    expect(firstAnchorButton.textContent).toBe('');
+    expect(firstAnchorButton.title).toContain('Anchor-0');
   });
 
   it('switches selected anchor and reflects it in form fields', () => {
