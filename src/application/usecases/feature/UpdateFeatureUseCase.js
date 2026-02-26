@@ -68,6 +68,7 @@ export class UpdateFeatureUseCase {
    *                             newStart?: TimePoint,
    *                             newEnd?: TimePoint | null
    *                           },
+   *                           resolvedAnchorsByFeature?: Record<string, FeatureAnchor[]>,
    *                           affectedTimeRange?: { start?: TimePoint, end?: TimePoint | null }
    *                         }
    *                         affectedTimeRange?: { start?: TimePoint, end?: TimePoint | null }
@@ -97,6 +98,11 @@ export class UpdateFeatureUseCase {
     const conflictResolvedFeatureIds = new Set();
 
     const timelineEditPayload = updates.anchorEdit || updates.propertyEdit || null;
+    const hasResolvedAnchorsByFeature = !!timelineEditPayload
+      && Object.prototype.hasOwnProperty.call(timelineEditPayload, 'resolvedAnchorsByFeature');
+    const resolvedAnchorsByFeature = hasResolvedAnchorsByFeature
+      ? this._normalizeResolvedAnchorsByFeature(timelineEditPayload.resolvedAnchorsByFeature)
+      : null;
     const timelineAffectedTimeRange = timelineEditPayload
       ? normalizeAffectedTimeRange(timelineEditPayload.affectedTimeRange)
       : null;
@@ -125,8 +131,29 @@ export class UpdateFeatureUseCase {
 
     // プロパティ更新
     if (timelineEditPayload) {
-      const mergedAnchors = this._buildAnchorsForEditTime(updatedFeature, timelineEditPayload);
-      updatedFeature = this._applyAnchorsToFeature(updatedFeature, mergedAnchors, featureId);
+      if (resolvedAnchorsByFeature) {
+        if (!Object.prototype.hasOwnProperty.call(resolvedAnchorsByFeature, featureId)) {
+          throw new Error(`resolvedAnchorsByFeature に編集対象地物 ${featureId} が含まれていません。`);
+        }
+        const resolvedFeatureIds = Object.keys(resolvedAnchorsByFeature);
+        for (const resolvedFeatureId of resolvedFeatureIds) {
+          const resolvedFeatureIndex = world.features.findIndex(feature => feature.id === resolvedFeatureId);
+          if (resolvedFeatureIndex === -1) {
+            throw new Error(`resolvedAnchorsByFeature に存在しない地物IDが含まれています: ${resolvedFeatureId}`);
+          }
+          const resolvedFeature = world.features[resolvedFeatureIndex];
+          const resolvedAnchors = resolvedAnchorsByFeature[resolvedFeatureId];
+          const replacedFeature = this._applyAnchorsToFeature(resolvedFeature, resolvedAnchors, resolvedFeatureId);
+          world.features[resolvedFeatureIndex] = replacedFeature;
+          conflictResolvedFeatureIds.add(resolvedFeatureId);
+          if (resolvedFeatureId === featureId) {
+            updatedFeature = replacedFeature;
+          }
+        }
+      } else {
+        const mergedAnchors = this._buildAnchorsForEditTime(updatedFeature, timelineEditPayload);
+        updatedFeature = this._applyAnchorsToFeature(updatedFeature, mergedAnchors, featureId);
+      }
     } else if (hasAnchorsUpdate) {
       let normalizedAnchors;
       if (Array.isArray(updates.anchors)) {
@@ -240,8 +267,10 @@ export class UpdateFeatureUseCase {
 
     if (updatedFeature instanceof Polygon) {
       try {
-        const shouldResolveAnchorConflicts = !!timelineEditPayload
-          || (hasAnchorsUpdate && hasAnchorConflictResolutions);
+        const shouldResolveAnchorConflicts = (
+          !!timelineEditPayload
+          && !resolvedAnchorsByFeature
+        ) || (hasAnchorsUpdate && hasAnchorConflictResolutions);
         if (shouldResolveAnchorConflicts) {
           const conflictResolutions = timelineEditPayload
             ? timelineEditPayload.conflictResolutions
@@ -681,6 +710,35 @@ export class UpdateFeatureUseCase {
       candidate = `${base}-${suffix}`;
     }
     return candidate;
+  }
+
+  _normalizeResolvedAnchorsByFeature(resolvedAnchorsByFeature) {
+    if (
+      !resolvedAnchorsByFeature
+      || typeof resolvedAnchorsByFeature !== 'object'
+      || Array.isArray(resolvedAnchorsByFeature)
+    ) {
+      throw new Error('resolvedAnchorsByFeature の形式が不正です。');
+    }
+
+    const normalized = {};
+    const entries = Object.entries(resolvedAnchorsByFeature);
+    if (entries.length === 0) {
+      throw new Error('resolvedAnchorsByFeature には1件以上の地物を指定してください。');
+    }
+
+    for (const [rawFeatureId, rawAnchors] of entries) {
+      const normalizedFeatureId = typeof rawFeatureId === 'string' ? rawFeatureId.trim() : '';
+      if (normalizedFeatureId === '') {
+        throw new Error('resolvedAnchorsByFeature の地物IDが不正です。');
+      }
+      if (!Array.isArray(rawAnchors) || rawAnchors.length === 0) {
+        throw new Error(`resolvedAnchorsByFeature.${normalizedFeatureId} は1件以上の履歴アンカー配列で指定してください。`);
+      }
+      normalized[normalizedFeatureId] = this._normalizeAndValidateAnchorTimeline(rawAnchors);
+    }
+
+    return normalized;
   }
 
   _resolvePropertyEditConflictsOrThrow(updatedPolygon, world, conflictResolutions, affectedTimeRange = null) {

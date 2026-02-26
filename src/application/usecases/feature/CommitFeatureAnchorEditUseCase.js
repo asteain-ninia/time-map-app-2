@@ -39,6 +39,7 @@ export class CommitFeatureAnchorEditUseCase {
     };
     if (hasConflicts) {
       propertyEdit.conflictResolutions = draft.conflictResolutions;
+      propertyEdit.resolvedAnchorsByFeature = effectiveResolvedAnchors;
     }
 
     try {

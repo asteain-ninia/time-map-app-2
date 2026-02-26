@@ -368,6 +368,60 @@ describe("UpdateFeatureUseCase anchor updates", () => {
     expectNameAt(afterPastEdit.feature, 1350, "B");
   });
 
+  it("applies resolvedAnchorsByFeature without recalculating timeline edits", async () => {
+    const point1Initial = createProperty(1000, "Point1");
+    const point2Initial = createProperty(1000, "Point2");
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [point1Initial], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-2", ["v1"], [point2Initial], "layer-1"));
+
+    const point1Resolved = createPointAnchor(1000, "Point1-Resolved");
+    const point2Resolved = createPointAnchor(1000, "Point2-Resolved");
+
+    const result = await useCase.execute("point-1", {
+      propertyEdit: {
+        editTime: new TimePoint(1000),
+        startTime: new TimePoint(1000),
+        endTime: null,
+        name: "Ignored",
+        description: "",
+        resolvedAnchorsByFeature: {
+          "point-1": [point1Resolved],
+          "point-2": [point2Resolved]
+        }
+      }
+    });
+
+    expect(result.feature.anchors).toHaveLength(1);
+    expect(result.feature.anchors[0].name).toBe("Point1-Resolved");
+    expect(result.updatedFeatures.map(feature => feature.id).sort()).toEqual(["point-1", "point-2"]);
+    expect(world.features.find(feature => feature.id === "point-2").anchors[0].name).toBe("Point2-Resolved");
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects resolvedAnchorsByFeature that does not include edited feature", async () => {
+    const point1Initial = createProperty(1000, "Point1");
+    const point2Initial = createProperty(1000, "Point2");
+    world.features.push(globalThis.createAnchoredPoint("point-1", ["v1"], [point1Initial], "layer-1"));
+    world.features.push(globalThis.createAnchoredPoint("point-2", ["v1"], [point2Initial], "layer-1"));
+
+    const point2Resolved = createPointAnchor(1000, "Point2-Resolved");
+    await expect(
+      useCase.execute("point-1", {
+        propertyEdit: {
+          editTime: new TimePoint(1000),
+          startTime: new TimePoint(1000),
+          endTime: null,
+          name: "Ignored",
+          description: "",
+          resolvedAnchorsByFeature: {
+            "point-2": [point2Resolved]
+          }
+        }
+      })
+    ).rejects.toThrow(/編集対象地物 point-1/);
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
   it("routes polygon anchors updates with conflictResolutions through conflict resolver", async () => {
     const rings = [{ id: "ring-1", vertexIds: ["v1", "v2", "v3"], ringType: "territory", parentId: null }];
     const baseAnchor = new FeatureAnchor({
