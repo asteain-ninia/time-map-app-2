@@ -22,8 +22,8 @@ function createProperty(startYear, endYear, name, description = '') {
   });
 }
 
-function createFeature(properties) {
-  return globalThis.createAnchoredPoint('feature-1', ['v1'], properties, 'layer-1');
+function createFeature(properties, id = 'feature-1') {
+  return globalThis.createAnchoredPoint(id, ['v1'], properties, 'layer-1');
 }
 
 function createMapViewModel(feature, currentTime) {
@@ -58,6 +58,30 @@ function createEditingViewModelMock() {
   return {
     updateFeatureProperties: vi.fn(async () => {}),
     deleteFeature: vi.fn(async () => {})
+  };
+}
+
+function createSelectionStateMapViewModel({
+  selectionContextFeature = null,
+  selectedFeatureIds = [],
+  selectedVertexIds = [],
+  vertexOwnerIds = [],
+  visibleFeatures = [],
+  worldFeatures = visibleFeatures,
+  currentTime = new TimePoint(0)
+} = {}) {
+  return {
+    getSelectionContextFeature: () => selectionContextFeature,
+    getSelectedFeatureIds: () => new Set(selectedFeatureIds),
+    getSelectedVertexIds: () => new Set(selectedVertexIds),
+    getVertexSelectionOwnerIds: () => new Set(vertexOwnerIds),
+    getCurrentTime: () => currentTime,
+    getFeatures: () => visibleFeatures,
+    getWorld: () => ({
+      features: worldFeatures,
+      vertices: [],
+      layers: []
+    })
   };
 }
 
@@ -852,5 +876,66 @@ describe('PropertiesTabView anchor UI', () => {
     const deleteAnchorButton = getButtonByText(parent, '選択アンカー削除');
     expect(deleteAnchorButton).not.toBeNull();
     expect(deleteAnchorButton.disabled).toBe(true);
+  });
+
+  it('shows no-selection message when no feature or vertex is selected', () => {
+    const mapViewModel = createSelectionStateMapViewModel();
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+
+    expect(parent.textContent).toContain('地物または頂点が選択されていません');
+  });
+
+  it('shows ambiguous message when selected vertices have no owners', () => {
+    const mapViewModel = createSelectionStateMapViewModel({
+      selectedVertexIds: ['v-1']
+    });
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+
+    expect(parent.textContent).toContain('選択された頂点の所有者を特定できません');
+  });
+
+  it('shows multi-selection message for multiple selected features', () => {
+    const featureA = createFeature([createProperty(0, null, 'Feature-A')], 'feature-a');
+    const featureB = createFeature([createProperty(0, null, 'Feature-B')], 'feature-b');
+    const mapViewModel = createSelectionStateMapViewModel({
+      selectedFeatureIds: [featureA.id, featureB.id],
+      visibleFeatures: [featureA, featureB]
+    });
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+
+    const listItems = [...parent.querySelectorAll('.properties-multi-selection li')]
+      .map(item => item.textContent);
+    expect(parent.textContent).toContain('複数の地物が選択されています');
+    expect(listItems).toContain(`Feature-A (ID: ${featureA.id})`);
+    expect(listItems).toContain(`Feature-B (ID: ${featureB.id})`);
+  });
+
+  it('shows multi-selection message for vertices owned by multiple features', () => {
+    const featureA = createFeature([createProperty(0, null, 'Owner-A')], 'owner-a');
+    const featureB = createFeature([createProperty(0, null, 'Owner-B')], 'owner-b');
+    const mapViewModel = createSelectionStateMapViewModel({
+      selectedVertexIds: ['v-shared'],
+      vertexOwnerIds: [featureA.id, featureB.id],
+      worldFeatures: [featureA, featureB]
+    });
+    const editingViewModel = createEditingViewModelMock();
+    const view = new PropertiesTabView(parent, mapViewModel, editingViewModel);
+
+    view.update();
+
+    const listItems = [...parent.querySelectorAll('.properties-multi-selection li')]
+      .map(item => item.textContent);
+    expect(parent.textContent).toContain('複数の地物が選択されています');
+    expect(listItems).toContain(`Owner-A (ID: ${featureA.id})`);
+    expect(listItems).toContain(`Owner-B (ID: ${featureB.id})`);
   });
 });
