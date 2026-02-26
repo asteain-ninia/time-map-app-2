@@ -296,6 +296,10 @@ export class UpdateFeatureUseCase {
     };
 }
 
+  buildAnchorsForEditDraft(feature, anchorEdit) {
+    return this._buildAnchorsForEditTime(feature, anchorEdit);
+  }
+
   _buildAnchorsForEditTime(feature, anchorEdit) {
     if (!anchorEdit || typeof anchorEdit !== 'object') {
       throw new Error('anchorEdit の形式が不正です。');

@@ -21,7 +21,14 @@ const buildContext = ({
   updatedFeatures = null,
   updateError = null,
   deleteVerticesResult = { deletedVertexIds: [], updatedFeatureIds: [], deletedFeatureIds: [] },
-  deleteVerticesError = null
+  deleteVerticesError = null,
+  useStagedAnchorEdit = false,
+  prepareResult = null,
+  prepareError = null,
+  resolveResult = null,
+  resolveError = null,
+  commitResult = null,
+  commitError = null
 }) => {
   const worldRepository = {
     getWorld: vi.fn(async () => world)
@@ -41,7 +48,31 @@ const buildContext = ({
       : vi.fn(async () => ({
           feature: updatedFeature,
           updatedFeatures: updatedFeatures || undefined
-        }))
+        })),
+    prepareFeatureAnchorEdit: useStagedAnchorEdit
+      ? (prepareError
+          ? vi.fn(async () => {
+              throw prepareError;
+            })
+          : vi.fn(async () => prepareResult))
+      : undefined,
+    resolveFeatureAnchorConflicts: useStagedAnchorEdit
+      ? (resolveError
+          ? vi.fn(async () => {
+              throw resolveError;
+            })
+          : vi.fn(async () => resolveResult))
+      : undefined,
+    commitFeatureAnchorEdit: useStagedAnchorEdit
+      ? (commitError
+          ? vi.fn(async () => {
+              throw commitError;
+            })
+          : vi.fn(async () => commitResult))
+      : undefined,
+    discardFeatureAnchorEditDraft: useStagedAnchorEdit
+      ? vi.fn()
+      : undefined
   };
 
   const serializer = {
@@ -262,6 +293,108 @@ describe("EditingViewModelOperations.updateFeatureProperties", () => {
     expect(historyService._notifyHistoryChanged).toHaveBeenCalledTimes(1);
     expect(eventBus.publish).toHaveBeenCalledWith("FeatureUpdated", { feature: afterFeatureA });
     expect(eventBus.publish).toHaveBeenCalledWith("FeatureUpdated", { feature: afterFeatureB });
+  });
+
+  it("uses staged Prepare/Resolve/Commit contract for propertyEdit when available", async () => {
+    const beforeFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
+    const afterFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(900, "After")], "layer-1");
+    const world = {
+      features: [beforeFeature],
+      vertices: [{ id: "v1", x: 0, y: 0 }],
+      layers: [{ id: "layer-1", order: 0 }],
+      metadata: {}
+    };
+    const { context, editFeatureUseCase, historyService, eventBus } = buildContext({
+      world,
+      useStagedAnchorEdit: true,
+      prepareResult: {
+        draftId: "draft-1",
+        status: "ready_to_commit",
+        candidateAnchors: afterFeature.anchors,
+        affectedTimeRange: null,
+        conflicts: []
+      },
+      commitResult: {
+        feature: afterFeature,
+        updatedFeatures: [afterFeature],
+        historyEntryId: "draft-1"
+      }
+    });
+
+    const payload = {
+      editTime: new TimePoint(1100),
+      startTime: new TimePoint(900),
+      endTime: new TimePoint(1300),
+      name: "After",
+      description: "boundary",
+      boundaryEdit: {
+        targetAnchorId: beforeFeature.anchors[0].id,
+        newStart: new TimePoint(900),
+        newEnd: new TimePoint(1300)
+      }
+    };
+    const result = await operationMethods.updateFeatureProperties.call(context, "point-1", payload);
+
+    expect(result).toBe(afterFeature);
+    expect(editFeatureUseCase.prepareFeatureAnchorEdit).toHaveBeenCalledTimes(1);
+    expect(editFeatureUseCase.prepareFeatureAnchorEdit).toHaveBeenCalledWith({
+      featureId: "point-1",
+      editMode: "property_only",
+      editTime: payload.editTime,
+      draftPatch: expect.objectContaining({
+        boundaryEdit: payload.boundaryEdit
+      })
+    });
+    expect(editFeatureUseCase.resolveFeatureAnchorConflicts).not.toHaveBeenCalled();
+    expect(editFeatureUseCase.commitFeatureAnchorEdit).toHaveBeenCalledWith({
+      draftId: "draft-1",
+      resolvedAnchorsByFeature: null
+    });
+    expect(editFeatureUseCase.discardFeatureAnchorEditDraft).toHaveBeenCalledWith("draft-1");
+    expect(editFeatureUseCase.updateFeature).not.toHaveBeenCalled();
+    expect(historyService._stackManager.pushUndo).toHaveBeenCalledTimes(1);
+    expect(eventBus.publish).toHaveBeenCalledWith("FeatureUpdated", { feature: afterFeature });
+  });
+
+  it("throws FEATURE_ANCHOR_CONFLICTS when staged prepare requires resolution", async () => {
+    const beforeFeature = globalThis.createAnchoredPoint("point-1", ["v1"], [createProperty(1000, "Before")], "layer-1");
+    const world = {
+      features: [beforeFeature],
+      vertices: [{ id: "v1", x: 0, y: 0 }],
+      layers: [{ id: "layer-1", order: 0 }],
+      metadata: {}
+    };
+    const { context, editFeatureUseCase, historyService, eventBus } = buildContext({
+      world,
+      useStagedAnchorEdit: true,
+      prepareResult: {
+        draftId: "draft-conflict",
+        status: "requires_resolution",
+        candidateAnchors: beforeFeature.anchors,
+        affectedTimeRange: null,
+        conflicts: [{ id: "conflict-1" }]
+      },
+      commitResult: null
+    });
+
+    await expect(
+      operationMethods.updateFeatureProperties.call(context, "point-1", {
+        editTime: new TimePoint(1200),
+        startTime: new TimePoint(1200),
+        endTime: null,
+        name: "After",
+        description: ""
+      })
+    ).rejects.toMatchObject({
+      code: "FEATURE_ANCHOR_CONFLICTS",
+      conflicts: [{ id: "conflict-1" }]
+    });
+
+    expect(editFeatureUseCase.resolveFeatureAnchorConflicts).not.toHaveBeenCalled();
+    expect(editFeatureUseCase.commitFeatureAnchorEdit).not.toHaveBeenCalled();
+    expect(editFeatureUseCase.discardFeatureAnchorEditDraft).toHaveBeenCalledWith("draft-conflict");
+    expect(historyService._stackManager.pushUndo).not.toHaveBeenCalled();
+    expect(eventBus.publish).toHaveBeenCalledWith("WorldUpdated");
   });
 });
 

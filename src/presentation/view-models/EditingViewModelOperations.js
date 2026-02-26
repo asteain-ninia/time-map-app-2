@@ -334,6 +334,72 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
     throw new Error("Invalid propertyUpdate format.");
   }
 
+  const executePropertyEditWithStagedContract = async (propertyEditPayload) => {
+    if (!propertyEditPayload || typeof propertyEditPayload !== 'object') {
+      return null;
+    }
+    const canUseStagedContract = (
+      typeof this._editFeatureUseCase.prepareFeatureAnchorEdit === 'function'
+      && typeof this._editFeatureUseCase.resolveFeatureAnchorConflicts === 'function'
+      && typeof this._editFeatureUseCase.commitFeatureAnchorEdit === 'function'
+    );
+    if (!canUseStagedContract) {
+      return null;
+    }
+
+    let draftId = null;
+    try {
+      const prepareResult = await this._editFeatureUseCase.prepareFeatureAnchorEdit({
+        featureId,
+        editMode: 'property_only',
+        editTime: propertyEditPayload.editTime,
+        draftPatch: propertyEditPayload
+      });
+      draftId = prepareResult?.draftId || null;
+      if (!draftId) {
+        throw new Error('保存前編集案の作成に失敗しました。');
+      }
+
+      let resolvedAnchorsByFeature = null;
+      if (prepareResult.status === 'requires_resolution') {
+        const hasConflictResolutions = (
+          Object.prototype.hasOwnProperty.call(propertyEditPayload, 'conflictResolutions')
+          && propertyEditPayload.conflictResolutions !== undefined
+        );
+        if (!hasConflictResolutions) {
+          const conflictError = new Error('同一レイヤー上の面情報が重なっています。解決方針を指定してください。');
+          conflictError.code = 'FEATURE_ANCHOR_CONFLICTS';
+          conflictError.conflicts = Array.isArray(prepareResult.conflicts) ? prepareResult.conflicts : [];
+          throw conflictError;
+        }
+        const resolveResult = await this._editFeatureUseCase.resolveFeatureAnchorConflicts({
+          draftId,
+          resolutions: propertyEditPayload.conflictResolutions
+        });
+        resolvedAnchorsByFeature = resolveResult?.resolvedAnchorsByFeature || null;
+      }
+
+      const commitResult = await this._editFeatureUseCase.commitFeatureAnchorEdit({
+        draftId,
+        resolvedAnchorsByFeature
+      });
+      const updatedFeatures = Array.isArray(commitResult?.updatedFeatures) && commitResult.updatedFeatures.length > 0
+        ? commitResult.updatedFeatures
+        : (commitResult?.feature ? [commitResult.feature] : []);
+      return {
+        feature: commitResult?.feature || null,
+        updatedFeatures
+      };
+    } finally {
+      if (
+        draftId
+        && typeof this._editFeatureUseCase.discardFeatureAnchorEditDraft === 'function'
+      ) {
+        this._editFeatureUseCase.discardFeatureAnchorEditDraft(draftId);
+      }
+    }
+  };
+
   try {
     const worldRepository = this._editFeatureUseCase.getWorldRepository();
     const world = await worldRepository.getWorld();
@@ -351,7 +417,10 @@ async function updateFeatureProperties(featureId, propertyUpdate) {
       );
     });
 
-    const updateResult = await this._editFeatureUseCase.updateFeature(featureId, updatePayload);
+    const updateResult = updatePayload.propertyEdit
+      ? await executePropertyEditWithStagedContract(updatePayload.propertyEdit)
+        || await this._editFeatureUseCase.updateFeature(featureId, updatePayload)
+      : await this._editFeatureUseCase.updateFeature(featureId, updatePayload);
     const updatedFeature = updateResult.feature;
     const updatedFeatures = Array.isArray(updateResult.updatedFeatures) && updateResult.updatedFeatures.length > 0
       ? updateResult.updatedFeatures

@@ -9,6 +9,10 @@ import { UpdateFeatureUseCase } from './feature/UpdateFeatureUseCase';
 import { DeleteFeatureUseCase } from './feature/DeleteFeatureUseCase';
 import { VertexEditUseCase } from './feature/VertexEditUseCase';
 import { SplitPolygonUseCase } from './feature/SplitPolygonUseCase';
+import { FeatureAnchorEditDraftStore } from './feature/FeatureAnchorEditDraftStore.js';
+import { PrepareFeatureAnchorEditUseCase } from './feature/PrepareFeatureAnchorEditUseCase.js';
+import { ResolveFeatureAnchorConflictsUseCase } from './feature/ResolveFeatureAnchorConflictsUseCase.js';
+import { CommitFeatureAnchorEditUseCase } from './feature/CommitFeatureAnchorEditUseCase.js';
 // import { IPolygonEditService } from '../services/IPolygonEditService'; // リングベース移行後
 import { IdGenerationService } from '../services/IdGenerationService'; // IdGenerationService をインポート
 
@@ -29,6 +33,9 @@ export class EditFeatureUseCase {
    * @param {UpdateFeatureUseCase} [useCaseOverrides.updateFeatureUseCase]
    * @param {DeleteFeatureUseCase} [useCaseOverrides.deleteFeatureUseCase]
    * @param {VertexEditUseCase} [useCaseOverrides.vertexEditUseCase]
+   * @param {PrepareFeatureAnchorEditUseCase} [useCaseOverrides.prepareFeatureAnchorEditUseCase]
+   * @param {ResolveFeatureAnchorConflictsUseCase} [useCaseOverrides.resolveFeatureAnchorConflictsUseCase]
+   * @param {CommitFeatureAnchorEditUseCase} [useCaseOverrides.commitFeatureAnchorEditUseCase]
    */
   constructor(worldRepository, geometryService, layerService, polygonEditService, idGenerationService, useCaseOverrides = {}) { // idGenerationService を引数に追加
     this._worldRepository = worldRepository;
@@ -49,7 +56,10 @@ export class EditFeatureUseCase {
       updateFeatureUseCase,
       deleteFeatureUseCase,
       vertexEditUseCase,
-      splitPolygonUseCase
+      splitPolygonUseCase,
+      prepareFeatureAnchorEditUseCase,
+      resolveFeatureAnchorConflictsUseCase,
+      commitFeatureAnchorEditUseCase
     } = useCaseOverrides || {};
 
     // 専門UseCaseのインスタンス化
@@ -78,6 +88,24 @@ export class EditFeatureUseCase {
       layerService,
       this._generateIdFunc
     );
+    this._featureAnchorEditDraftStore = new FeatureAnchorEditDraftStore();
+    this._prepareFeatureAnchorEditUseCase = prepareFeatureAnchorEditUseCase || new PrepareFeatureAnchorEditUseCase(
+      worldRepository,
+      this._updateFeatureUseCase,
+      layerService,
+      geometryService,
+      this._featureAnchorEditDraftStore
+    );
+    this._resolveFeatureAnchorConflictsUseCase = resolveFeatureAnchorConflictsUseCase || new ResolveFeatureAnchorConflictsUseCase(
+      worldRepository,
+      layerService,
+      geometryService,
+      this._featureAnchorEditDraftStore
+    );
+    this._commitFeatureAnchorEditUseCase = commitFeatureAnchorEditUseCase || new CommitFeatureAnchorEditUseCase(
+      this._updateFeatureUseCase,
+      this._featureAnchorEditDraftStore
+    );
   }
 
   // --- 公開メソッド (委譲) ---
@@ -99,6 +127,24 @@ export class EditFeatureUseCase {
 
   async updateFeature(featureId, updates) {
     return this._updateFeatureUseCase.execute(featureId, updates);
+  }
+
+  async prepareFeatureAnchorEdit(request) {
+    return this._prepareFeatureAnchorEditUseCase.execute(request);
+  }
+
+  async resolveFeatureAnchorConflicts(request) {
+    return this._resolveFeatureAnchorConflictsUseCase.execute(request);
+  }
+
+  async commitFeatureAnchorEdit(request) {
+    return this._commitFeatureAnchorEditUseCase.execute(request);
+  }
+
+  discardFeatureAnchorEditDraft(draftId) {
+    if (this._featureAnchorEditDraftStore) {
+      this._featureAnchorEditDraftStore.delete(draftId);
+    }
   }
 
   async deleteFeature(featureId) {
