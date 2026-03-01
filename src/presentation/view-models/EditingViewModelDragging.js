@@ -40,6 +40,15 @@ function formatFeatureLabel(feature, fallbackId, timePoint = null) {
   return `ID: ${fallbackId}`;
 }
 
+function getVertexPairKey(vertexId1, vertexId2) {
+  if (!vertexId1 || !vertexId2) {
+    return null;
+  }
+  const firstId = String(vertexId1);
+  const secondId = String(vertexId2);
+  return firstId < secondId ? `${firstId}|${secondId}` : `${secondId}|${firstId}`;
+}
+
 /**
  * 複数の頂点のドラッグを開始
  * @param {Map<string, {x: number, y: number}>} vertices - ドラッグする頂点のIDと開始位置のMap
@@ -49,6 +58,11 @@ function startVerticesDrag(vertices) {
   if (!vertices || vertices.size === 0) { return; }
   if (this._draggingVerticesInfo.size > 0) { return; }
   this._draggingVerticesInfo.clear();
+  if (this._shareReactivatedPairKeys instanceof Set) {
+    this._shareReactivatedPairKeys.clear();
+  } else {
+    this._shareReactivatedPairKeys = new Set();
+  }
   for (const [vertexId, position] of vertices.entries()) {
     this._draggingVerticesInfo.set(vertexId, { originalPosition: { ...position }, currentPosition: { ...position } });
   }
@@ -98,7 +112,10 @@ function updateVerticesDrag(deltaX, deltaY, options = {}) {
       positionChanged = true;
     }
   }
-  if (positionChanged) { this._notifyObservers('draggingVertices'); }
+  if (positionChanged) {
+    _updateShareReactivatedPairs.call(this, options);
+    this._notifyObservers('draggingVertices');
+  }
 }
 
 /**
@@ -113,6 +130,9 @@ async function endVerticesDrag(options = {}) {
     this._draggingVerticesInfo.has(this._pendingVertexAdditionInfo.newVertexId);
 
   const dragInfoCopy = new Map(this._draggingVerticesInfo);
+  const shareReactivatedPairKeysCopy = new Set(
+    this._shareReactivatedPairKeys instanceof Set ? this._shareReactivatedPairKeys : []
+  );
   this._resetDraggingState();
 
   if (isChainedFromVertexAddition) {
@@ -263,7 +283,10 @@ async function endVerticesDrag(options = {}) {
         if (moveResult?.requiresWorldRefresh) {
           this._eventBus.publish('WorldUpdated');
         } else {
-          const shareResult = await this._applyVertexSharingAfterDrag(dragInfoCopy, options);
+          const shareResult = await this._applyVertexSharingAfterDrag(dragInfoCopy, {
+            ...options,
+            shareReactivatedPairKeys: shareReactivatedPairKeysCopy
+          });
           if (shareResult.shared) {
             this._eventBus.publish('WorldUpdated');
           } else if (moveResult && moveResult.updatedVertices) {
@@ -295,6 +318,82 @@ function getPendingVertexAdditionInfo() {
   return this._pendingVertexAdditionInfo;
 }
 
+function _updateShareReactivatedPairs(options = {}) {
+  if (!this._draggingVerticesInfo || this._draggingVerticesInfo.size === 0) {
+    return;
+  }
+
+  const snapWorldDistance = Number.isFinite(options?.snapWorldDistance) ? options.snapWorldDistance : null;
+  if (!snapWorldDistance || snapWorldDistance <= 0) {
+    return;
+  }
+
+  const world = options?.world;
+  if (!world || !Array.isArray(world.vertices)) {
+    return;
+  }
+
+  if (!(this._shareReactivatedPairKeys instanceof Set)) {
+    this._shareReactivatedPairKeys = new Set();
+  }
+
+  const featuresForSharing = this._resolveFeaturesForSharing(world, options);
+  const ownerMap = this._buildVertexOwnerMap(featuresForSharing);
+  const visibleVertexIds = new Set(ownerMap.keys());
+  if (visibleVertexIds.size === 0) {
+    return;
+  }
+
+  const verticesMap = new Map(world.vertices.map(v => [v.id, v]));
+  const draggedIds = new Set(this._draggingVerticesInfo.keys());
+  const snapDistanceSq = snapWorldDistance * snapWorldDistance;
+  const worldWidth = Number.isFinite(options?.worldWidth) ? options.worldWidth : null;
+
+  const getCurrentPosition = (vertexId) => {
+    const dragEntry = this._draggingVerticesInfo.get(vertexId);
+    if (dragEntry && dragEntry.currentPosition) {
+      return dragEntry.currentPosition;
+    }
+    return verticesMap.get(vertexId);
+  };
+
+  for (const draggedId of draggedIds) {
+    if (!visibleVertexIds.has(draggedId)) {
+      continue;
+    }
+
+    const draggedVertex = getCurrentPosition(draggedId);
+    if (!draggedVertex) {
+      continue;
+    }
+
+    for (const otherId of visibleVertexIds) {
+      if (otherId === draggedId) continue;
+
+      const pairKey = getVertexPairKey(draggedId, otherId);
+      if (!pairKey || this._shareReactivatedPairKeys.has(pairKey)) {
+        continue;
+      }
+
+      const ownersA = ownerMap.get(draggedId);
+      const ownersB = ownerMap.get(otherId);
+      if (ownersA && ownersB && this._hasOwnerIntersection(ownersA, ownersB)) {
+        continue;
+      }
+
+      const otherVertex = getCurrentPosition(otherId);
+      if (!otherVertex) {
+        continue;
+      }
+
+      const distanceSq = this._calculateDistanceSqWithWrap(draggedVertex, otherVertex, worldWidth);
+      if (distanceSq > snapDistanceSq) {
+        this._shareReactivatedPairKeys.add(pairKey);
+      }
+    }
+  }
+}
+
 /**
  * ドラッグ状態をリセット
  * @private
@@ -303,6 +402,9 @@ function _resetDraggingState() {
   if (this._draggingVerticesInfo.size > 0) {
     this._draggingVerticesInfo.clear();
     this._notifyObservers('draggingVertices');
+  }
+  if (this._shareReactivatedPairKeys instanceof Set) {
+    this._shareReactivatedPairKeys.clear();
   }
   this._vertexSlideContext = null;
 }
@@ -316,7 +418,11 @@ function getSharePreviewVertexIds(options = {}) {
     return new Set();
   }
 
-  const candidates = this._findShareCandidates(this._draggingVerticesInfo, world, { ...options, useDragPositions: true });
+  const candidates = this._findShareCandidates(this._draggingVerticesInfo, world, {
+    ...options,
+    useDragPositions: true,
+    shareReactivatedPairKeys: this._shareReactivatedPairKeys
+  });
   if (candidates.length === 0) {
     return new Set();
   }
@@ -358,6 +464,9 @@ function _findShareCandidates(dragInfo, world, options) {
   const draggedIds = new Set(dragInfo.keys());
   const snapDistanceSq = snapWorldDistance * snapWorldDistance;
   const worldWidth = Number.isFinite(options?.worldWidth) ? options.worldWidth : null;
+  const shareReactivatedPairKeys = options?.shareReactivatedPairKeys instanceof Set
+    ? options.shareReactivatedPairKeys
+    : (this._shareReactivatedPairKeys instanceof Set ? this._shareReactivatedPairKeys : null);
   const candidates = [];
   const visitedPairs = new Set();
   const useDragPositions = options?.useDragPositions === true;
@@ -391,7 +500,8 @@ function _findShareCandidates(dragInfo, world, options) {
 
     for (const otherId of visibleVertexIds) {
       if (otherId === draggedId) continue;
-      const pairKey = draggedId < otherId ? `${draggedId}|${otherId}` : `${otherId}|${draggedId}`;
+      const pairKey = getVertexPairKey(draggedId, otherId);
+      if (!pairKey) continue;
       if (visitedPairs.has(pairKey)) continue;
       visitedPairs.add(pairKey);
 
@@ -413,7 +523,8 @@ function _findShareCandidates(dragInfo, world, options) {
         continue;
       }
       const originalDistanceSq = this._calculateDistanceSqWithWrap(originalPosA, originalPosB, worldWidth);
-      if (originalDistanceSq <= snapDistanceSq) continue;
+      const reactivatedDuringDrag = shareReactivatedPairKeys ? shareReactivatedPairKeys.has(pairKey) : false;
+      if (originalDistanceSq <= snapDistanceSq && !reactivatedDuringDrag) continue;
 
       candidates.push({ vertexId1: draggedId, vertexId2: otherId, distanceSq });
     }

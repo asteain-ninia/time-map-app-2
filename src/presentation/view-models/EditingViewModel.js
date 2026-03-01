@@ -30,6 +30,7 @@ export class EditingViewModel {
     this._addingSubMode = null;
     this._temporaryElements = [];
     this._draggingVerticesInfo = new Map();
+    this._shareReactivatedPairKeys = new Set();
     this._vertexSlideContext = null;
     this._pendingVertexAdditionInfo = null; // 線上点追加からドラッグ操作への連携用
     this._splitPlan = null;

@@ -267,9 +267,11 @@ export class MapViewEventHandler {
 
             // ViewModelにワールド座標での総移動量を渡す
             const world = this._viewModel.getWorld();
+            const shareSnapOptions = this._getSharedVertexSnapOptions();
             this._editingViewModel.updateVerticesDrag(totalDeltaXWorld, -totalDeltaYWorld, {
               world,
-              geometryService: this._viewModel._geometryService
+              geometryService: this._viewModel._geometryService,
+              ...shareSnapOptions
             });
         }
         // 他のモード・ツールでのドラッグは何もしない（追加モードなど）
