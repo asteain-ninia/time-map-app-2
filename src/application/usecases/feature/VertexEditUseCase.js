@@ -1037,6 +1037,7 @@ export class VertexEditUseCase {
       updatedVertices: addedVertices,
       affectedFeatures: historyFeatureChanges.map(change => change.afterFeature),
       requiresWorldRefresh: true,
+      replacementMap,
       historyPatch: {
         featureChanges: historyFeatureChanges,
         addedVertices
@@ -1316,22 +1317,15 @@ export class VertexEditUseCase {
     return candidate;
   }
 
-  /**
-   * 頂点を共有化
-   * @param {string} vertexId1 - 頂点1のID
-   * @param {string} vertexId2 - 頂点2のID
-   * @param {Object} [options]
-   * @param {string} [options.preferredKeptVertexId] - 優先して残す頂点ID
-   * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures }
-   */
-  async shareVertices(vertexId1, vertexId2, options = {}) {
-    const world = await this._worldRepository.getWorld();
+  _resolveShareVerticesTargets(world, vertexId1, vertexId2, options = {}) {
     if (vertexId1 === vertexId2) {
-        throw new Error('Cannot share the same vertex.');
+      throw new Error('Cannot share the same vertex.');
     }
     const vertex1 = world.vertices.find(v => v.id === vertexId1);
     const vertex2 = world.vertices.find(v => v.id === vertexId2);
-    if (!vertex1 || !vertex2) throw new Error('One or both vertices not found');
+    if (!vertex1 || !vertex2) {
+      throw new Error('One or both vertices not found');
+    }
 
     const preferredKeptVertexId = options?.preferredKeptVertexId;
     const hasPreferredKeptVertex = preferredKeptVertexId === vertexId1 || preferredKeptVertexId === vertexId2;
@@ -1341,6 +1335,36 @@ export class VertexEditUseCase {
     const removedVertexId = keptVertexId === vertexId1 ? vertexId2 : vertexId1;
     const keptVertex = keptVertexId === vertexId1 ? vertex1 : vertex2;
     const removedVertex = keptVertexId === vertexId1 ? vertex2 : vertex1;
+
+    return {
+      keptVertexId,
+      removedVertexId,
+      keptVertex,
+      removedVertex
+    };
+  }
+
+  /**
+   * 頂点を共有化
+   * @param {string} vertexId1 - 頂点1のID
+   * @param {string} vertexId2 - 頂点2のID
+   * @param {Object} [options]
+   * @param {string} [options.preferredKeptVertexId] - 優先して残す頂点ID
+   * @param {TimePoint} [options.editTime] - 時刻付き共有化の編集時刻
+   * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures }
+   */
+  async shareVertices(vertexId1, vertexId2, options = {}) {
+    if (options?.editTime instanceof TimePoint) {
+      return this._shareVerticesAtTime(vertexId1, vertexId2, options);
+    }
+
+    const world = await this._worldRepository.getWorld();
+    const {
+      keptVertexId,
+      removedVertexId,
+      keptVertex,
+      removedVertex
+    } = this._resolveShareVerticesTargets(world, vertexId1, vertexId2, options);
     const affectedFeatures = [];
 
     // 更新後の地物リストを作成
@@ -1417,6 +1441,90 @@ export class VertexEditUseCase {
 
     await this._worldRepository.saveWorld(world);
     return { keptVertex, removedVertex, affectedFeatures };
+  }
+
+  async _shareVerticesAtTime(vertexId1, vertexId2, options = {}) {
+    const editTime = options?.editTime;
+    const conflictResolutions = options?.conflictResolutions;
+    if (!(editTime instanceof TimePoint)) {
+      throw new Error('編集時刻は TimePoint で指定してください。');
+    }
+
+    const world = await this._worldRepository.getWorld();
+    const {
+      keptVertexId,
+      removedVertexId,
+      keptVertex,
+      removedVertex
+    } = this._resolveShareVerticesTargets(world, vertexId1, vertexId2, options);
+    const replacementMap = new Map([[removedVertexId, keptVertexId]]);
+    const updatedFeatures = [...world.features];
+    const changedFeatureIds = new Set();
+
+    world.features.forEach((feature, index) => {
+      if (!this._featureUsesAnyVertexAtTime(feature, new Set([removedVertexId]), editTime)) {
+        return;
+      }
+      const afterFeature = this._buildFeatureForAnchorScopedVertexMove(
+        feature,
+        editTime,
+        replacementMap
+      );
+      if (!afterFeature || afterFeature === feature) {
+        return;
+      }
+      updatedFeatures[index] = afterFeature;
+      changedFeatureIds.add(afterFeature.id);
+    });
+
+    if (changedFeatureIds.size === 0) {
+      throw new Error('指定時刻で共有化対象の頂点が見つかりません。');
+    }
+
+    const candidateWorld = {
+      ...world,
+      features: updatedFeatures,
+      vertices: [...world.vertices]
+    };
+    const changedFeatures = candidateWorld.features.filter(feature => changedFeatureIds.has(feature.id));
+    const changedPolygons = changedFeatures.filter(feature => feature instanceof Polygon);
+
+    const selfIntersectionError = this._validatePolygonsSelfIntersectionAtTime(
+      changedPolygons,
+      candidateWorld.vertices,
+      editTime
+    );
+    const conflictResolvedFeatureIds = resolvePolygonAnchorConflictsOrThrow({
+      editedPolygons: changedPolygons,
+      world: candidateWorld,
+      layerService: this._layerService,
+      geometryService: this._geometryService,
+      conflictResolutions
+    });
+    conflictResolvedFeatureIds.forEach(featureId => changedFeatureIds.add(featureId));
+
+    const finalChangedFeatures = candidateWorld.features.filter(feature => changedFeatureIds.has(feature.id));
+    const finalChangedPolygons = finalChangedFeatures.filter(feature => feature instanceof Polygon);
+    const constraintError = this._validatePolygonConstraints(
+      finalChangedPolygons,
+      candidateWorld,
+      [vertexId1, vertexId2]
+    );
+
+    if (selfIntersectionError || constraintError) {
+      throw selfIntersectionError || constraintError;
+    }
+
+    world.features = candidateWorld.features;
+    const removedVertexIds = this._pruneUnusedVerticesByIds(world, new Set([removedVertexId]));
+    const deletedRemovedVertex = removedVertexIds.includes(removedVertexId) ? removedVertex : null;
+
+    await this._worldRepository.saveWorld(world);
+    return {
+      keptVertex,
+      removedVertex: deletedRemovedVertex,
+      affectedFeatures: finalChangedFeatures
+    };
   }
 
   /**

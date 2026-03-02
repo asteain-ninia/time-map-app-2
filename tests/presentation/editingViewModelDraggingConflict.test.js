@@ -18,6 +18,7 @@ describe("EditingViewModelDragging.endVerticesDrag conflict resolution", () => {
       updatedVertices: [{ id: "v1-1100", x: 1, y: 1 }],
       affectedFeatures: [{ id: "poly-a" }, { id: "poly-b" }],
       requiresWorldRefresh: true,
+      replacementMap: new Map([["v1", "v1-1100"]]),
       historyPatch: {
         featureChanges: [
           { featureId: "poly-a", beforeFeature: { id: "poly-a", rev: "before" }, afterFeature: { id: "poly-a", rev: "after" } },
@@ -97,6 +98,9 @@ describe("EditingViewModelDragging.endVerticesDrag conflict resolution", () => {
     expect(historyService._stackManager.pushUndo).toHaveBeenCalledTimes(1);
     expect(historyService._stackManager.pushUndo.mock.calls[0][0]).toBeInstanceOf(MoveVerticesCommand);
     expect(historyService._notifyHistoryChanged).toHaveBeenCalledTimes(1);
+    expect(context._applyVertexSharingAfterDrag).toHaveBeenCalledTimes(1);
+    expect(Array.from(context._applyVertexSharingAfterDrag.mock.calls[0][0].keys())).toEqual(["v1-1100"]);
+    expect(context._applyVertexSharingAfterDrag.mock.calls[0][1]).toMatchObject({ editTime });
     expect(eventBus.publish).toHaveBeenCalledWith("WorldUpdated");
   });
 });

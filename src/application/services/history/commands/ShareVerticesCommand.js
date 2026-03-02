@@ -6,6 +6,7 @@
 // ・このコメントは削除しないでください。
 
 import { Vertex } from '../../../../domain/entities/Vertex.js';
+import { TimePoint } from '../../../../domain/value-objects/TimePoint.js';
 
 /**
  * 共有頂点化操作をカプセル化するコマンド
@@ -18,6 +19,8 @@ export class ShareVerticesCommand {
    * @param {string | null} [payload.keptVertexId] - 共有化で残した頂点ID
    * @param {Object} payload.removedVertexData - 共有化で削除された頂点のデータ（プレーンオブジェクト）
    * @param {Object[]} payload.affectedFeaturesBefore - 影響を受けた地物の操作前の状態（プレーンオブジェクト）
+   * @param {{year:number,month:number|null,day:number|null}|null} [payload.editTime] - 時刻付き共有化の編集時刻
+   * @param {Object|null} [payload.conflictResolutions] - 時刻付き共有化で適用した競合解決方針
    * @param {EditFeatureUseCase} editFeatureUseCase - 地物編集ユースケース
    * @param {WorldRepository} worldRepository - ワールドリポジトリ
    * @param {HistorySerializer} serializer - シリアライザ
@@ -38,6 +41,14 @@ export class ShareVerticesCommand {
     const options = keptVertexId === vertexId1 || keptVertexId === vertexId2
       ? { preferredKeptVertexId: keptVertexId }
       : {};
+    const editTime = this._deserializeEditTime(this._payload.editTime);
+    const conflictResolutions = this._deserializeConflictResolutions(this._payload.conflictResolutions);
+    if (editTime) {
+      options.editTime = editTime;
+      if (conflictResolutions) {
+        options.conflictResolutions = conflictResolutions;
+      }
+    }
     const shareResult = await this._editFeatureUseCase.shareVertices(vertexId1, vertexId2, options);
     return { updatedFeatures: shareResult?.affectedFeatures || [] };
   }
@@ -80,5 +91,26 @@ export class ShareVerticesCommand {
     }
 
     return {};
+  }
+
+  _deserializeEditTime(editTimeData) {
+    if (!editTimeData || typeof editTimeData !== 'object') {
+      return null;
+    }
+    if (typeof editTimeData.year !== 'number' || Number.isNaN(editTimeData.year)) {
+      return null;
+    }
+    return new TimePoint(
+      editTimeData.year,
+      editTimeData.month ?? null,
+      editTimeData.day ?? null
+    );
+  }
+
+  _deserializeConflictResolutions(conflictResolutionsData) {
+    if (!conflictResolutionsData || typeof conflictResolutionsData !== 'object') {
+      return null;
+    }
+    return conflictResolutionsData;
   }
 }

@@ -4,6 +4,7 @@ import { AddFeatureCommand } from "../../../src/application/services/history/com
 import { DeleteFeatureCommand } from "../../../src/application/services/history/commands/DeleteFeatureCommand.js";
 import { MoveVerticesCommand } from "../../../src/application/services/history/commands/MoveVerticesCommand.js";
 import { DeleteVerticesCommand } from "../../../src/application/services/history/commands/DeleteVerticesCommand.js";
+import { ShareVerticesCommand } from "../../../src/application/services/history/commands/ShareVerticesCommand.js";
 import { UpdatePropertiesCommand } from "../../../src/application/services/history/commands/UpdatePropertiesCommand.js";
 import { AddRingCommand } from "../../../src/application/services/history/commands/AddRingCommand.js";
 import { AddVertexToEdgeCommand } from "../../../src/application/services/history/commands/AddVertexToEdgeCommand.js";
@@ -710,5 +711,37 @@ describe("History commands", () => {
     expect(reverseResult.updatedFeature).toBeInstanceOf(Polygon);
     expect(reverseResult.deletedFeatureId).toBe("polygon-child");
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(3);
+  });
+
+  it("replays ShareVerticesCommand with editTime preserved", async () => {
+    const serializer = new HistorySerializer();
+    const editFeatureUseCase = {
+      shareVertices: vi.fn(async () => ({ affectedFeatures: [] }))
+    };
+    const worldRepository = {
+      getWorld: vi.fn(async () => ({ vertices: [], features: [], layers: [] })),
+      saveWorld: vi.fn(async () => {})
+    };
+    const payload = {
+      vertexId1: "vertex-old",
+      vertexId2: "vertex-new",
+      keptVertexId: "vertex-new",
+      removedVertexData: null,
+      affectedFeaturesBefore: [],
+      editTime: { year: 1100, month: null, day: null }
+    };
+
+    const command = new ShareVerticesCommand(payload, editFeatureUseCase, worldRepository, serializer);
+    await command.execute();
+
+    expect(editFeatureUseCase.shareVertices).toHaveBeenCalledTimes(1);
+    expect(editFeatureUseCase.shareVertices).toHaveBeenCalledWith(
+      "vertex-old",
+      "vertex-new",
+      {
+        preferredKeptVertexId: "vertex-new",
+        editTime: new TimePoint(1100)
+      }
+    );
   });
 });

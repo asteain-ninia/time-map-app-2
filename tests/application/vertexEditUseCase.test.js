@@ -1161,6 +1161,51 @@ describe("VertexEditUseCase", () => {
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
 
+  it("shares vertices only in the edited anchor while preserving past anchors", async () => {
+    const t1000 = new TimePoint(1000);
+    const t1050 = new TimePoint(1050);
+    const t1100 = new TimePoint(1100);
+    world.vertices = [
+      { id: "v-old", x: 0, y: 0 },
+      { id: "v-target", x: 1, y: 1 },
+      { id: "v-tail", x: 2, y: 0 }
+    ];
+    const lineAnchors = [
+      new FeatureAnchor({
+        id: "anchor-line-1",
+        timeRange: { start: t1000, end: null },
+        property: { name: "line-1", description: "", attributes: {} },
+        shape: { type: "LineString", vertexIds: ["v-old", "v-tail"] },
+        placement: { layerId: "layer-1" }
+      })
+    ];
+    world.features = [
+      globalThis.createAnchoredLine(
+        "line-1",
+        ["v-old", "v-tail"],
+        [createPropertyWithRange(t1000, null, "line-1")],
+        "layer-1",
+        lineAnchors
+      ),
+      makeLine("line-2", ["v-target", "v-tail"])
+    ];
+
+    const result = await useCase.shareVertices("v-old", "v-target", {
+      editTime: t1100,
+      preferredKeptVertexId: "v-target"
+    });
+
+    const lineAfter = world.features.find((feature) => feature.id === "line-1");
+    expect(lineAfter.anchors).toHaveLength(2);
+    expect(lineAfter.getVertexIdsAt(t1050)).toEqual(["v-old", "v-tail"]);
+    expect(lineAfter.getVertexIdsAt(t1100)).toEqual(["v-target", "v-tail"]);
+    expect(result.keptVertex).toEqual({ id: "v-target", x: 1, y: 1 });
+    expect(result.removedVertex).toBeNull();
+    expect(result.affectedFeatures.map((feature) => feature.id)).toEqual(["line-1"]);
+    expect(world.vertices.map((vertex) => vertex.id)).toEqual(["v-old", "v-target", "v-tail"]);
+    expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the preferred vertex when sharing", async () => {
     world.vertices = [
       { id: "v-old", x: 0, y: 0 },

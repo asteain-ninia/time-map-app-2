@@ -2,6 +2,7 @@ import { Point as DomainPoint } from '../../domain/entities/Point.js';
 import { Line as DomainLine } from '../../domain/entities/Line.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
+import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 import { AddVertexToEdgeCommand } from '../../application/services/history/commands/AddVertexToEdgeCommand.js';
 import { MoveVerticesCommand } from '../../application/services/history/commands/MoveVerticesCommand.js';
 import { ShareVerticesCommand } from '../../application/services/history/commands/ShareVerticesCommand.js';
@@ -47,6 +48,25 @@ function getVertexPairKey(vertexId1, vertexId2) {
   const firstId = String(vertexId1);
   const secondId = String(vertexId2);
   return firstId < secondId ? `${firstId}|${secondId}` : `${secondId}|${firstId}`;
+}
+
+function remapDragInfoForPostMoveSharing(dragInfo, moveResult) {
+  if (!(dragInfo instanceof Map) || dragInfo.size === 0) {
+    return new Map();
+  }
+  const replacementMap = moveResult?.replacementMap instanceof Map
+    ? moveResult.replacementMap
+    : null;
+  if (!replacementMap || replacementMap.size === 0) {
+    return dragInfo;
+  }
+
+  const remapped = new Map();
+  dragInfo.forEach((info, vertexId) => {
+    const nextVertexId = replacementMap.get(vertexId) || vertexId;
+    remapped.set(nextVertexId, info);
+  });
+  return remapped;
 }
 
 /**
@@ -280,18 +300,27 @@ async function endVerticesDrag(options = {}) {
         );
         this._historyService.recordCommand(command);
 
-        if (moveResult?.requiresWorldRefresh) {
-          this._eventBus.publish('WorldUpdated');
-        } else {
-          const shareResult = await this._applyVertexSharingAfterDrag(dragInfoCopy, {
+        const dragInfoForSharing = remapDragInfoForPostMoveSharing(dragInfoCopy, moveResult);
+        let shareResult = { shared: false };
+        let shareError = null;
+        try {
+          shareResult = await this._applyVertexSharingAfterDrag(dragInfoForSharing, {
             ...options,
             shareReactivatedPairKeys: shareReactivatedPairKeysCopy
           });
-          if (shareResult.shared) {
-            this._eventBus.publish('WorldUpdated');
-          } else if (moveResult && moveResult.updatedVertices) {
-            moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
-          }
+        } catch (error) {
+          shareError = error;
+          console.error('頂点共有化の確定に失敗しました', error);
+        }
+
+        if (moveResult?.requiresWorldRefresh || shareResult.shared || shareError) {
+          this._eventBus.publish('WorldUpdated');
+        } else if (moveResult && moveResult.updatedVertices) {
+          moveResult.updatedVertices.forEach(v => this._eventBus.publish('VertexMoved', { vertexId: v.id, newPosition: {x: v.x, y: v.y} }));
+        }
+
+        if (shareError) {
+          alert(`頂点共有化に失敗しました: ${shareError.message}`);
         }
       } catch (error) {
         console.error('複数頂点の移動確定に失敗しました', error);
@@ -554,6 +583,7 @@ async function _applyVertexSharingAfterDrag(dragInfo, options) {
   candidates.sort((a, b) => a.distanceSq - b.distanceSq);
   const mergedIds = new Set();
   let shared = false;
+  let firstError = null;
 
   for (const candidate of candidates) {
     if (mergedIds.has(candidate.vertexId1) || mergedIds.has(candidate.vertexId2)) {
@@ -565,16 +595,28 @@ async function _applyVertexSharingAfterDrag(dragInfo, options) {
       const preferredKeptVertexId = isFirstDragged !== isSecondDragged
         ? (isFirstDragged ? candidate.vertexId2 : candidate.vertexId1)
         : null;
-      const shareResult = await this._shareVerticesWithHistory(candidate.vertexId1, candidate.vertexId2, { preferredKeptVertexId });
-      if (shareResult?.removedVertexId) {
+      const shareResult = await this._shareVerticesWithHistory(candidate.vertexId1, candidate.vertexId2, {
+        ...options,
+        preferredKeptVertexId
+      });
+      if (shareResult?.shared) {
         shared = true;
         mergedIds.add(candidate.vertexId1);
         mergedIds.add(candidate.vertexId2);
-        mergedIds.add(shareResult.removedVertexId);
+        if (shareResult.removedVertexId) {
+          mergedIds.add(shareResult.removedVertexId);
+        }
       }
     } catch (error) {
+      if (!firstError) {
+        firstError = error;
+      }
       console.warn('頂点共有化に失敗しました', error);
     }
+  }
+
+  if (!shared && firstError) {
+    throw firstError;
   }
 
   return { shared };
@@ -587,19 +629,40 @@ async function _shareVerticesWithHistory(vertexId1, vertexId2, options = {}) {
 
   const worldRepository = this._editFeatureUseCase.getWorldRepository();
   const worldBefore = await worldRepository.getWorld();
-  const affectedBefore = this._collectAffectedFeaturesForVertices(worldBefore.features, new Set([vertexId1, vertexId2]));
+  const featuresBeforeSnapshot = Array.isArray(worldBefore?.features)
+    ? [...worldBefore.features]
+    : [];
 
   const shareResult = await this._editFeatureUseCase.shareVertices(vertexId1, vertexId2, options);
-  if (!shareResult || !shareResult.removedVertex) {
+  const affectedFeatures = Array.isArray(shareResult?.affectedFeatures)
+    ? shareResult.affectedFeatures
+    : [];
+  if (!shareResult || affectedFeatures.length === 0) {
     return null;
   }
 
   const removedVertex = shareResult.removedVertex;
+  const affectedFeatureIds = new Set(affectedFeatures.map(feature => feature.id));
+  const affectedBefore = featuresBeforeSnapshot
+    .filter(feature => affectedFeatureIds.has(feature.id));
+  const editTime = options?.editTime instanceof TimePoint
+    ? {
+        year: options.editTime.year,
+        month: options.editTime.month,
+        day: options.editTime.day
+      }
+    : null;
   const payload = {
     vertexId1,
     vertexId2,
     keptVertexId: shareResult.keptVertex ? shareResult.keptVertex.id : null,
-    removedVertexData: this._historyService.serializeForHistory(new Vertex(removedVertex.id, removedVertex.x, removedVertex.y)),
+    removedVertexData: removedVertex
+      ? this._historyService.serializeForHistory(new Vertex(removedVertex.id, removedVertex.x, removedVertex.y))
+      : null,
+    editTime,
+    conflictResolutions: options?.conflictResolutions && typeof options.conflictResolutions === 'object'
+      ? options.conflictResolutions
+      : null,
     affectedFeaturesBefore: affectedBefore.map(feature => this._historyService.serializeForHistory(feature))
   };
   const command = new ShareVerticesCommand(
@@ -610,7 +673,10 @@ async function _shareVerticesWithHistory(vertexId1, vertexId2, options = {}) {
   );
   this._historyService.recordCommand(command);
 
-  return { removedVertexId: removedVertex.id };
+  return {
+    shared: true,
+    removedVertexId: removedVertex ? removedVertex.id : null
+  };
 }
 
 function _resolveFeaturesForSharing(world, options) {
