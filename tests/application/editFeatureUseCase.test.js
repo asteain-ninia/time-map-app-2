@@ -55,7 +55,10 @@ describe("EditFeatureUseCase", () => {
     const addFeatureUseCase = { execute: vi.fn().mockResolvedValue({ id: "added" }) };
     const updateFeatureUseCase = { execute: vi.fn().mockResolvedValue({ id: "feature-1", name: "Updated" }) };
     const deleteFeatureUseCase = { execute: vi.fn().mockResolvedValue(undefined) };
-    const vertexEditUseCase = { moveVertices: vi.fn().mockResolvedValue({ updated: true }) };
+    const vertexEditUseCase = {
+      moveVertices: vi.fn().mockResolvedValue({ updated: true }),
+      canShareVerticesInWorld: vi.fn(() => true)
+    };
 
     const useCase = new EditFeatureUseCase(
       worldRepository,
@@ -120,5 +123,21 @@ describe("EditFeatureUseCase", () => {
 
     expect(vertexEditUseCase.moveVertices).toHaveBeenCalledWith(payload);
     expect(result).toEqual({ updated: true });
+  });
+
+  it("routes share-preview validation through VertexEditUseCase", () => {
+    const { useCase, vertexEditUseCase } = createUseCaseWithStubs();
+    const shareWorld = makeWorld();
+    const editTime = new TimePoint(1000);
+
+    const result = useCase.canShareVerticesInWorld(shareWorld, "v1", "v2", { editTime });
+
+    expect(vertexEditUseCase.canShareVerticesInWorld).toHaveBeenCalledWith(
+      shareWorld,
+      "v1",
+      "v2",
+      { editTime }
+    );
+    expect(result).toBe(true);
   });
 });

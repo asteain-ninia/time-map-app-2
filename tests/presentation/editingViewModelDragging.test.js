@@ -31,11 +31,13 @@ function createContext() {
   return {
     _mode: "edit",
     _tool: "move",
+    _editFeatureUseCase: null,
     _draggingVerticesInfo: new Map(),
     _shareReactivatedPairKeys: new Set(),
     _vertexSlideContext: null,
     _notifyObservers: vi.fn(),
     _findShareCandidates: draggingMethods._findShareCandidates,
+    _buildShareValidationWorld: draggingMethods._buildShareValidationWorld,
     _resolveFeaturesForSharing: draggingMethods._resolveFeaturesForSharing,
     _buildVertexOwnerMap: draggingMethods._buildVertexOwnerMap,
     _collectFeatureVertexIds: draggingMethods._collectFeatureVertexIds,
@@ -89,5 +91,31 @@ describe("EditingViewModelDragging shared-vertex reactivation", () => {
     const previewIds = draggingMethods.getSharePreviewVertexIds.call(context, options);
 
     expect(Array.from(previewIds)).toEqual(["v1"]);
+  });
+
+  it("hides share preview when validation fails at the dragged position", () => {
+    const world = createWorld();
+    const context = createContext();
+    const options = createDragOptions(world);
+    const canShareSpy = vi.fn((validationWorld) => {
+      const draggedVertex = validationWorld.vertices.find((vertex) => vertex.id === "v1");
+      return draggedVertex?.x !== 1;
+    });
+    context._editFeatureUseCase = {
+      canShareVerticesInWorld: canShareSpy
+    };
+
+    draggingMethods.startVerticesDrag.call(
+      context,
+      new Map([["v1", { x: 0, y: 0 }]])
+    );
+    draggingMethods.updateVerticesDrag.call(context, -10, 0, options);
+    draggingMethods.updateVerticesDrag.call(context, 1, 0, options);
+
+    const previewIds = draggingMethods.getSharePreviewVertexIds.call(context, options);
+
+    expect(Array.from(previewIds)).toEqual([]);
+    expect(canShareSpy).toHaveBeenCalledTimes(1);
+    expect(canShareSpy.mock.calls[0][0].vertices.find((vertex) => vertex.id === "v1")).toMatchObject({ x: 1, y: 0 });
   });
 });

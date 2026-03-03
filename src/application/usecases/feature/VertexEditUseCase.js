@@ -1344,21 +1344,24 @@ export class VertexEditUseCase {
     };
   }
 
-  /**
-   * 頂点を共有化
-   * @param {string} vertexId1 - 頂点1のID
-   * @param {string} vertexId2 - 頂点2のID
-   * @param {Object} [options]
-   * @param {string} [options.preferredKeptVertexId] - 優先して残す頂点ID
-   * @param {TimePoint} [options.editTime] - 時刻付き共有化の編集時刻
-   * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures }
-   */
-  async shareVertices(vertexId1, vertexId2, options = {}) {
-    if (options?.editTime instanceof TimePoint) {
-      return this._shareVerticesAtTime(vertexId1, vertexId2, options);
+  canShareVerticesInWorld(world, vertexId1, vertexId2, options = {}) {
+    if (!world || !Array.isArray(world.features) || !Array.isArray(world.vertices)) {
+      return false;
     }
 
-    const world = await this._worldRepository.getWorld();
+    try {
+      if (options?.editTime instanceof TimePoint) {
+        this._buildShareVerticesAtTimePlan(world, vertexId1, vertexId2, options);
+      } else {
+        this._buildShareVerticesPlan(world, vertexId1, vertexId2, options);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  _buildShareVerticesPlan(world, vertexId1, vertexId2, options = {}) {
     const {
       keptVertexId,
       removedVertexId,
@@ -1367,90 +1370,94 @@ export class VertexEditUseCase {
     } = this._resolveShareVerticesTargets(world, vertexId1, vertexId2, options);
     const affectedFeatures = [];
 
-    // 更新後の地物リストを作成
     const updatedFeatures = [];
     for (let i = 0; i < world.features.length; i++) {
-        let feature = world.features[i];
-        let featureUpdated = false;
+      let feature = world.features[i];
+      let featureUpdated = false;
 
-        if (feature instanceof Point || feature instanceof Line) {
-            if (feature.vertexIds.includes(removedVertexId)) {
-                const newVertexIds = feature.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
-                feature = feature.withVertexIds(newVertexIds);
-                featureUpdated = true;
-            }
-        } else if (feature instanceof Polygon) {
-             let tempPolygon = feature;
-             let polygonNeedsRingUpdate = false;
-             for (const ring of feature.rings) {
-                 if (ring.vertexIds.includes(removedVertexId)) {
-                     const newRingVertexIds = ring.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
-                     tempPolygon = tempPolygon.withUpdatedRingVertices(ring.id, newRingVertexIds);
-                     polygonNeedsRingUpdate = true;
-                 }
-             }
-             if (polygonNeedsRingUpdate) {
-                 feature = tempPolygon;
-                 featureUpdated = true;
-             }
+      if (feature instanceof Point || feature instanceof Line) {
+        if (feature.vertexIds.includes(removedVertexId)) {
+          const newVertexIds = feature.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
+          feature = feature.withVertexIds(newVertexIds);
+          featureUpdated = true;
         }
+      } else if (feature instanceof Polygon) {
+        let tempPolygon = feature;
+        let polygonNeedsRingUpdate = false;
+        for (const ring of feature.rings) {
+          if (ring.vertexIds.includes(removedVertexId)) {
+            const newRingVertexIds = ring.vertexIds.map(id => id === removedVertexId ? keptVertexId : id);
+            tempPolygon = tempPolygon.withUpdatedRingVertices(ring.id, newRingVertexIds);
+            polygonNeedsRingUpdate = true;
+          }
+        }
+        if (polygonNeedsRingUpdate) {
+          feature = tempPolygon;
+          featureUpdated = true;
+        }
+      }
 
-        updatedFeatures.push(feature);
-        if (featureUpdated) {
-            if (!affectedFeatures.some(f => f.id === feature.id)) {
-                affectedFeatures.push(feature);
-            }
-        }
+      updatedFeatures.push(feature);
+      if (featureUpdated && !affectedFeatures.some(f => f.id === feature.id)) {
+        affectedFeatures.push(feature);
+      }
     }
     const updatedVertices = world.vertices.filter(v => v.id !== removedVertexId);
 
     let selfIntersectionError = null;
     const getVerticesByIdsForPolygon = (ids, currentWorldVertices) => {
-        const vertexMap = new Map(currentWorldVertices.map(v => [v.id, v]));
-        return ids?.map(id => {
-            const vData = vertexMap.get(id);
-            return vData ? new Vertex(vData.id, vData.x, vData.y) : null;
-        }).filter(Boolean) || [];
+      const vertexMap = new Map(currentWorldVertices.map(v => [v.id, v]));
+      return ids?.map(id => {
+        const vData = vertexMap.get(id);
+        return vData ? new Vertex(vData.id, vData.x, vData.y) : null;
+      }).filter(Boolean) || [];
     };
 
     for (const affFeature of affectedFeatures) {
-        if (affFeature instanceof Polygon) {
-            for (const ring of affFeature.rings) {
-                const ringVertices = getVerticesByIdsForPolygon(ring.vertexIds, updatedVertices);
-                if (this._geometryService.isPolygonSelfIntersecting(ringVertices)) {
-                    selfIntersectionError = new Error(`頂点共有化によりポリゴン ${affFeature.id} のリング ${ring.id} が自己交差しました。`);
-                    break;
-                }
-            }
+      if (affFeature instanceof Polygon) {
+        for (const ring of affFeature.rings) {
+          const ringVertices = getVerticesByIdsForPolygon(ring.vertexIds, updatedVertices);
+          if (this._geometryService.isPolygonSelfIntersecting(ringVertices)) {
+            selfIntersectionError = new Error(`頂点共有化によりポリゴン ${affFeature.id} のリング ${ring.id} が自己交差しました。`);
+            break;
+          }
         }
-        if (selfIntersectionError) break;
+      }
+      if (selfIntersectionError) {
+        break;
+      }
     }
 
+    const candidateWorld = {
+      ...world,
+      features: updatedFeatures,
+      vertices: updatedVertices
+    };
     const constraintError = this._validatePolygonConstraints(
-        affectedFeatures.filter(feature => feature instanceof Polygon),
-        { ...world, features: updatedFeatures, vertices: updatedVertices },
-        [vertexId1, vertexId2]
+      affectedFeatures.filter(feature => feature instanceof Polygon),
+      candidateWorld,
+      [vertexId1, vertexId2]
     );
 
     if (selfIntersectionError || constraintError) {
-        throw selfIntersectionError || constraintError;
+      throw selfIntersectionError || constraintError;
     }
 
-    world.features = updatedFeatures;
-    world.vertices = updatedVertices;
-
-    await this._worldRepository.saveWorld(world);
-    return { keptVertex, removedVertex, affectedFeatures };
+    return {
+      worldAfter: candidateWorld,
+      keptVertex,
+      removedVertex,
+      affectedFeatures
+    };
   }
 
-  async _shareVerticesAtTime(vertexId1, vertexId2, options = {}) {
+  _buildShareVerticesAtTimePlan(world, vertexId1, vertexId2, options = {}) {
     const editTime = options?.editTime;
     const conflictResolutions = options?.conflictResolutions;
     if (!(editTime instanceof TimePoint)) {
       throw new Error('編集時刻は TimePoint で指定してください。');
     }
 
-    const world = await this._worldRepository.getWorld();
     const {
       keptVertexId,
       removedVertexId,
@@ -1515,15 +1522,61 @@ export class VertexEditUseCase {
       throw selfIntersectionError || constraintError;
     }
 
-    world.features = candidateWorld.features;
-    const removedVertexIds = this._pruneUnusedVerticesByIds(world, new Set([removedVertexId]));
+    const worldAfter = {
+      ...candidateWorld,
+      vertices: [...candidateWorld.vertices]
+    };
+    const removedVertexIds = this._pruneUnusedVerticesByIds(worldAfter, new Set([removedVertexId]));
     const deletedRemovedVertex = removedVertexIds.includes(removedVertexId) ? removedVertex : null;
 
-    await this._worldRepository.saveWorld(world);
     return {
+      worldAfter,
       keptVertex,
       removedVertex: deletedRemovedVertex,
       affectedFeatures: finalChangedFeatures
+    };
+  }
+
+  /**
+   * 頂点を共有化
+   * @param {string} vertexId1 - 頂点1のID
+   * @param {string} vertexId2 - 頂点2のID
+   * @param {Object} [options]
+   * @param {string} [options.preferredKeptVertexId] - 優先して残す頂点ID
+   * @param {TimePoint} [options.editTime] - 時刻付き共有化の編集時刻
+   * @returns {Promise<Object>} 更新情報 { keptVertex, removedVertex, affectedFeatures }
+   */
+  async shareVertices(vertexId1, vertexId2, options = {}) {
+    if (options?.editTime instanceof TimePoint) {
+      return this._shareVerticesAtTime(vertexId1, vertexId2, options);
+    }
+
+    const world = await this._worldRepository.getWorld();
+    const plan = this._buildShareVerticesPlan(world, vertexId1, vertexId2, options);
+
+    world.features = plan.worldAfter.features;
+    world.vertices = plan.worldAfter.vertices;
+
+    await this._worldRepository.saveWorld(world);
+    return {
+      keptVertex: plan.keptVertex,
+      removedVertex: plan.removedVertex,
+      affectedFeatures: plan.affectedFeatures
+    };
+  }
+
+  async _shareVerticesAtTime(vertexId1, vertexId2, options = {}) {
+    const world = await this._worldRepository.getWorld();
+    const plan = this._buildShareVerticesAtTimePlan(world, vertexId1, vertexId2, options);
+
+    world.features = plan.worldAfter.features;
+    world.vertices = plan.worldAfter.vertices;
+
+    await this._worldRepository.saveWorld(world);
+    return {
+      keptVertex: plan.keptVertex,
+      removedVertex: plan.removedVertex,
+      affectedFeatures: plan.affectedFeatures
     };
   }
 

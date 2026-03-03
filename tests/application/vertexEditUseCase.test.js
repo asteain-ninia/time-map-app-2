@@ -1161,6 +1161,36 @@ describe("VertexEditUseCase", () => {
     expect(worldRepository.saveWorld).toHaveBeenCalledTimes(1);
   });
 
+  it("validates shared vertices without mutating world when the result would self-intersect", () => {
+    world.vertices = [
+      { id: "p1", x: 0, y: 0 },
+      { id: "p2", x: 2, y: 0 },
+      { id: "p3", x: 2, y: 2 },
+      { id: "p4", x: 0, y: 2 },
+      { id: "v-out", x: 1, y: 3 }
+    ];
+    world.features = [
+      makePolygon({
+        id: "poly-1",
+        rings: [makeRing("poly-ring", ["p1", "p2", "p3", "p4"])]
+      }),
+      makePoint("point-1", "v-out")
+    ];
+    geometryService.isPolygonSelfIntersecting.mockImplementation(
+      (vertices) => vertices.some((vertex) => vertex.id === "v-out")
+    );
+
+    const canShare = useCase.canShareVerticesInWorld(world, "p2", "v-out", {
+      preferredKeptVertexId: "v-out"
+    });
+
+    expect(canShare).toBe(false);
+    const polygonAfterCheck = world.features.find((feature) => feature.id === "poly-1");
+    expect(polygonAfterCheck.rings[0].vertexIds).toEqual(["p1", "p2", "p3", "p4"]);
+    expect(world.vertices.map((vertex) => vertex.id)).toEqual(["p1", "p2", "p3", "p4", "v-out"]);
+    expect(worldRepository.saveWorld).not.toHaveBeenCalled();
+  });
+
   it("shares vertices only in the edited anchor while preserving past anchors", async () => {
     const t1000 = new TimePoint(1000);
     const t1050 = new TimePoint(1050);

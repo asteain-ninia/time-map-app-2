@@ -499,6 +499,11 @@ function _findShareCandidates(dragInfo, world, options) {
   const candidates = [];
   const visitedPairs = new Set();
   const useDragPositions = options?.useDragPositions === true;
+  const validationWorld = this._buildShareValidationWorld(world, dragInfo, { useDragPositions });
+  const canShareVerticesInWorld = this._editFeatureUseCase
+    && typeof this._editFeatureUseCase.canShareVerticesInWorld === 'function'
+    ? this._editFeatureUseCase.canShareVerticesInWorld.bind(this._editFeatureUseCase)
+    : null;
 
   const getCurrentPosition = (vertexId) => {
     if (useDragPositions) {
@@ -555,11 +560,41 @@ function _findShareCandidates(dragInfo, world, options) {
       const reactivatedDuringDrag = shareReactivatedPairKeys ? shareReactivatedPairKeys.has(pairKey) : false;
       if (originalDistanceSq <= snapDistanceSq && !reactivatedDuringDrag) continue;
 
+      if (canShareVerticesInWorld && !canShareVerticesInWorld(validationWorld, draggedId, otherId, options)) {
+        continue;
+      }
+
       candidates.push({ vertexId1: draggedId, vertexId2: otherId, distanceSq });
     }
   }
 
   return candidates;
+}
+
+function _buildShareValidationWorld(world, dragInfo, options = {}) {
+  if (!world || !Array.isArray(world.vertices)) {
+    return world;
+  }
+  if (options?.useDragPositions !== true || !dragInfo || dragInfo.size === 0) {
+    return world;
+  }
+
+  const nextVertices = world.vertices.map(vertex => {
+    const dragEntry = dragInfo.get(vertex.id);
+    if (!dragEntry?.currentPosition) {
+      return vertex;
+    }
+    const { x, y } = dragEntry.currentPosition;
+    if (vertex.x === x && vertex.y === y) {
+      return vertex;
+    }
+    return { id: vertex.id, x, y };
+  });
+
+  return {
+    ...world,
+    vertices: nextVertices
+  };
 }
 
 async function _applyVertexSharingAfterDrag(dragInfo, options) {
@@ -845,6 +880,7 @@ export const draggingMethods = {
   _applyVertexSharingAfterDrag,
   _shareVerticesWithHistory,
   _resolveFeaturesForSharing,
+  _buildShareValidationWorld,
   _buildVertexOwnerMap,
   _collectAffectedFeaturesForVertices,
   _collectVertexOwnerIds,

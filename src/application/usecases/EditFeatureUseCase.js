@@ -182,6 +182,10 @@ export class EditFeatureUseCase {
     return this._vertexEditUseCase.shareVertices(vertexId1, vertexId2, options);
   }
 
+  canShareVerticesInWorld(world, vertexId1, vertexId2, options = {}) {
+    return this._vertexEditUseCase.canShareVerticesInWorld(world, vertexId1, vertexId2, options);
+  }
+
   async unlinkSharedVertex(vertexId, featureId, vertexIdToUse = null) {
     return this._vertexEditUseCase.unlinkSharedVertex(vertexId, featureId, vertexIdToUse);
   }
