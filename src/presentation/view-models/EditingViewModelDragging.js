@@ -4,6 +4,7 @@ import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { Vertex } from '../../domain/entities/Vertex.js';
 import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 import { AddVertexToEdgeCommand } from '../../application/services/history/commands/AddVertexToEdgeCommand.js';
+import { CompositeHistoryCommand } from '../../application/services/history/commands/CompositeHistoryCommand.js';
 import { MoveVerticesCommand } from '../../application/services/history/commands/MoveVerticesCommand.js';
 import { ShareVerticesCommand } from '../../application/services/history/commands/ShareVerticesCommand.js';
 import { applyVertexSliding, createVertexSlidingContext } from '../../application/services/VertexSlideService.js';
@@ -292,16 +293,15 @@ async function endVerticesDrag(options = {}) {
           }
         }
 
-        const command = new MoveVerticesCommand(
+        const moveCommand = new MoveVerticesCommand(
           payload,
           this._editFeatureUseCase,
           this._historyService.getSerializer(),
           this._historyService.getWorldRepository()
         );
-        this._historyService.recordCommand(command);
 
         const dragInfoForSharing = remapDragInfoForPostMoveSharing(dragInfoCopy, moveResult);
-        let shareResult = { shared: false };
+        let shareResult = { shared: false, commands: [] };
         let shareError = null;
         try {
           shareResult = await this._applyVertexSharingAfterDrag(dragInfoForSharing, {
@@ -312,6 +312,12 @@ async function endVerticesDrag(options = {}) {
           shareError = error;
           console.error('頂点共有化の確定に失敗しました', error);
         }
+
+        const shareCommands = Array.isArray(shareResult?.commands) ? shareResult.commands : [];
+        const historyCommand = shareCommands.length > 0
+          ? new CompositeHistoryCommand([moveCommand, ...shareCommands])
+          : moveCommand;
+        this._historyService.recordCommand(historyCommand);
 
         if (moveResult?.requiresWorldRefresh || shareResult.shared || shareError) {
           this._eventBus.publish('WorldUpdated');
@@ -600,25 +606,26 @@ function _buildShareValidationWorld(world, dragInfo, options = {}) {
 async function _applyVertexSharingAfterDrag(dragInfo, options) {
   const snapWorldDistance = Number.isFinite(options?.snapWorldDistance) ? options.snapWorldDistance : null;
   if (!snapWorldDistance || snapWorldDistance <= 0) {
-    return { shared: false };
+    return { shared: false, commands: [] };
   }
 
   const worldRepository = this._editFeatureUseCase.getWorldRepository();
   const world = await worldRepository.getWorld();
   if (!world || !Array.isArray(world.vertices)) {
-    return { shared: false };
+    return { shared: false, commands: [] };
   }
 
   const candidates = this._findShareCandidates(dragInfo, world, { ...options, snapWorldDistance, useDragPositions: false });
 
   if (candidates.length === 0) {
-    return { shared: false };
+    return { shared: false, commands: [] };
   }
 
   candidates.sort((a, b) => a.distanceSq - b.distanceSq);
   const mergedIds = new Set();
   let shared = false;
   let firstError = null;
+  const commands = [];
 
   for (const candidate of candidates) {
     if (mergedIds.has(candidate.vertexId1) || mergedIds.has(candidate.vertexId2)) {
@@ -636,6 +643,9 @@ async function _applyVertexSharingAfterDrag(dragInfo, options) {
       });
       if (shareResult?.shared) {
         shared = true;
+        if (shareResult.command) {
+          commands.push(shareResult.command);
+        }
         mergedIds.add(candidate.vertexId1);
         mergedIds.add(candidate.vertexId2);
         if (shareResult.removedVertexId) {
@@ -654,7 +664,7 @@ async function _applyVertexSharingAfterDrag(dragInfo, options) {
     throw firstError;
   }
 
-  return { shared };
+  return { shared, commands };
 }
 
 async function _shareVerticesWithHistory(vertexId1, vertexId2, options = {}) {
@@ -706,11 +716,11 @@ async function _shareVerticesWithHistory(vertexId1, vertexId2, options = {}) {
     this._historyService.getWorldRepository(),
     this._historyService.getSerializer()
   );
-  this._historyService.recordCommand(command);
 
   return {
     shared: true,
-    removedVertexId: removedVertex ? removedVertex.id : null
+    removedVertexId: removedVertex ? removedVertex.id : null,
+    command
   };
 }
 

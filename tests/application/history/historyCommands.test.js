@@ -8,6 +8,7 @@ import { ShareVerticesCommand } from "../../../src/application/services/history/
 import { UpdatePropertiesCommand } from "../../../src/application/services/history/commands/UpdatePropertiesCommand.js";
 import { AddRingCommand } from "../../../src/application/services/history/commands/AddRingCommand.js";
 import { AddVertexToEdgeCommand } from "../../../src/application/services/history/commands/AddVertexToEdgeCommand.js";
+import { CompositeHistoryCommand } from "../../../src/application/services/history/commands/CompositeHistoryCommand.js";
 import { SplitPolygonCommand } from "../../../src/application/services/history/commands/SplitPolygonCommand.js";
 import { HistorySerializer } from "../../../src/application/services/history/HistorySerializer.js";
 import { Vertex } from "../../../src/domain/entities/Vertex.js";
@@ -45,6 +46,70 @@ const createPolygon = (id, rings) => {
 };
 
 describe("History commands", () => {
+  it("executes child commands in order and reverses them in reverse order", async () => {
+    const executionOrder = [];
+    const moveCommand = {
+      execute: vi.fn(async () => {
+        executionOrder.push("move.execute");
+        return {
+          eventType: "MultipleVerticesMoved",
+          eventPayload: { id: "move" },
+          movedVerticesResult: { id: "move" }
+        };
+      }),
+      reverse: vi.fn(async () => {
+        executionOrder.push("move.reverse");
+        return { updatedFeature: { id: "feature-move" } };
+      })
+    };
+    const shareCommandA = {
+      execute: vi.fn(async () => {
+        executionOrder.push("shareA.execute");
+        return { updatedFeature: { id: "feature-a" } };
+      }),
+      reverse: vi.fn(async () => {
+        executionOrder.push("shareA.reverse");
+        return { updatedFeature: { id: "feature-a-undo" } };
+      })
+    };
+    const shareCommandB = {
+      execute: vi.fn(async () => {
+        executionOrder.push("shareB.execute");
+        return { updatedFeature: { id: "feature-b" } };
+      }),
+      reverse: vi.fn(async () => {
+        executionOrder.push("shareB.reverse");
+        return { updatedFeature: { id: "feature-b-undo" } };
+      })
+    };
+    const command = new CompositeHistoryCommand([moveCommand, shareCommandA, shareCommandB]);
+
+    const executeResult = await command.execute();
+    const reverseResult = await command.reverse();
+
+    expect(executionOrder).toEqual([
+      "move.execute",
+      "shareA.execute",
+      "shareB.execute",
+      "shareB.reverse",
+      "shareA.reverse",
+      "move.reverse"
+    ]);
+    expect(executeResult).toMatchObject({
+      eventType: "MultipleVerticesMoved",
+      eventPayload: { id: "move" },
+      movedVerticesResult: { id: "move" },
+      updatedFeatures: [{ id: "feature-a" }, { id: "feature-b" }]
+    });
+    expect(reverseResult).toMatchObject({
+      updatedFeatures: [
+        { id: "feature-b-undo" },
+        { id: "feature-a-undo" },
+        { id: "feature-move" }
+      ]
+    });
+  });
+
   it("replays AddFeatureCommand by restoring serialized entities", async () => {
     const serializer = new HistorySerializer();
     const vertex = new Vertex("vertex-1", 10, 20);
