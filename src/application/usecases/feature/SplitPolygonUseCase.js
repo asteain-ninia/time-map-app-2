@@ -41,7 +41,7 @@ export class SplitPolygonUseCase {
     }
 
     const originalPolygon = world.features[polygonIndex];
-    this._assertSplittablePolygon(originalPolygon);
+    this._assertSplittablePolygon(originalPolygon, editTime);
 
     const polygonPlanToKeep = splitPlan.polygons[inheritIndex];
     const polygonPlanToCreate = splitPlan.polygons[inheritIndex === 0 ? 1 : 0];
@@ -141,14 +141,22 @@ export class SplitPolygonUseCase {
     }
   }
 
-  _assertSplittablePolygon(polygon) {
+  _assertSplittablePolygon(polygon, timePoint = null) {
     if (!(polygon instanceof Polygon)) {
       throw new Error('分割対象がポリゴンではありません。');
     }
-    if (polygon.childIds && polygon.childIds.length > 0) {
+    const placementAtTime = timePoint instanceof TimePoint && typeof polygon.getPlacementAt === 'function'
+      ? polygon.getPlacementAt(timePoint)
+      : {
+        childIds: polygon.childIds
+      };
+    if (placementAtTime.childIds && placementAtTime.childIds.length > 0) {
       throw new Error('下位領域を持つ面情報は分割できません。');
     }
-    if (!Array.isArray(polygon.rings) || polygon.rings.length === 0) {
+    const ringsAtTime = timePoint instanceof TimePoint && typeof polygon.getRingsAt === 'function'
+      ? polygon.getRingsAt(timePoint)
+      : polygon.rings;
+    if (!Array.isArray(ringsAtTime) || ringsAtTime.length === 0) {
       throw new Error('形状を持つ面情報のみ分割できます。');
     }
   }

@@ -778,10 +778,21 @@ export class MapView {
       if (!(targetPolygon instanceof DomainPolygon)) {
           throw new Error('分割対象が面情報ではありません。');
       }
-      if (targetPolygon.childIds && targetPolygon.childIds.length > 0) {
+      const currentTime = typeof this._viewModel.getCurrentTime === 'function'
+        ? this._viewModel.getCurrentTime()
+        : null;
+      const placementAtCurrentTime = typeof targetPolygon.getPlacementAt === 'function'
+        ? targetPolygon.getPlacementAt(currentTime)
+        : {
+          childIds: targetPolygon.childIds
+        };
+      if (placementAtCurrentTime.childIds && placementAtCurrentTime.childIds.length > 0) {
           throw new Error('下位領域を持つ面情報は分割できません。');
       }
-      if (!Array.isArray(targetPolygon.rings) || targetPolygon.rings.length === 0) {
+      const ringsAtCurrentTime = typeof targetPolygon.getRingsAt === 'function'
+        ? targetPolygon.getRingsAt(currentTime)
+        : targetPolygon.rings;
+      if (!Array.isArray(ringsAtCurrentTime) || ringsAtCurrentTime.length === 0) {
           throw new Error('形状を持つ面情報のみ分割できます。');
       }
       const points = this._editingViewModel.getAddingPoints();
@@ -801,7 +812,7 @@ export class MapView {
         ? this._editingViewModel.getSplitLineMode() === 'circle'
         : false;
       return buildPolygonSplitPlan({
-          rings: targetPolygon.rings,
+          rings: ringsAtCurrentTime,
           verticesMap,
           cutLinePoints: points,
           geometryService,

@@ -95,7 +95,7 @@ const createGeometryServiceStub = () => {
   return geometryService;
 };
 
-const createAnchor = ({ id, startYear, endYear = null, name, vertexIds }) => {
+const createAnchor = ({ id, startYear, endYear = null, name, vertexIds, childIds = [] }) => {
   const start = new TimePoint(startYear);
   const end = endYear === null ? null : new TimePoint(endYear);
   return new FeatureAnchor({
@@ -116,7 +116,7 @@ const createAnchor = ({ id, startYear, endYear = null, name, vertexIds }) => {
     placement: {
       layerId: "layer-0",
       parentId: "0",
-      childIds: []
+      childIds: [...childIds]
     }
   });
 };
@@ -292,6 +292,40 @@ describe("SplitPolygonUseCase", () => {
     await expect(
       useCase.execute("poly-1", createSplitPlan(), 0, newAnchor, new TimePoint(1300))
     ).rejects.toThrow(/存在しない面情報/);
+  });
+
+  it("judges child polygons at editTime instead of the latest anchor", async () => {
+    const anchors = [
+      createAnchor({
+        id: "anchor-1000",
+        startYear: 1000,
+        endYear: 2000,
+        name: "Past",
+        vertexIds: ["v1", "v2", "v3", "v4"],
+        childIds: []
+      }),
+      createAnchor({
+        id: "anchor-2000",
+        startYear: 2000,
+        endYear: null,
+        name: "Future",
+        vertexIds: ["v5", "v6", "v7", "v8"],
+        childIds: ["child-1"]
+      })
+    ];
+    const worldRepository = new InMemoryWorldRepository(createWorldWithAnchoredPolygon(anchors));
+    const useCase = new SplitPolygonUseCase(
+      worldRepository,
+      createGeometryServiceStub(),
+      createLayerServiceStub(),
+      createIdGenerator()
+    );
+    const newAnchor = createNewAnchorDraft();
+
+    const result = await useCase.execute("poly-1", createSplitPlan(), 0, newAnchor, new TimePoint(1500));
+
+    expect(result.updatedPolygon.anchors.map(anchor => anchor.startTime.year)).toEqual([1000, 1500, 2000]);
+    expect(result.newPolygon.anchors[0].startTime.year).toBe(1500);
   });
 
   it("splits only edit-time anchor and keeps future anchors unchanged", async () => {
