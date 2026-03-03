@@ -13,6 +13,21 @@ const calculatePolygonArea = (polygon) =>
     return total + (ring.ringType === "territory" ? area : -area);
   }, 0);
 
+const countTopLevelTerritories = (polygon) =>
+  polygon.rings.filter((ring) => ring.ringType === "territory" && (ring.parentIndex ?? null) === null).length;
+
+const buildCirclePoints = (center, radius, segments = 16) => {
+  const points = [];
+  for (let index = 0; index < segments; index += 1) {
+    const angle = (Math.PI * 2 * index) / segments;
+    points.push({
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius
+    });
+  }
+  return points;
+};
+
 const expectValidRings = (polygon) => {
   polygon.rings.forEach(ring => {
     const coords = ring.points.map(point => ({ x: point.x, y: point.y }));
@@ -166,5 +181,91 @@ describe("PolygonSplitService", () => {
       polygon.rings.filter(ring => ring.ringType === "hole").length
     );
     expect(holeCounts.sort((a, b) => a - b)).toEqual([0, 1]);
+  });
+
+  it("promotes an enclave inside a split-opened hole to a top-level territory", () => {
+    const verticesMap = buildVerticesMap([
+      ["v1", 0, 0],
+      ["v2", 12, 0],
+      ["v3", 12, 12],
+      ["v4", 0, 12],
+      ["h1", 3, 3],
+      ["h2", 9, 3],
+      ["h3", 9, 9],
+      ["h4", 3, 9],
+      ["e1", 4, 4],
+      ["e2", 6, 4],
+      ["e3", 6, 6],
+      ["e4", 4, 6]
+    ]);
+
+    const rings = [
+      { id: "r-outer", ringType: "territory", parentId: null, vertexIds: ["v1", "v2", "v3", "v4"] },
+      { id: "r-hole", ringType: "hole", parentId: "r-outer", vertexIds: ["h1", "h2", "h3", "h4"] },
+      { id: "r-enclave", ringType: "territory", parentId: "r-hole", vertexIds: ["e1", "e2", "e3", "e4"] }
+    ];
+
+    const plan = buildPolygonSplitPlan({
+      rings,
+      verticesMap,
+      cutLinePoints: [
+        { x: -1, y: 8 },
+        { x: 13, y: 8 }
+      ],
+      geometryService
+    });
+
+    expect(plan.polygons).toHaveLength(2);
+    plan.polygons.forEach(expectValidRings);
+    expect(plan.polygons.map(calculatePolygonArea).reduce((total, area) => total + area, 0)).toBeCloseTo(112, 6);
+    expect(
+      plan.polygons.map((polygon) => polygon.rings.filter((ring) => ring.ringType === "hole").length).sort((left, right) => left - right)
+    ).toEqual([0, 0]);
+    expect(plan.polygons.map(countTopLevelTerritories).sort((left, right) => left - right)).toEqual([1, 2]);
+  });
+
+  it("preserves untouched nested hierarchy on a closed split", () => {
+    const verticesMap = buildVerticesMap([
+      ["v1", 0, 0],
+      ["v2", 12, 0],
+      ["v3", 12, 12],
+      ["v4", 0, 12],
+      ["h1", 3, 3],
+      ["h2", 9, 3],
+      ["h3", 9, 9],
+      ["h4", 3, 9],
+      ["e1", 4, 4],
+      ["e2", 6, 4],
+      ["e3", 6, 6],
+      ["e4", 4, 6]
+    ]);
+
+    const rings = [
+      { id: "r-outer", ringType: "territory", parentId: null, vertexIds: ["v1", "v2", "v3", "v4"] },
+      { id: "r-hole", ringType: "hole", parentId: "r-outer", vertexIds: ["h1", "h2", "h3", "h4"] },
+      { id: "r-enclave", ringType: "territory", parentId: "r-hole", vertexIds: ["e1", "e2", "e3", "e4"] }
+    ];
+
+    const plan = buildPolygonSplitPlan({
+      rings,
+      verticesMap,
+      cutLinePoints: buildCirclePoints({ x: 1.5, y: 1.5 }, 0.8, 12),
+      geometryService,
+      isClosed: true
+    });
+
+    expect(plan.polygons).toHaveLength(2);
+    plan.polygons.forEach(expectValidRings);
+    expect(plan.polygons.map(calculatePolygonArea).reduce((total, area) => total + area, 0)).toBeCloseTo(112, 6);
+
+    const outsidePolygon = plan.polygons.find((polygon) => polygon.rings.length > 1);
+    expect(outsidePolygon).toBeDefined();
+    expect(outsidePolygon.rings.filter((ring) => ring.ringType === "hole")).toHaveLength(2);
+
+    const enclaveRing = outsidePolygon.rings.find(
+      (ring) => ring.ringType === "territory" && (ring.parentIndex ?? null) !== null
+    );
+    expect(enclaveRing).toBeDefined();
+    expect(outsidePolygon.rings[enclaveRing.parentIndex].ringType).toBe("hole");
   });
 });

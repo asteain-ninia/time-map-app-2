@@ -120,3 +120,97 @@ describe('MapViewEventHandler conflict dialog keyboard handling', () => {
     expect(document.body.classList.contains('noselect')).toBe(false);
   });
 });
+
+describe('MapViewEventHandler split tool circle guide', () => {
+  it('switches to closed split mode and confirms when clicking inside the guide circle', () => {
+    const mapOverlay = document.createElement('div');
+    const mapView = {
+      hideContextMenu: vi.fn(),
+      isMeasuringDistance: vi.fn(() => false),
+      setMeasuringDistance: vi.fn(),
+      showContextMenu: vi.fn(),
+      getSplitCircleRadiusWorld: vi.fn(() => 2),
+      refresh: vi.fn(),
+      _handleConfirmClick: vi.fn()
+    };
+    const viewModel = {
+      getWorld: vi.fn(() => ({ vertices: [] }))
+    };
+    const editingViewModel = {
+      getTargetPolygon: vi.fn(() => ({ id: 'poly-1' })),
+      getSplitLineMode: vi.fn(() => 'open'),
+      getAddingPoints: vi.fn(() => [
+        { x: 0, y: 0 },
+        { x: 5, y: 0 },
+        { x: 5, y: 5 }
+      ]),
+      clearSplitPlan: vi.fn(),
+      setSplitLineMode: vi.fn(),
+      getSplitPlan: vi.fn(() => null),
+      addPoint: vi.fn()
+    };
+    const handler = new MapViewEventHandler(
+      mapView,
+      mapOverlay,
+      viewModel,
+      editingViewModel,
+      {},
+      {},
+      {}
+    );
+
+    handler._handleSplitToolClick({ x: 1, y: 1 });
+
+    expect(editingViewModel.clearSplitPlan).toHaveBeenCalledTimes(1);
+    expect(editingViewModel.setSplitLineMode).toHaveBeenNthCalledWith(1, 'circle');
+    expect(mapView.refresh).toHaveBeenCalledTimes(1);
+    expect(mapView._handleConfirmClick).toHaveBeenCalledTimes(1);
+    expect(editingViewModel.setSplitLineMode).toHaveBeenNthCalledWith(2, 'open');
+    expect(editingViewModel.addPoint).not.toHaveBeenCalled();
+  });
+
+  it('keeps closed split mode when confirmation produced a split plan', () => {
+    const mapOverlay = document.createElement('div');
+    const mapView = {
+      hideContextMenu: vi.fn(),
+      isMeasuringDistance: vi.fn(() => false),
+      setMeasuringDistance: vi.fn(),
+      showContextMenu: vi.fn(),
+      getSplitCircleRadiusWorld: vi.fn(() => 2),
+      refresh: vi.fn(),
+      _handleConfirmClick: vi.fn()
+    };
+    const viewModel = {
+      getWorld: vi.fn(() => ({ vertices: [] }))
+    };
+    const editingViewModel = {
+      getTargetPolygon: vi.fn(() => ({ id: 'poly-1' })),
+      getSplitLineMode: vi.fn(() => 'open'),
+      getAddingPoints: vi.fn(() => [
+        { x: 0, y: 0 },
+        { x: 5, y: 0 },
+        { x: 5, y: 5 }
+      ]),
+      clearSplitPlan: vi.fn(),
+      setSplitLineMode: vi.fn(),
+      getSplitPlan: vi.fn(() => ({ polygons: [{ rings: [] }, { rings: [] }] })),
+      addPoint: vi.fn()
+    };
+    const handler = new MapViewEventHandler(
+      mapView,
+      mapOverlay,
+      viewModel,
+      editingViewModel,
+      {},
+      {},
+      {}
+    );
+
+    handler._handleSplitToolClick({ x: 1, y: 1 });
+
+    expect(editingViewModel.setSplitLineMode).toHaveBeenCalledTimes(1);
+    expect(editingViewModel.setSplitLineMode).toHaveBeenCalledWith('circle');
+    expect(mapView._handleConfirmClick).toHaveBeenCalledTimes(1);
+    expect(editingViewModel.addPoint).not.toHaveBeenCalled();
+  });
+});

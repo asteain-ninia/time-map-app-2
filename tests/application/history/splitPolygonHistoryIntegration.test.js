@@ -9,6 +9,8 @@ import { Polygon } from "../../../src/domain/entities/Polygon.js";
 import { FeatureAnchor } from "../../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../../src/domain/value-objects/TimePoint.js";
 import { Vertex } from "../../../src/domain/entities/Vertex.js";
+import { GeometryService } from "../../../src/domain/services/GeometryService.js";
+import { buildPolygonSplitPlan } from "../../../src/domain/services/PolygonSplitService.js";
 
 class DeterministicIdGenerationService extends IdGenerationService {
   constructor() {
@@ -77,26 +79,35 @@ const createLayerServiceStub = () => ({
   checkExclusivity: vi.fn(() => true)
 });
 
-const createPolygonAnchor = ({ id, start, end, name, vertexIds }) =>
+const cloneRing = (ring) => ({
+  id: ring.id,
+  vertexIds: [...ring.vertexIds],
+  ringType: ring.ringType,
+  parentId: ring.parentId ?? null
+});
+
+const createPolygonAnchor = ({ id, start, end, name, vertexIds = [], rings = null, childIds = [] }) =>
   new FeatureAnchor({
     id,
     timeRange: { start, end },
     property: { name, description: "", attributes: {} },
     shape: {
       type: "Polygon",
-      rings: [
-        {
-          id: `ring-${id}`,
-          vertexIds,
-          ringType: "territory",
-          parentId: null
-        }
-      ]
+      rings: Array.isArray(rings) && rings.length > 0
+        ? rings.map((ring) => cloneRing(ring))
+        : [
+            {
+              id: `ring-${id}`,
+              vertexIds,
+              ringType: "territory",
+              parentId: null
+            }
+          ]
     },
     placement: {
       layerId: "layer-0",
       parentId: "0",
-      childIds: []
+      childIds: [...childIds]
     }
   });
 
@@ -161,6 +172,27 @@ const createWorld = (t1000, t2000) => ({
   }
 });
 
+const createWorldWithCustomPolygon = ({ anchors, latestRings, vertices }) => ({
+  features: [
+    globalThis.createAnchoredPolygon(
+      "poly-1",
+      anchors,
+      "layer-0",
+      "0",
+      [],
+      latestRings
+    )
+  ],
+  vertices: vertices.map((vertex) => ({ ...vertex })),
+  layers: [{ id: "layer-0", name: "Base", order: 0, visible: true, opacity: 1 }],
+  metadata: {
+    settings: {
+      sliderMin: 0,
+      sliderMax: 4000
+    }
+  }
+});
+
 const createSplitPlan = () => ({
   polygons: [
     {
@@ -194,10 +226,8 @@ const createSplitPlan = () => ({
   ]
 });
 
-const createContext = () => {
-  const t1000 = new TimePoint(1000);
-  const t2000 = new TimePoint(2000);
-  const worldRepository = new InMemoryWorldRepository(createWorld(t1000, t2000));
+const createContextWithWorld = (world) => {
+  const worldRepository = new InMemoryWorldRepository(world);
   const geometryService = createGeometryServiceStub();
   const layerService = createLayerServiceStub();
   const polygonEditService = createPolygonEditStub();
@@ -229,6 +259,54 @@ const createContext = () => {
     editFeatureUseCase,
     historyService
   };
+};
+
+const createContext = () => {
+  const t1000 = new TimePoint(1000);
+  const t2000 = new TimePoint(2000);
+  return createContextWithWorld(createWorld(t1000, t2000));
+};
+
+const calculatePolygonAreaAt = (polygon, timePoint, world, geometryService = new GeometryService()) => {
+  const verticesMap = new Map((world.vertices || []).map((vertex) => [vertex.id, vertex]));
+  return polygon.getRingsAt(timePoint).reduce((total, ring) => {
+    const points = ring.vertexIds.map((vertexId) => {
+      const vertex = verticesMap.get(vertexId);
+      if (!vertex) {
+        throw new Error(`Vertex not found: ${vertexId}`);
+      }
+      return { x: vertex.x, y: vertex.y };
+    });
+    const area = geometryService.calculatePolygonArea(points);
+    return total + (ring.ringType === "territory" ? area : -area);
+  }, 0);
+};
+
+const buildCirclePoints = (center, radius, segments = 16) => {
+  const points = [];
+  for (let index = 0; index < segments; index += 1) {
+    const angle = (Math.PI * 2 * index) / segments;
+    points.push({
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius
+    });
+  }
+  return points;
+};
+
+const buildSplitPlanForFeature = (world, polygonId, editTime, cutLinePoints, options = {}) => {
+  const polygon = world.features.find((feature) => feature.id === polygonId);
+  if (!polygon) {
+    throw new Error(`Polygon not found: ${polygonId}`);
+  }
+  const geometryService = new GeometryService();
+  return buildPolygonSplitPlan({
+    rings: polygon.getRingsAt(editTime),
+    verticesMap: new Map(world.vertices.map((vertex) => [vertex.id, { x: vertex.x, y: vertex.y }])),
+    cutLinePoints,
+    geometryService,
+    isClosed: options.isClosed === true
+  });
 };
 
 describe("SplitPolygon history integration", () => {
@@ -333,6 +411,301 @@ describe("SplitPolygon history integration", () => {
       "WorldUpdated",
       "HistoryChanged"
     ]);
+  });
+
+  it("records splitPolygon for a hole polygon and restores the hole on undo", async () => {
+    const t1000 = new TimePoint(1000);
+    const t2000 = new TimePoint(2000);
+    const customWorld = createWorldWithCustomPolygon({
+      anchors: [
+        createPolygonAnchor({
+          id: "anchor-1000",
+          start: t1000,
+          end: t2000,
+          name: "Past",
+          rings: [
+            {
+              id: "ring-outer-1000",
+              vertexIds: ["v1", "v2", "v3", "v4"],
+              ringType: "territory",
+              parentId: null
+            },
+            {
+              id: "ring-hole-1000",
+              vertexIds: ["h1", "h2", "h3", "h4"],
+              ringType: "hole",
+              parentId: "ring-outer-1000"
+            }
+          ]
+        }),
+        createPolygonAnchor({
+          id: "anchor-2000",
+          start: t2000,
+          end: null,
+          name: "Future",
+          rings: [
+            {
+              id: "ring-future",
+              vertexIds: ["f1", "f2", "f3", "f4"],
+              ringType: "territory",
+              parentId: null
+            }
+          ]
+        })
+      ],
+      latestRings: [
+        {
+          id: "ring-future",
+          vertexIds: ["f1", "f2", "f3", "f4"],
+          ringType: "territory",
+          parentId: null
+        }
+      ],
+      vertices: [
+        { id: "v1", x: 0, y: 0 },
+        { id: "v2", x: 10, y: 0 },
+        { id: "v3", x: 10, y: 10 },
+        { id: "v4", x: 0, y: 10 },
+        { id: "h1", x: 3, y: 3 },
+        { id: "h2", x: 7, y: 3 },
+        { id: "h3", x: 7, y: 7 },
+        { id: "h4", x: 3, y: 7 },
+        { id: "f1", x: 20, y: 0 },
+        { id: "f2", x: 30, y: 0 },
+        { id: "f3", x: 30, y: 10 },
+        { id: "f4", x: 20, y: 10 }
+      ]
+    });
+    const holeCtx = createContextWithWorld(customWorld);
+    const editTime = new TimePoint(1500);
+    const splitPlan = buildSplitPlanForFeature(customWorld, "poly-1", editTime, [
+      { x: -1, y: 5 },
+      { x: 11, y: 5 }
+    ]);
+    const payload = {};
+    const splitAnchor = createSplitAnchorDraft();
+    let splitResult;
+
+    await holeCtx.historyService.executeAndRecord(async () => {
+      const worldBefore = await holeCtx.worldRepository.getWorld();
+      const originalPolygon = worldBefore.features.find((feature) => feature.id === "poly-1");
+      splitResult = await holeCtx.editFeatureUseCase.splitPolygon(
+        "poly-1",
+        splitPlan,
+        0,
+        splitAnchor,
+        editTime
+      );
+      Object.assign(payload, {
+        polygonId: "poly-1",
+        originalPolygonData: holeCtx.serializer.serialize(originalPolygon),
+        updatedPolygonData: holeCtx.serializer.serialize(splitResult.updatedPolygon),
+        newPolygonData: holeCtx.serializer.serialize(splitResult.newPolygon),
+        addedVerticesData: (splitResult.addedVerticesData || []).map((vertexData) =>
+          holeCtx.serializer.serialize(new Vertex(vertexData.id, vertexData.x, vertexData.y))
+        )
+      });
+      return {
+        updatedFeature: splitResult.updatedPolygon,
+        addedFeature: splitResult.newPolygon
+      };
+    }, "splitPolygon", payload);
+
+    const worldAfterSplit = await holeCtx.worldRepository.getWorld();
+    const updatedPolygon = worldAfterSplit.features.find((feature) => feature.id === "poly-1");
+    const newPolygon = worldAfterSplit.features.find((feature) => feature.id === splitResult.newPolygon.id);
+
+    expect(calculatePolygonAreaAt(updatedPolygon, editTime, worldAfterSplit) + calculatePolygonAreaAt(newPolygon, editTime, worldAfterSplit))
+      .toBeCloseTo(84, 6);
+    expect(updatedPolygon.getRingsAt(editTime).some((ring) => ring.ringType === "hole")).toBe(false);
+    expect(newPolygon.getRingsAt(editTime).some((ring) => ring.ringType === "hole")).toBe(false);
+
+    await holeCtx.historyService.undo();
+
+    const worldAfterUndo = await holeCtx.worldRepository.getWorld();
+    const restoredPolygon = worldAfterUndo.features.find((feature) => feature.id === "poly-1");
+    expect(restoredPolygon.getRingsAt(editTime).filter((ring) => ring.ringType === "hole")).toHaveLength(1);
+
+    await holeCtx.historyService.redo();
+
+    const worldAfterRedo = await holeCtx.worldRepository.getWorld();
+    const redoneUpdatedPolygon = worldAfterRedo.features.find((feature) => feature.id === "poly-1");
+    const redoneNewPolygon = worldAfterRedo.features.find((feature) => feature.id === splitResult.newPolygon.id);
+    expect(calculatePolygonAreaAt(redoneUpdatedPolygon, editTime, worldAfterRedo) + calculatePolygonAreaAt(redoneNewPolygon, editTime, worldAfterRedo))
+      .toBeCloseTo(84, 6);
+    expect(redoneUpdatedPolygon.getRingsAt(editTime).some((ring) => ring.ringType === "hole")).toBe(false);
+    expect(redoneNewPolygon.getRingsAt(editTime).some((ring) => ring.ringType === "hole")).toBe(false);
+  });
+
+  it("records splitPolygon for a polygon with enclaves and restores top-level territories on undo/redo", async () => {
+    const t1000 = new TimePoint(1000);
+    const t2000 = new TimePoint(2000);
+    const ringsAtAllTimes = [
+      {
+        id: "ring-main",
+        vertexIds: ["v1", "v2", "v3", "v4"],
+        ringType: "territory",
+        parentId: null
+      },
+      {
+        id: "ring-enclave",
+        vertexIds: ["e1", "e2", "e3", "e4"],
+        ringType: "territory",
+        parentId: null
+      }
+    ];
+    const customWorld = createWorldWithCustomPolygon({
+      anchors: [
+        createPolygonAnchor({
+          id: "anchor-1000",
+          start: t1000,
+          end: t2000,
+          name: "Past",
+          rings: ringsAtAllTimes
+        }),
+        createPolygonAnchor({
+          id: "anchor-2000",
+          start: t2000,
+          end: null,
+          name: "Future",
+          rings: ringsAtAllTimes
+        })
+      ],
+      latestRings: ringsAtAllTimes,
+      vertices: [
+        { id: "v1", x: 0, y: 0 },
+        { id: "v2", x: 10, y: 0 },
+        { id: "v3", x: 10, y: 10 },
+        { id: "v4", x: 0, y: 10 },
+        { id: "e1", x: 20, y: 0 },
+        { id: "e2", x: 24, y: 0 },
+        { id: "e3", x: 24, y: 4 },
+        { id: "e4", x: 20, y: 4 }
+      ]
+    });
+    const enclaveCtx = createContextWithWorld(customWorld);
+    const editTime = new TimePoint(1500);
+    const splitPlan = buildSplitPlanForFeature(customWorld, "poly-1", editTime, [
+      { x: 5, y: -1 },
+      { x: 5, y: 11 }
+    ]);
+    const payload = {};
+    const splitAnchor = createSplitAnchorDraft();
+    let splitResult;
+
+    await enclaveCtx.historyService.executeAndRecord(async () => {
+      const worldBefore = await enclaveCtx.worldRepository.getWorld();
+      const originalPolygon = worldBefore.features.find((feature) => feature.id === "poly-1");
+      splitResult = await enclaveCtx.editFeatureUseCase.splitPolygon(
+        "poly-1",
+        splitPlan,
+        0,
+        splitAnchor,
+        editTime
+      );
+      Object.assign(payload, {
+        polygonId: "poly-1",
+        originalPolygonData: enclaveCtx.serializer.serialize(originalPolygon),
+        updatedPolygonData: enclaveCtx.serializer.serialize(splitResult.updatedPolygon),
+        newPolygonData: enclaveCtx.serializer.serialize(splitResult.newPolygon),
+        addedVerticesData: (splitResult.addedVerticesData || []).map((vertexData) =>
+          enclaveCtx.serializer.serialize(new Vertex(vertexData.id, vertexData.x, vertexData.y))
+        )
+      });
+      return {
+        updatedFeature: splitResult.updatedPolygon,
+        addedFeature: splitResult.newPolygon
+      };
+    }, "splitPolygon", payload);
+
+    const getTopLevelTerritoryCounts = (world) => {
+      const updatedPolygon = world.features.find((feature) => feature.id === "poly-1");
+      const newPolygon = world.features.find((feature) => feature.id === splitResult.newPolygon.id);
+      return [updatedPolygon, newPolygon]
+        .map((polygon) => polygon.getRingsAt(editTime).filter((ring) => ring.ringType === "territory" && ring.parentId === null).length)
+        .sort((left, right) => left - right);
+    };
+
+    const worldAfterSplit = await enclaveCtx.worldRepository.getWorld();
+    const [updatedPolygon, newPolygon] = [
+      worldAfterSplit.features.find((feature) => feature.id === "poly-1"),
+      worldAfterSplit.features.find((feature) => feature.id === splitResult.newPolygon.id)
+    ];
+    expect(calculatePolygonAreaAt(updatedPolygon, editTime, worldAfterSplit) + calculatePolygonAreaAt(newPolygon, editTime, worldAfterSplit))
+      .toBeCloseTo(116, 6);
+    expect(getTopLevelTerritoryCounts(worldAfterSplit)).toEqual([1, 2]);
+
+    await enclaveCtx.historyService.undo();
+
+    const worldAfterUndo = await enclaveCtx.worldRepository.getWorld();
+    const restoredPolygon = worldAfterUndo.features.find((feature) => feature.id === "poly-1");
+    expect(restoredPolygon.getRingsAt(editTime).filter((ring) => ring.ringType === "territory" && ring.parentId === null)).toHaveLength(2);
+
+    await enclaveCtx.historyService.redo();
+
+    const worldAfterRedo = await enclaveCtx.worldRepository.getWorld();
+    expect(getTopLevelTerritoryCounts(worldAfterRedo)).toEqual([1, 2]);
+  });
+
+  it("records splitPolygon for a closed split and restores the hole structure on undo/redo", async () => {
+    const closedCtx = createContext();
+    const editTime = new TimePoint(1500);
+    const splitPlan = buildSplitPlanForFeature(
+      await closedCtx.worldRepository.getWorld(),
+      "poly-1",
+      editTime,
+      buildCirclePoints({ x: 5, y: 5 }, 1.5),
+      { isClosed: true }
+    );
+    const payload = {};
+    const splitAnchor = createSplitAnchorDraft();
+    let splitResult;
+
+    await closedCtx.historyService.executeAndRecord(async () => {
+      const worldBefore = await closedCtx.worldRepository.getWorld();
+      const originalPolygon = worldBefore.features.find((feature) => feature.id === "poly-1");
+      splitResult = await closedCtx.editFeatureUseCase.splitPolygon(
+        "poly-1",
+        splitPlan,
+        0,
+        splitAnchor,
+        editTime
+      );
+      Object.assign(payload, {
+        polygonId: "poly-1",
+        originalPolygonData: closedCtx.serializer.serialize(originalPolygon),
+        updatedPolygonData: closedCtx.serializer.serialize(splitResult.updatedPolygon),
+        newPolygonData: closedCtx.serializer.serialize(splitResult.newPolygon),
+        addedVerticesData: (splitResult.addedVerticesData || []).map((vertexData) =>
+          closedCtx.serializer.serialize(new Vertex(vertexData.id, vertexData.x, vertexData.y))
+        )
+      });
+      return {
+        updatedFeature: splitResult.updatedPolygon,
+        addedFeature: splitResult.newPolygon
+      };
+    }, "splitPolygon", payload);
+
+    const getHoleCounts = async () => {
+      const world = await closedCtx.worldRepository.getWorld();
+      const updatedPolygon = world.features.find((feature) => feature.id === "poly-1");
+      const newPolygon = world.features.find((feature) => feature.id === splitResult.newPolygon.id);
+      return [updatedPolygon, newPolygon]
+        .map((polygon) => polygon.getRingsAt(editTime).filter((ring) => ring.ringType === "hole").length)
+        .sort((left, right) => left - right);
+    };
+
+    expect(await getHoleCounts()).toEqual([0, 1]);
+
+    await closedCtx.historyService.undo();
+
+    const worldAfterUndo = await closedCtx.worldRepository.getWorld();
+    const restoredPolygon = worldAfterUndo.features.find((feature) => feature.id === "poly-1");
+    expect(restoredPolygon.getRingsAt(editTime).filter((ring) => ring.ringType === "hole")).toHaveLength(0);
+
+    await closedCtx.historyService.redo();
+
+    expect(await getHoleCounts()).toEqual([0, 1]);
   });
 
   it("does not record splitPolygon when split fails", async () => {
