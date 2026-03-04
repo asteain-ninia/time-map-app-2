@@ -1,6 +1,7 @@
 // Tests authored by Codex.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MapView } from "../../src/presentation/views/MapView.js";
+import { editingStyles } from "../../src/infrastructure/rendering/RenderStyleProvider.js";
 
 describe("MapView zoom settled render", () => {
   afterEach(() => {
@@ -95,5 +96,28 @@ describe("MapView._scheduleZoomRender", () => {
     MapView.prototype._scheduleZoomRender.call(context);
 
     expect(context._applyZoomSettledRender).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MapView vertex hit tolerance", () => {
+  it("matches the largest rendered vertex marker radius", () => {
+    const expectedPixels = Math.max(
+      editingStyles.persistentVertex.radius,
+      editingStyles.normalVertex.radius,
+      editingStyles.sharedVertex.radius,
+      editingStyles.selectedVertex.radius,
+      editingStyles.selectedSharedVertex.radius
+    );
+    const context = {
+      _clickToleranceSq: 0,
+      _viewportManager: {
+        getViewport: vi.fn(() => ({ zoom: 2 }))
+      },
+      getVertexHitTolerancePixels: MapView.prototype.getVertexHitTolerancePixels
+    };
+
+    MapView.prototype._updateClickTolerance.call(context);
+
+    expect(context._clickToleranceSq).toBe((expectedPixels / 2) ** 2);
   });
 });

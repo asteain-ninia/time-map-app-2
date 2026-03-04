@@ -5,6 +5,7 @@ import { Point } from "../../src/domain/entities/Point.js";
 import { Line } from "../../src/domain/entities/Line.js";
 import { FeatureAnchor } from "../../src/domain/value-objects/FeatureAnchor.js";
 import { TimePoint } from "../../src/domain/value-objects/TimePoint.js";
+import { getVertexHitTolerancePixels } from "../../src/infrastructure/rendering/RenderStyleProvider.js";
 
 const geometryService = {
   calculateDistanceSq(x1, y1, x2, y2) {
@@ -158,5 +159,31 @@ describe("MapViewInteractionLogic", () => {
     const closest = logic.findClosestVertex({ x: 0.5, y: 0.1 });
     expect(closest).not.toBeNull();
     expect(closest.id).toBe("v-old");
+  });
+
+  it("accepts clicks within the rendered vertex marker radius", () => {
+    const hitPixels = getVertexHitTolerancePixels();
+    const world = {
+      vertices: [
+        { id: "v1", x: 0, y: 0 },
+        { id: "v2", x: 20, y: 0 }
+      ]
+    };
+    const features = [
+      globalThis.createAnchoredLine("line-1", ["v1", "v2"], [createProperty()], "layer-1")
+    ];
+    const viewModel = createViewModel(world, features);
+    const logic = new MapViewInteractionLogic(
+      viewModel,
+      {},
+      geometryService,
+      () => hitPixels * hitPixels,
+      () => 360
+    );
+
+    const closest = logic.findClosestVertex({ x: hitPixels - 0.5, y: 0 });
+
+    expect(closest).not.toBeNull();
+    expect(closest.id).toBe("v1");
   });
 });

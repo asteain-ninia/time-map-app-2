@@ -3,6 +3,7 @@ import { FeatureAnchor } from '../../domain/value-objects/FeatureAnchor.js';
 import { TimePoint } from '../../domain/value-objects/TimePoint.js';
 import { Polygon as DomainPolygon } from '../../domain/entities/Polygon.js';
 import { buildPolygonSplitPlan } from '../../domain/services/PolygonSplitService.js';
+import { getVertexHitTolerancePixels as getRenderedVertexHitTolerancePixels } from '../../infrastructure/rendering/RenderStyleProvider.js';
 
 // 分割したクラスをインポート
 import { MapViewInteractionLogic } from './map/MapViewInteractionLogic.js';
@@ -46,8 +47,7 @@ export class MapView {
     this._isMeasuringDistance = false;
     this._measurePoints = []; // ワールド座標の配列
 
-    // クリック許容範囲 (ピクセル単位)
-    this._clickTolerancePixels = 3;
+    // 頂点ヒット判定
     this._clickToleranceSq = 0; // ワールド座標での二乗値 (動的に更新)
     this._renderScheduled = false;
     this._renderPending = false;
@@ -269,9 +269,17 @@ export class MapView {
   /** クリック許容範囲を更新 */
   _updateClickTolerance() {
     const viewport = this._viewportManager.getViewport();
+    if (!viewport || !Number.isFinite(viewport.zoom) || viewport.zoom <= 0) {
+      this._clickToleranceSq = 0;
+      return;
+    }
     // ズームレベルに基づいてワールド座標での許容距離（の二乗）を計算
-    const worldDistance = this._clickTolerancePixels / viewport.zoom;
+    const worldDistance = this.getVertexHitTolerancePixels() / viewport.zoom;
     this._clickToleranceSq = worldDistance * worldDistance;
+  }
+
+  getVertexHitTolerancePixels() {
+    return getRenderedVertexHitTolerancePixels();
   }
 
   _getSharedVertexSnapPixels() {

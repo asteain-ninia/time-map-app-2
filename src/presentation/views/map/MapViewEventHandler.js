@@ -34,7 +34,7 @@ export class MapViewEventHandler {
     this._dragStartScreenPosition = { x: 0, y: 0 }; // スクリーン座標
     this._lastScreenPosition = { x: 0, y: 0 }; // スクリーン座標
     this._svgPoint = null; // SVG座標変換用
-    this._clickTolerancePixels = 3; // ピクセル単位での許容範囲
+    this._dragStartTolerancePixels = 3; // ピクセル単位でのドラッグ開始許容範囲
   }
 
   /**
@@ -241,7 +241,7 @@ export class MapViewEventHandler {
         const dxScreen = pageX - this._dragStartScreenPosition.x;
         const dyScreen = pageY - this._dragStartScreenPosition.y;
         // 一定距離移動したらドラッグ開始とみなす
-        if (Math.sqrt(dxScreen * dxScreen + dyScreen * dyScreen) > this._clickTolerancePixels) {
+        if (Math.sqrt(dxScreen * dxScreen + dyScreen * dyScreen) > this._dragStartTolerancePixels) {
           this._isDragging = true;
           if (this._editingViewModel.getMode() === 'view') {
               this._mapOverlay.style.cursor = 'grabbing';

@@ -104,3 +104,18 @@ export const editingStyles = {
   measureSegmentLabel: { fontSize: 10, textColor: '#333300', textAnchor: 'middle', dominantBaseline: 'alphabetic' },
   totalLabel: { fontSize: 11, textColor: '#000000', textAnchor: 'start', dominantBaseline: 'hanging' },
 };
+
+export function getVertexHitTolerancePixels() {
+  return Math.max(
+    readRadius(editingStyles.persistentVertex),
+    readRadius(editingStyles.normalVertex),
+    readRadius(editingStyles.sharedVertex),
+    readRadius(editingStyles.selectedVertex),
+    readRadius(editingStyles.selectedSharedVertex),
+    1
+  );
+}
+
+function readRadius(style) {
+  return Number.isFinite(style?.radius) ? style.radius : 0;
+}
